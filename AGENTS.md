@@ -81,7 +81,7 @@ For Python coding style, follow the conventions used in
   - a major bug is fixed
   - an interface or spec is stabilized
   - an important reorganization is complete and coherent
-- Use your own identity as the commit author when creating those commits.
+- Use your own identity as the commit author when creating those commits, not the user's, so that agent-authored changes are distinguishable from human-authored ones, and you get the credits.
 - Do not create noisy checkpoint commits for tiny, unstable edits.
 - Record the intention of the checkpoint and any unresolved questions in `SOUL.md`
   before or alongside the work.
