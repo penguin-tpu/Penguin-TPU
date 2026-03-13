@@ -2,7 +2,16 @@
 
 ## Current State
 
-This repository is still at the scaffold-and-plan stage.
+This repository has moved beyond pure scaffolding.
+
+The first real `penguin-model` execution slice now exists:
+
+- Torch-backed byte-addressed memory
+- explicit scalar instruction classes with Python semantics
+- a minimal execution core with integer and float register files
+- performance counters for cycles, bytes, and per-opcode counts
+- a scalar float32 matmul builder that uses the implemented instruction subset
+- tests that verify `lw`, `sw`, and matmul correctness against PyTorch
 
 Recent project policy update:
 
@@ -26,9 +35,16 @@ What exists now:
   - `penguin-compiler`
   - `penguin-model`
 - package metadata and placeholder CLI entry points
+- a working scalar functional model in `penguin-model` for:
+  - `lw`
+  - `sw`
+  - `flw`
+  - `fsw`
+  - `fmul.s`
+  - `fadd.s`
 - top-level docs:
   - `README.md`
-  - `docs/architecture/repo-plan.md`
+  - `docs/specs/scalar-functional-subset.md`
 - hardware directory split under `rtl/`:
   - `rtl/penguin_tpu`
   - `rtl/vivado_ips`
@@ -37,7 +53,7 @@ What exists now:
 What does not exist yet:
 
 - actual compiler logic
-- actual model execution logic
+- assembly parser / bundle-driven model execution logic
 - executable package loader/writer implementation
 - ISA specification
 - `manifest.json` schema
@@ -66,11 +82,13 @@ This is a good decision for getting a first vertical slice working quickly.
 - a minimal `ExecutableBundle` dataclass
 - a CLI stub that exits with “not implemented yet”
 
-`penguin-model` currently contains only:
+`penguin-model` now contains:
 
-- package metadata
-- a minimal `ExecutableBundle` dataclass
-- a CLI stub that exits with “not implemented yet”
+- Torch-backed main memory modeled after the referenced Google TPU Python memory style
+- executable instruction semantics for a minimal scalar subset
+- a small execution core and simple performance counters
+- a scalar matmul program builder used for the first functional tests
+- a CLI that no longer lies about total package emptiness, but still does not load bundles
 
 There is no shared implementation beyond those stubs.
 
@@ -99,15 +117,16 @@ Add files under `docs/specs/` for:
 - memory map
 - configuration parameters visible to software and hardware
 
-### 3. Implement the smallest vertical slice
+### 3. Extend the first vertical slice
 
-Do not start with the whole model. Start with:
+The smallest software-side slice now exists. The next step is to stop using only
+Python-built programs and move toward the real contract:
 
-- one tiny hand-written assembly program
-- one model-side executor path
-- one deterministic output check
-
-After that, wire one layer from PyTorch export.
+- define textual assembly syntax
+- add program parsing/loading
+- define bundle metadata for memory regions
+- place one golden matmul vector under `tests/vectors/`
+- keep matching PyTorch as the source of truth
 
 ### 4. Decide how shared code should live
 
@@ -169,15 +188,11 @@ than casual notes. That is the right direction, but it raises the bar on discipl
 - architecture-visible behavior and implementation details need clear separation
 - the executable package format must line up with those specs
 
-### Performance model is currently only a plan
+### Performance modeling is still placeholder-grade
 
-The intended role of `penguin-model` is dual:
-
-- functional reference
-- rough cycle/performance estimator
-
-That is fine for now, but it may eventually need internal separation between reference
-semantics and performance estimation. Do not split it until necessary.
+The model now records instruction counts, cycle counts, and byte traffic, but the cycle
+latencies are simple placeholders chosen for early bring-up. They are useful for smoke
+tests and relative accounting, not for trustworthy PPA conclusions.
 
 ### Hardware tree exists, but its implementation status is unknown
 
@@ -190,8 +205,46 @@ The planning docs are aligned to that structure, but this memory file does not a
 the hardware internals are complete or validated. A future agent should inspect those
 directories before making hardware claims.
 
+## External Design References
+
+Four external resources are documented in `AGENTS.md` and summarized in `README.md`.
+They cover TPU functional modeling, NPU performance modeling, TPU compiler internals, and
+TPU hardware organization. All are design references only — Penguin is a scaled-down
+design and does not need all features from any of them. When adopting ideas from these
+references, scope them to Penguin's immediate vertical slice.
+
+## MVP Milestones
+
+These are the near-term targets, in order. Do not skip ahead.
+
+### Milestone 1 — not started
+
+Make one hand-written assembly program run in both `penguin-model` and RTL.
+
+### Milestone 2 — not started
+
+Export one specific PyTorch model into that assembly format and match PyTorch outputs in
+`penguin-model`.
+
+### Milestone 3 — not started
+
+Run the same compiled artifact on RTL through cocotb.
+
+### Milestone 4 — not started
+
+Deploy the same artifact on one FPGA board and collect basic timing and utilization
+reports.
+
+Only after these four milestones should you consider adding a general IR, expanding
+operator coverage, adding JAX support, or splitting the simulator into richer functional
+and performance submodels.
+
 ## Questions And Doubts
 
+- Should the initial architectural subset keep both integer word loads/stores and float
+  loads/stores, or should the eventual ISA surface expose only one memory-access form?
+- Should assembly syntax follow RISC-V conventions literally, or remain only
+  RISC-V-inspired while the project is still narrowing scope?
 - Should `manifest.json` describe only static constants, or also runtime input/output buffers?
 - Will inputs be fixed test vectors or variable runtime payloads?
 - Is the assembly textual only, or should a binary encoding be emitted early as well?
@@ -206,9 +259,9 @@ the executable package plus one tiny end-to-end example that exercises it.
 
 If a future agent needs a starting sequence, use this:
 
-1. Add formal architecture and microarchitecture spec documents under `docs/specs/`.
-2. Add `docs/specs/executable-package.md`.
+1. Add `docs/specs/executable-package.md`.
+2. Define textual assembly syntax for the implemented scalar subset.
 3. Define one example package under `tests/vectors/`.
-4. Implement a loader in `penguin-model`.
+4. Implement a loader/parser in `penguin-model`.
 5. Make `penguin-compile` emit that same format.
 6. Only then connect the format to RTL.

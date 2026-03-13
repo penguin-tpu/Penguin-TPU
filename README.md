@@ -12,11 +12,11 @@ single PyTorch model -> `penguin-compiler` -> executable package -> `penguin-mod
 penguin-compiler/  Direct model-to-assembly Python package
 penguin-model/     Reference/performance-model Python package
 rtl/               Hardware sources
-tests/     Unit tests, cocotb tests, golden vectors, regressions
-docs/      Architecture notes and specs
-configs/   Versioned hardware/compiler presets
-examples/  Tiny models and sample programs
-scripts/   Repo-level helper scripts
+tests/             Unit tests, cocotb tests, golden vectors, regressions
+docs/specs/        Formal architecture and microarchitecture specs
+configs/           Versioned hardware/compiler presets
+examples/          Tiny models and sample programs
+scripts/           Repo-level helper scripts
 pyproject.toml     Root uv workspace
 ```
 
@@ -40,5 +40,17 @@ Typical workflow:
 - `uv run penguin-compile`
 - `uv run penguin-model`
 
-Detailed structure and validation guidance is in
-`docs/architecture/repo-plan.md`.
+Scope rules, package responsibilities, verification strategy, and PPA tracking are
+documented in `AGENTS.md`. Running project state is tracked in `SOUL.md`.
+
+## Design References
+
+This project draws on several public resources for architectural context, but implements
+a deliberately scaled-down subset — one model, one small compute array, static shapes,
+no general compiler IR, no multi-chip support. See `AGENTS.md` for detailed notes on
+each reference and how it relates to Penguin's scope.
+
+- [Modeling Google TPU](https://github.com/T-K-233/Modeling-Google-TPU) — TPU v5e functional model
+- [NPU Model](https://github.com/ucb-ee194-tapeout/npu_model) — tick-based NPU performance model
+- [From JAX to VLIW](https://patricktoulme.substack.com/p/from-jax-to-vliw-tracing-a-computation) — TPU compiler stack walkthrough
+- [How to Think About TPUs](https://jax-ml.github.io/scaling-book/tpus/) — TPU hardware and roofline primer
