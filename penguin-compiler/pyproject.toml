@@ -1,0 +1,22 @@
+[project]
+name = "penguin-compiler"
+version = "0.1.0"
+description = "Direct PyTorch-to-Penguin assembly exporter"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "numpy>=2.1",
+]
+
+[project.optional-dependencies]
+torch = [
+  "torch>=2.6",
+]
+
+[project.scripts]
+penguin-compile = "penguin_compiler.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+

@@ -1,0 +1,18 @@
+[project]
+name = "penguin-tpu-workspace"
+version = "0.1.0"
+description = "Workspace for the Penguin TPU software and hardware stack"
+requires-python = ">=3.11"
+dependencies = []
+
+[dependency-groups]
+dev = [
+  "pytest>=8.3",
+]
+
+[tool.uv.workspace]
+members = [
+  "penguin-compiler",
+  "penguin-model",
+]
+

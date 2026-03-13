@@ -1,0 +1,17 @@
+[project]
+name = "penguin-model"
+version = "0.1.0"
+description = "Reference and performance model for Penguin TPU programs"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "numpy>=2.1",
+]
+
+[project.scripts]
+penguin-model = "penguin_model.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
