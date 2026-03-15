@@ -21,6 +21,8 @@ What exists now:
   - [architecture-spec.md](/home/tk/Desktop/Penguin-TPU/docs/specs/architecture-spec.md)
   - [microarchitecture-spec.md](/home/tk/Desktop/Penguin-TPU/docs/specs/microarchitecture-spec.md)
   - [memory-organization-spec.md](/home/tk/Desktop/Penguin-TPU/docs/specs/memory-organization-spec.md)
+  - [configuration-parameters-spec.md](/home/tk/Desktop/Penguin-TPU/docs/specs/configuration-parameters-spec.md)
+  - [upstream-npu-spec-merge-review.md](/home/tk/Desktop/Penguin-TPU/docs/reviews/upstream-npu-spec-merge-review.md)
 
 What does not exist yet:
 
@@ -45,6 +47,10 @@ decisions, not open brainstorming.
 - on-chip execution is deterministic
 - off-chip memory activity is asynchronous
 - branches and jumps have 2 architecturally visible delay slots
+- architectural state explicitly includes host-visible execution control/status, DMA busy
+  state, and the shared memory-base CSR
+- structural conflicts are resolved by stalls/arbitration, not by partial architectural
+  completion
 
 Reasoning:
 
@@ -136,13 +142,19 @@ Reasoning:
 - tensor registers access VMEM only
 - DMA is the only DRAM <-> VMEM path
 - DMA moves unit-stride raw bytes only
+- DMA addresses are 32-byte aligned and DMA sizes are multiples of 32 bytes
 - DMA is asynchronous and fenced by channel
 - DRAM latency is currently modeled as 10 cycles in the functional model
 - first revision exposes 8 symmetric DMA channels
 - `vload` / `vstore` are blocking VMEM <-> `m` transfers
 - `mxu.push.*` is a blocking VMEM -> `w*` transfer
+- `vload` / `vstore` transfer one full 2048-byte tensor register image
+- `mxu.push.*` transfers one full 512-byte weight tile
 - DMA, `vload` / `vstore`, and `mxu.push.*` all use scalar-register indirect addressing
 - one shared memory-base CSR extends addressing beyond the 32-bit scalar range
+- IMEM is populated before execution by host-side software or firmware
+- `dma.wait.chN` returns immediately if the channel is already idle
+- DMA completion order across channels is not guaranteed by issue order
 
 Reasoning:
 
@@ -196,6 +208,13 @@ Implemented today:
 - the scalar test surface now covers control-flow delay slots, shift-mask behavior,
   DMA edge cases, VMEM-only data paths, workload-style address generation/copy/reduction,
   and performance counters for representative scalar kernels
+- the formal tensor-side specs were tightened after a direct review of the upstream
+  `ucb-ee194-tapeout/npu_model/npu_spec` documents
+- that merge pass added explicit execution-state inventory, host launch/reset semantics,
+  DMA visibility/order rules, and a deliberate no-partial-retirement rule
+- the Saturn Microarchitecture Manual was noted as an additional future reference,
+  especially for frontend/fault/memory-ordering questions that Penguin has not fully
+  frozen yet
 
 Not yet implemented:
 
@@ -207,9 +226,9 @@ Not yet implemented:
 ## Immediate Next Steps
 
 1. Define the executable package and manifest.
-2. Add formal tensor layout/packing spec.
+2. Add formal tensor layout/packing spec, especially padding and tail-handling rules.
 3. Add a first binary/text assembly encoding spec for 32-bit instructions.
-4. Connect the new memory hierarchy model to a real IMEM/program-loading path.
+4. Define the host control and CSR map for launch, halt, done, and trap reporting.
 5. Implement tensor transfer instructions: `vload`, `vstore`, `mxu.push.*`.
 6. Implement the first tensor-side functional stubs for `matmul.*` and the initial VPU
    op floor.
@@ -221,9 +240,12 @@ Only a small set of important questions remain:
 - VMEM alignment requirements
 - exact DMA instruction shapes
 - exact `vload` / `vstore` encodings
-- IMEM population flow
+- exact host-side CSR address map and access path
+- exact DMA channel reuse / queueing semantics
 - whether VMEM is logically unified or internally partitioned by traffic class
 - final tensor ISA encoding details
+- floating-point corner-case behavior for FP8/BF16 conversion and arithmetic
+- precise halt / trap policy while long-chime tensor operations are in flight
 
 ## Checkpoint Note
 

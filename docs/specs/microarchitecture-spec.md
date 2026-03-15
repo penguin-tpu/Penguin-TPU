@@ -1,6 +1,6 @@
 # Penguin Microarchitecture Specification
 
-Status: Working Baseline 0.2
+Status: Working Baseline 0.3
 
 ## 1. Purpose
 
@@ -94,6 +94,32 @@ Rationale:
 - avoids polluting all data movement with fence logic
 - simplifies both the functional model and the first RTL control path
 
+### 2.7 Structural conflicts are absorbed by stalls, not partial retirement
+
+Decision:
+
+- bank conflicts, crossbar contention, or destination-port conflicts are resolved by
+  stalling or arbitration
+- these conflicts are not allowed to create architecturally visible partial-tile results
+
+Rationale:
+
+- keeps internal storage implementation hidden from software
+- avoids fragile compiler rules around partially written destination tiles
+- makes RTL and model comparison significantly cleaner
+
+### 2.8 Minimal execution-control and observability plane
+
+Decision:
+
+- the microarchitecture shall expose enough control and status state to support host
+  launch, halt, completion, and DMA-busy observation
+
+Rationale:
+
+- IMEM population, execution start, and completion need an explicit system contract
+- this state is required for bring-up even before tensor execution is complete
+
 ## 3. High-Level Organization
 
 The intended Penguin microarchitecture is organized around four major subsystems:
@@ -155,6 +181,19 @@ The current design direction is:
 - the first architecture revision exposes 8 DMA channels
 - the 8 DMA channels are symmetric in capability
 
+### 4.3 Frontend phase model
+
+The baseline frontend is intended to be explainable in a small number of phases:
+
+- IFG: instruction-address generation and IMEM request launch
+- IFR: instruction return from IMEM
+- ID: decode and dispatch
+- EX: scalar execution or long-chime unit launch
+
+This phase model is not meant to force a specific RTL partitioning, but it does capture
+the timing intuition behind the 2-delay-slot branch model and the one-instruction-per-
+cycle issue rule.
+
 ## 5. Tensor Register File
 
 The tensor register file is the key datapath structure for accelerator execution.
@@ -176,6 +215,10 @@ Microarchitectural requirements:
 
 The exact porting and arbitration structure behind the crossbar is not fixed in this
 revision, but register reachability is intended to be fully connected.
+
+Physical banking remains an implementation detail. If the chosen storage organization
+cannot serve a requested access pattern in one cycle, the microarchitecture must stall or
+arbitrate without exposing partial architectural completion.
 
 ## 6. Long-Chime Execution
 
@@ -213,9 +256,23 @@ Future work may revisit whether the frontend implementation should expose additi
 internal control speculation, but it must still preserve the 2 architectural delay
 slots visible to software.
 
-## 8. Matrix Execution Units
+## 8.1 Execution-control state and reset expectations
 
-### 8.1 Functional role
+The microarchitecture shall maintain at least the following control and observability
+state:
+
+- execution enable / disable state
+- current `pc`
+- halt / done / trap outcome state
+- DMA busy indication for all 8 channels
+
+On reset, execution is disabled, DMA channels are idle, and any in-flight issue-side
+state is cleared. Tensor data arrays and weight slots need not be zeroed by reset unless
+some later integration requirement states otherwise.
+
+## 9. Matrix Execution Units
+
+### 9.1 Functional role
 
 Penguin contains two distinct MXU instances:
 
@@ -248,7 +305,7 @@ Microarchitectural expectations:
 - the architecture-visible MXU contract excludes fused tensor postprocessing such as bias
   add inside the MXU
 
-### 8.2 Dual-MXU design goal
+### 9.2 Dual-MXU design goal
 
 The project explicitly intends to compare two coexisting MXU organizations:
 
@@ -265,7 +322,7 @@ The reason for carrying both options is to enable direct comparison of:
 The architecture should remain stable across both engines so that the comparison is
 meaningful.
 
-### 8.3 Low-precision MAC
+### 9.3 Low-precision MAC
 
 The MXU uses low-precision floating-point MACs.
 
@@ -279,7 +336,7 @@ Current intended arithmetic contract:
 - a scalar output scale factor is applied per workload-level matmul
 - scaling is applied on the output path rather than on MXU input fetch
 
-## 9. Vector Processing Unit
+## 10. Vector Processing Unit
 
 The VPU is a row-wise tensor unit that shares the tensor-register abstraction with the
 MXU.
@@ -298,7 +355,25 @@ Microarchitectural expectations:
 
 The VPU exists to handle tensor work that is not best mapped onto the MXU.
 
-## 10. Memory-System Direction
+## 11. DMA And Memory Stall Behavior
+
+The first microarchitecture should make DMA behavior explicit enough for model and RTL
+alignment.
+
+Microarchitectural expectations:
+
+- 8 architected DMA channels each expose a logical busy state
+- a `dma.wait.chN` instruction may stall the frontend until channel `N` becomes idle
+- while a `dma.wait.chN` stalls issue, older in-flight long-chime operations may continue
+  draining
+- completion order across different DMA channels need not match issue order
+- request queues, transaction counters, and request/response bookkeeping are
+  microarchitectural choices rather than architecture-visible contracts
+
+The important invariant is that a channel-specific wait only releases once the
+architecture-visible destination bytes are valid for the transfer issued on that channel.
+
+## 12. Memory-System Direction
 
 The memory structure is an explicit intermediate milestone between scalar-core bring-up
 and matrix acceleration.
@@ -335,7 +410,7 @@ register reachability itself should not be restricted by static register partiti
 Formal details are further defined in
 [memory-organization-spec.md](/home/tk/Desktop/Penguin-TPU/docs/specs/memory-organization-spec.md).
 
-## 11. Performance And Comparison Goals
+## 13. Performance And Comparison Goals
 
 The microarchitecture is intended to support disciplined comparison rather than ad hoc
 tuning.
@@ -348,7 +423,7 @@ At minimum, the design flow should eventually compare `mxu0` and `mxu1` on:
 - achievable clock frequency
 - energy or power proxies when available
 
-## 12. Remaining Open Microarchitectural Items
+## 14. Remaining Open Microarchitectural Items
 
 This revision still leaves these items open:
 
@@ -356,12 +431,11 @@ This revision still leaves these items open:
 - exact long-chime pipeline depth per unit
 - exact busy-bit or scoreboard structure
 - exact scalar-to-tensor hazard rules
-- exact architected synchronization primitives for off-chip memory completion
 - exact DMA instruction shapes
 - exact VMEM-facing tensor load/store instruction shapes
 - exact VMEM alignment requirements
 
-## 13. Immediate Next Spec Work
+## 15. Immediate Next Spec Work
 
 The next design-spec iterations should define:
 

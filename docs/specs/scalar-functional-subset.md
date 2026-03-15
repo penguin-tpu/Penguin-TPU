@@ -31,6 +31,21 @@ functional model is expanded.
 - each register holds one 32-bit value
 - `x0` is hardwired to zero
 
+### Execution-control and memory-base state
+
+The scalar subset relies on a small amount of additional architecture-visible state that
+is not itself fully defined by RV32I-style integer instructions:
+
+- one shared `mem_base` CSR used by memory-like tensor and DMA instructions to extend
+  addressing beyond the raw 32-bit scalar-register range
+- execution-control state that enables or halts accelerator fetch
+- execution-status state that reports halt, done, or trap outcome
+- DMA busy state for the 8 architected DMA channels
+
+The current scalar instruction subset does not yet define a full CSR-manipulation ISA for
+this state. In the baseline launch model, host-side software or future Penguin-specific
+CSR instructions may initialize or observe it.
+
 ### Program counter
 
 - `pc` is a 32-bit byte address
@@ -260,6 +275,8 @@ Semantics:
 
 - schedule a pending transfer of `x[rs_size]` raw bytes from DRAM at `x[rs_dram]`
   to VMEM at `x[rs_vmem]` on channel `N`
+- `x[rs_dram]` and `x[rs_vmem]` must both be 32-byte aligned
+- `x[rs_size]` must be a multiple of 32 bytes
 - completion is not architecturally visible until `dma.wait.chN`
 
 #### `dma.store.chN rs_dram, rs_vmem, rs_size`
@@ -268,6 +285,8 @@ Semantics:
 
 - schedule a pending transfer of `x[rs_size]` raw bytes from VMEM at `x[rs_vmem]`
   to DRAM at `x[rs_dram]` on channel `N`
+- `x[rs_dram]` and `x[rs_vmem]` must both be 32-byte aligned
+- `x[rs_size]` must be a multiple of 32 bytes
 - completion is not architecturally visible until `dma.wait.chN`
 
 #### `dma.wait.chN`
@@ -276,6 +295,7 @@ Semantics:
 
 - block until channel `N` has no pending DMA transfer
 - once complete, the destination memory region reflects the transferred bytes
+- if channel `N` is already idle at issue time, the instruction completes immediately
 
 ### I-type integer compute instructions
 

@@ -1,6 +1,6 @@
 # Penguin Memory Organization Specification
 
-Status: Working Baseline 0.2
+Status: Working Baseline 0.3
 
 ## 1. Purpose
 
@@ -99,6 +99,33 @@ Rationale:
 - avoids sub-window semantics in the first ISA cut
 - simplifies VMEM transfer logic and compiler lowering
 
+### 2.7 Explicit DMA visibility and ordering rules
+
+Decision:
+
+- each DMA channel exposes independent busy/completion state
+- `dma.wait.chN` completes immediately if channel `N` is already idle
+- completion order across different DMA channels is not architecturally ordered
+
+Rationale:
+
+- makes channelized async behavior precise enough for software and RTL
+- avoids accidental reliance on issue order across independent channels
+- keeps fencing local to the resource that software actually depends on
+
+### 2.8 Host-populated IMEM
+
+Decision:
+
+- IMEM is populated before execution by host-side software or firmware
+- the accelerator does not fetch executable instructions directly from DRAM in the
+  baseline contract
+
+Rationale:
+
+- keeps program-loading semantics simple and explicit
+- avoids inventing an instruction-fetch DMA path before the execution model is stable
+
 ## 3. Memory Structures
 
 Penguin defines three primary memory structures:
@@ -146,7 +173,7 @@ Architectural properties:
 - instructions are fixed-width 32-bit words
 - all instruction classes fit within one 32-bit word
 - compute instructions are not fetched directly from DRAM
-- the mechanism that initially populates IMEM is outside the scope of this revision
+- IMEM is populated before execution by host-side software or firmware
 - IMEM instruction fetch requires 4-byte alignment
 
 ### 3.3 VMEM
@@ -182,6 +209,8 @@ Architectural properties:
 - one shared memory-base CSR extends DMA addressing beyond the 32-bit scalar-register
   range
 - DMA synchronization is channel-specific rather than global
+- DMA source and destination addresses must be 32-byte aligned
+- DMA transfer sizes must be integer multiples of 32 bytes
 
 Initial intended direction:
 
@@ -189,6 +218,8 @@ Initial intended direction:
 - completion is fenced with matching wait operations such as `dma.wait.ch1`
 - the first architecture revision exposes 8 DMA channels
 - the 8 DMA channels are symmetric in capability
+- `dma.wait.chN` returns immediately if `chN` is already idle
+- completion order across different channels is not guaranteed by issue order
 
 ### 4.2 VMEM <-> Tensor Registers
 
@@ -211,6 +242,7 @@ Initial intended direction:
 - `vload` moves data from VMEM into `m` registers
 - `vstore` moves data from `m` registers into VMEM
 - `vload` and `vstore` operate on whole `m` registers only
+- each `vload` or `vstore` transfers exactly one 2048-byte tensor register image
 - sub-tile windows and partial-row transfers are not part of the current contract
 
 These operations are on-chip and block execution if the transfer is not ready in time.
@@ -230,6 +262,7 @@ Architectural properties:
 - `mxu.push.*` uses scalar-register indirect VMEM addressing
 - one shared memory-base CSR extends `mxu.push.*` addressing beyond the 32-bit
   scalar-register range
+- each `mxu.push.*` transfers exactly one 512-byte weight tile into the selected slot
 
 ## 5. Determinism And Synchronization
 
@@ -246,6 +279,10 @@ Rule:
 - software must use explicit resource-specific waits/fences before consuming data whose
   correctness depends on DMA completion
 - DMA waits fence individual channels rather than all outstanding DMA traffic
+- a successful `dma.wait.chN` guarantees that the destination bytes of the transfer
+  previously issued on channel `N` are architecturally visible
+- software must not assume any completion ordering between different DMA channels unless
+  it has inserted the required waits
 
 ### 5.2 Blocking completion
 
@@ -260,7 +297,23 @@ Rule:
 - these operations may stall execution
 - they do not require a separate asynchronous completion fence
 
-## 6. Architectural Access Rules
+## 6. Hazard-Ordering Rules
+
+The baseline memory contract is software scheduled. Programs must explicitly sequence
+memory hazards across DMA and on-chip tensor transfers.
+
+Mandatory rules:
+
+- a program must not issue `vload`, `vstore`, or `mxu.push.*` against VMEM bytes whose
+  correctness depends on an outstanding DMA transfer until the matching `dma.wait.chN`
+  has completed
+- a program must not assume that two DMA channels become visible in issue order
+- a program must not overlap producer and consumer operations on the same VMEM byte range
+  without an explicit ordering point
+
+If software violates these rules, behavior is architecturally undefined in this revision.
+
+## 7. Architectural Access Rules
 
 The following access rules are mandatory in this revision:
 
@@ -271,7 +324,7 @@ The following access rules are mandatory in this revision:
 - VPU reads from and writes to `m` registers, not memory directly
 - MXU weight slots are populated from VMEM, not DRAM directly
 
-## 7. Example Dataflow
+## 8. Example Dataflow
 
 For an activation tile:
 
@@ -290,11 +343,10 @@ For a weight tile:
 3. `mxu.push.*` from VMEM into `w0` or `w1`
 4. launch `matmul.*`
 
-## 8. Remaining Open Memory Items
+## 9. Remaining Open Memory Items
 
 This revision still leaves these items open:
 
 - the exact `vload` / `vstore` instruction encodings
 - VMEM alignment requirements
-- IMEM population flow
 - whether VMEM is logically unified or internally partitioned by traffic class

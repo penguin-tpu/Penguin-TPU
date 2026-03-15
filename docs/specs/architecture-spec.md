@@ -1,6 +1,6 @@
 # Penguin Architecture Specification
 
-Status: Working Baseline 0.2
+Status: Working Baseline 0.3
 
 ## 1. Purpose
 
@@ -163,6 +163,36 @@ Rationale:
 - avoids creating a second hidden data-movement path
 - gives a useful first elementwise floor without overcommitting to a large VPU ISA
 
+### 3.10 Explicit execution-state contract
+
+Decision:
+
+- Penguin defines a finite set of architecture-visible execution state
+- that state includes scalar registers, `pc`, tensor registers, MXU weight slots,
+  execution-control state, DMA busy state, and the shared memory-base CSR
+
+Rationale:
+
+- makes software, functional model, RTL, and board bring-up agree on the same machine
+  state
+- keeps host control and accelerator-local execution semantics from being left implicit
+- avoids burying architecturally relevant status in implementation-only notes
+
+### 3.11 No partial architectural retirement on structural conflict
+
+Decision:
+
+- structural conflicts may stall issue or local execution progress
+- structural conflicts must not expose partial-row or partial-tile architectural results
+- younger instructions do not preempt older instructions mid-writeback in an
+  architecture-visible way
+
+Rationale:
+
+- keeps correctness independent of internal banking and arbitration choices
+- makes compiler scheduling and formal verification tractable
+- deliberately avoids architecting partial-completion behavior as a software-visible rule
+
 ## 4. Architectural Components
 
 ### 4.1 Scalar control path
@@ -176,6 +206,39 @@ The scalar path is responsible for:
 - address generation
 - scalar bookkeeping
 - launching long-chime matrix and vector operations
+
+### 4.1.1 Architectural execution state
+
+The current baseline requires the following architecture-visible state:
+
+- scalar integer registers `x0` through `x31`
+- a 32-bit program counter `pc`
+- tensor registers `m0` through `m63`
+- per-engine weight slots `mxu0.w0`, `mxu0.w1`, `mxu1.w0`, and `mxu1.w1`
+- one shared memory-base CSR used to extend memory-like addressing beyond the raw
+  32-bit scalar-register range
+- execution-control and execution-status state sufficient to start, stop, and observe the
+  accelerator
+- DMA channel busy state for the 8 architected DMA channels
+
+This section defines the required logical state only. The exact CSR encodings and host
+bus addresses are intentionally left to the SoC-integration specification.
+
+### 4.1.2 Host launch and completion model
+
+Penguin is intended to be launched by a host-side software or firmware environment.
+
+Architecture-visible requirements:
+
+- the host populates IMEM before accelerator execution begins
+- the host arranges any required DRAM and VMEM initialization before the relevant program
+  phase depends on it
+- the accelerator begins fetching only after host-visible execution-control state enables
+  execution
+- completion, halt, or trap outcome must be observable through host-visible status state
+
+The exact MMIO map is not frozen here, but the launch model is: the accelerator is not
+self-booting and does not fetch its program directly from DRAM in the baseline design.
 
 ### 4.2 Tensor register file
 
@@ -204,6 +267,13 @@ The architecture freezes storage by bytes rather than by element count. Therefor
 
 Each tensor register therefore stores 2048 bytes of architectural tile state.
 
+The 32-byte row is also the fundamental row quantum for tensor-side execution:
+
+- FP8 view: 32 elements per row
+- BF16 view: 16 elements per row
+- all whole-register tensor instructions are defined as deterministic sweeps over 64 such
+  rows
+
 ### 4.2.1 MXU weight-source operand class
 
 Each MXU also consumes a weight operand that is distinct from the `m0..m63` tensor
@@ -217,6 +287,7 @@ Architecture-visible requirements:
 - the weight operand provides matrix operand `B`
 - the tensor operand `m<src>` provides activation operand `A`
 - weight-buffer contents are populated through explicit MXU push instructions
+- each weight slot stores one FP8 tile of shape `32 x 16`, or 512 bytes
 
 This operand class is intentionally narrow. It is not a second general-purpose tensor
 register file. It is an architecture-visible selector for one of two MXU-resident weight
@@ -400,6 +471,38 @@ Current rule:
 - software may schedule useful work into those 2 delay slots
 - this 2-delay-slot rule is part of the committed baseline architecture contract
 
+### 5.5 Structural conflicts and completion atomicity
+
+The architecture requires all-or-nothing visibility at the granularity of an issued
+instruction.
+
+Current rule:
+
+- if a structural conflict prevents forward progress, the machine stalls rather than
+  exposing a partially completed architectural writeback
+- tensor instructions do not retire partially visible rows because of crossbar, banking,
+  or destination-port conflicts
+- if an instruction is architecturally visible as complete, then its full defined
+  destination effect is visible
+
+This rule applies even if the underlying implementation uses banked SRAMs, shared buses,
+or other bandwidth-limited structures.
+
+### 5.6 Reset and initialization semantics
+
+The baseline architecture now defines the following reset expectations:
+
+- `pc` resets to the IMEM base address
+- execution-control state resets to disabled
+- DMA channels reset to idle
+- any pending control-transfer redirection state resets to empty
+- `x0` remains zero by definition
+- other scalar registers, tensor registers, and MXU weight slots are architecturally
+  unspecified after reset unless software or the host environment initializes them
+
+Software must not rely on reset-time contents of architectural data state other than
+values explicitly defined above.
+
 ## 6. Determinism Requirements
 
 For a fixed hardware configuration, the following shall be deterministic:
@@ -472,6 +575,7 @@ The following items remain open in this revision:
 - exact VPU opcode set
 - exact matrix instruction set
 - executable-package format for program plus tensor data
+- exact host-side CSR address map and launch MMIO protocol
 
 ## 10. Required Companion Specifications
 
@@ -480,5 +584,6 @@ This document depends on future companion documents for:
 - full architecture specification of tensor instructions
 - microarchitecture specification
 - memory-map and memory-structure specification
+- shared configuration-parameter specification
 - executable-package specification
 - tensor layout and packing specification
