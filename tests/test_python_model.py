@@ -237,32 +237,111 @@ def test_branch_semantics_set_next_pc_only_when_taken(
     semantic(state, BType(rs1=1, rs2=2, imm=12))
 
     assert state.next_pc == (0x4C if taken else None)
+    assert state.delay_slots_remaining == (2 if taken else 0)
+    assert state.control_transfer_set is taken
     assert state.stop_reason is None
 
 
-def test_core_executes_pc_control_flow_and_link_registers() -> None:
+def test_core_executes_sjal_with_two_delay_slots_and_link_register() -> None:
     core = PenguinCore(state=_fresh_state())
 
     perf = core.execute(
         [
-            Instruction("saddi", IType(rd=1, rs1=0, imm=1)),
-            Instruction("saddi", IType(rd=2, rs1=0, imm=1)),
-            Instruction("sbeq", BType(rs1=1, rs2=2, imm=8)),
+            Instruction("sjal", JType(rd=4, imm=16)),
+            Instruction("saddi", IType(rd=1, rs1=0, imm=11)),
+            Instruction("saddi", IType(rd=2, rs1=0, imm=22)),
             Instruction("saddi", IType(rd=3, rs1=0, imm=99)),
-            Instruction("sjal", JType(rd=4, imm=8)),
-            Instruction("saddi", IType(rd=3, rs1=0, imm=77)),
-            Instruction("saddi", IType(rd=3, rs1=0, imm=33)),
-            Instruction("sjalr", IType(rd=5, rs1=4, imm=12)),
+            Instruction("saddi", IType(rd=5, rs1=0, imm=55)),
         ]
     )
 
-    assert core.state.read_xreg(3) == 33
-    assert core.state.read_xreg(4) == 20
-    assert core.state.read_xreg(5) == 32
-    assert core.state.pc == 32
+    assert core.state.read_xreg(1) == 11
+    assert core.state.read_xreg(2) == 22
+    assert core.state.read_xreg(3) == 0
+    assert core.state.read_xreg(4) == 4
+    assert core.state.read_xreg(5) == 55
     assert core.state.stop_reason == StopReason.PROGRAM_END
-    assert perf.instructions == 6
-    assert perf.cycles == 6
+    assert perf.instructions == 4
+    assert perf.cycles == 4
+
+
+def test_core_executes_sjalr_with_two_delay_slots_and_clears_lsb() -> None:
+    core = PenguinCore(state=_fresh_state())
+
+    perf = core.execute(
+        [
+            Instruction("saddi", IType(rd=1, rs1=0, imm=28)),
+            Instruction("sjalr", IType(rd=5, rs1=1, imm=1)),
+            Instruction("saddi", IType(rd=2, rs1=0, imm=2)),
+            Instruction("saddi", IType(rd=3, rs1=0, imm=3)),
+            Instruction("saddi", IType(rd=4, rs1=0, imm=99)),
+            Instruction("saddi", IType(rd=6, rs1=0, imm=99)),
+            Instruction("saddi", IType(rd=7, rs1=0, imm=99)),
+            Instruction("saddi", IType(rd=8, rs1=0, imm=8)),
+        ]
+    )
+
+    assert core.state.read_xreg(2) == 2
+    assert core.state.read_xreg(3) == 3
+    assert core.state.read_xreg(4) == 0
+    assert core.state.read_xreg(5) == 8
+    assert core.state.read_xreg(8) == 8
+    assert core.state.stop_reason == StopReason.PROGRAM_END
+    assert perf.instructions == 5
+    assert perf.cycles == 5
+
+
+def test_younger_control_transfer_in_delay_slot_replaces_older_redirect() -> None:
+    core = PenguinCore(state=_fresh_state())
+
+    perf = core.execute(
+        [
+            Instruction("sjal", JType(rd=1, imm=24)),
+            Instruction("sjal", JType(rd=2, imm=24)),
+            Instruction("saddi", IType(rd=3, rs1=0, imm=3)),
+            Instruction("saddi", IType(rd=4, rs1=0, imm=4)),
+            Instruction("saddi", IType(rd=5, rs1=0, imm=5)),
+            Instruction("saddi", IType(rd=6, rs1=0, imm=6)),
+            Instruction("saddi", IType(rd=7, rs1=0, imm=7)),
+            Instruction("saddi", IType(rd=8, rs1=0, imm=8)),
+        ]
+    )
+
+    assert core.state.read_xreg(1) == 4
+    assert core.state.read_xreg(2) == 8
+    assert core.state.read_xreg(3) == 3
+    assert core.state.read_xreg(4) == 4
+    assert core.state.read_xreg(5) == 0
+    assert core.state.read_xreg(6) == 0
+    assert core.state.read_xreg(7) == 0
+    assert core.state.read_xreg(8) == 8
+    assert core.state.stop_reason == StopReason.PROGRAM_END
+    assert perf.instructions == 5
+    assert perf.cycles == 5
+
+
+@pytest.mark.parametrize(
+    ("mnemonic", "params", "expected"),
+    [
+        pytest.param("sslli", IType(rd=10, rs1=1, imm=37), 0x0000_0060, id="sslli-mask"),
+        pytest.param("ssrli", IType(rd=10, rs1=2, imm=36), 0x0FFF_FFFF, id="ssrli-mask"),
+        pytest.param("ssrai", IType(rd=10, rs1=2, imm=36), 0xFFFF_FFFF, id="ssrai-mask"),
+        pytest.param("ssll", RType(rd=10, rs1=1, rs2=4), 0x0000_000C, id="ssll-mask"),
+        pytest.param("ssrl", RType(rd=10, rs1=2, rs2=4), 0x3FFF_FFFC, id="ssrl-mask"),
+        pytest.param("ssra", RType(rd=10, rs1=2, rs2=4), 0xFFFF_FFFC, id="ssra-mask"),
+    ],
+)
+def test_shift_instructions_mask_shift_amount_to_low_five_bits(
+    mnemonic: str, params: object, expected: int
+) -> None:
+    state = _fresh_state()
+    state.write_xreg(1, 3)
+    state.write_xreg(2, 0xFFFF_FFF0)
+    state.write_xreg(4, 34)
+
+    INSTRUCTION_SPECS[mnemonic].semantics(state, params)
+
+    assert state.read_xreg(10) == expected
 
 
 def test_scalar_load_store_and_branch_loop_program_uses_vmem_only() -> None:
@@ -282,6 +361,8 @@ def test_scalar_load_store_and_branch_loop_program_uses_vmem_only() -> None:
             Instruction("saddi", IType(rd=1, rs1=1, imm=4)),
             Instruction("saddi", IType(rd=2, rs1=2, imm=-1)),
             Instruction("sbne", BType(rs1=2, rs2=0, imm=-16)),
+            Instruction("saddi", IType(rd=0, rs1=0, imm=0)),
+            Instruction("saddi", IType(rd=0, rs1=0, imm=0)),
             Instruction("sst", SType(rs1=0, rs2=3, imm=VMEM_BASE + 0x80)),
         ]
     )
@@ -290,8 +371,8 @@ def test_scalar_load_store_and_branch_loop_program_uses_vmem_only() -> None:
     assert state.dram.load_u32(DRAM_BASE + 0x80) == 0
     assert core.state.read_xreg(3) == 26
     assert core.state.stop_reason == StopReason.PROGRAM_END
-    assert perf.instructions == 24
-    assert perf.cycles == 24
+    assert perf.instructions == 32
+    assert perf.cycles == 32
     assert perf.bytes_read == 16
     assert perf.bytes_written == 4
 
@@ -416,6 +497,47 @@ def test_dma_channel_busy_stops_execution() -> None:
     assert perf.instructions == 5
 
 
+def test_dma_wait_without_pending_transfer_is_one_cycle_noop() -> None:
+    core = PenguinCore(state=_fresh_state())
+
+    perf = core.execute([Instruction("dma.wait.ch3", EmptyType())])
+
+    assert core.state.stop_reason == StopReason.PROGRAM_END
+    assert perf.instructions == 1
+    assert perf.cycles == 1
+    assert perf.bytes_read == 0
+    assert perf.bytes_written == 0
+
+
+def test_dma_channels_operate_independently() -> None:
+    state = _fresh_state()
+    _store_bytes(state.dram, DRAM_BASE + 0x100, [1, 2, 3, 4])
+    _store_bytes(state.dram, DRAM_BASE + 0x120, [5, 6, 7, 8])
+
+    core = PenguinCore(state=state)
+    perf = core.execute(
+        [
+            Instruction("saddi", IType(rd=1, rs1=0, imm=DRAM_BASE + 0x100)),
+            Instruction("saddi", IType(rd=2, rs1=0, imm=VMEM_BASE + 0x40)),
+            Instruction("saddi", IType(rd=3, rs1=0, imm=4)),
+            Instruction("dma.load.ch0", DMAType(dram_rs=1, vmem_rs=2, size_rs=3)),
+            Instruction("saddi", IType(rd=4, rs1=0, imm=DRAM_BASE + 0x120)),
+            Instruction("saddi", IType(rd=5, rs1=0, imm=VMEM_BASE + 0x80)),
+            Instruction("dma.load.ch1", DMAType(dram_rs=4, vmem_rs=5, size_rs=3)),
+            Instruction("dma.wait.ch1", EmptyType()),
+            Instruction("dma.wait.ch0", EmptyType()),
+        ]
+    )
+
+    assert state.vmem.read(VMEM_BASE + 0x40, 4).tolist() == [1, 2, 3, 4]
+    assert state.vmem.read(VMEM_BASE + 0x80, 4).tolist() == [5, 6, 7, 8]
+    assert core.state.stop_reason == StopReason.PROGRAM_END
+    assert perf.instructions == 9
+    assert perf.cycles == 17
+    assert perf.bytes_read == 8
+    assert perf.bytes_written == 8
+
+
 def test_misaligned_load_and_store_stop_execution() -> None:
     core = PenguinCore(state=_fresh_state())
 
@@ -453,6 +575,54 @@ def test_misaligned_jump_target_stops_execution() -> None:
     assert perf.instructions == 1
 
 
+def test_taken_branch_with_misaligned_target_stops_before_delay_slots_execute() -> None:
+    core = PenguinCore(state=_fresh_state())
+
+    perf = core.execute(
+        [
+            Instruction("saddi", IType(rd=1, rs1=0, imm=1)),
+            Instruction("sbeq", BType(rs1=1, rs2=1, imm=6)),
+            Instruction("saddi", IType(rd=2, rs1=0, imm=99)),
+            Instruction("saddi", IType(rd=3, rs1=0, imm=77)),
+        ]
+    )
+
+    assert core.state.stop_reason == StopReason.INSTRUCTION_ADDRESS_MISALIGNED
+    assert core.state.read_xreg(2) == 0
+    assert core.state.read_xreg(3) == 0
+    assert perf.instructions == 2
+
+
+def test_reset_clears_architectural_state_and_dma_but_preserves_memory() -> None:
+    state = _fresh_state()
+    state.vmem.store_u32(VMEM_BASE + 0x20, 0x1234_5678)
+    state.dram.store_u32(DRAM_BASE + 0x100, 0xCAFE_BABE)
+    core = PenguinCore(state=state)
+
+    perf = core.execute(
+        [
+            Instruction("saddi", IType(rd=1, rs1=0, imm=DRAM_BASE + 0x100)),
+            Instruction("saddi", IType(rd=2, rs1=0, imm=VMEM_BASE + 0x40)),
+            Instruction("saddi", IType(rd=3, rs1=0, imm=4)),
+            Instruction("dma.load.ch0", DMAType(dram_rs=1, vmem_rs=2, size_rs=3)),
+        ]
+    )
+
+    assert perf.instructions == 4
+    assert core.state.dma_channels[0].busy is True
+
+    core.reset()
+
+    assert core.state.pc == 0
+    assert core.state.perf.instructions == 0
+    assert core.state.perf.cycles == 0
+    assert core.state.stop_reason is None
+    assert core.state.read_xreg(1) == 0
+    assert all(channel.busy is False for channel in core.state.dma_channels)
+    assert core.state.vmem.load_u32(VMEM_BASE + 0x20) == 0x1234_5678
+    assert core.state.dram.load_u32(DRAM_BASE + 0x100) == 0xCAFE_BABE
+
+
 @pytest.mark.parametrize(
     ("mnemonic", "expected_reason"),
     [
@@ -475,11 +645,18 @@ def test_environment_instructions_stop_with_explicit_status(
 def test_step_limit_stops_infinite_loop() -> None:
     core = PenguinCore(state=_fresh_state())
 
-    perf = core.execute([Instruction("sjal", JType(rd=0, imm=0))], max_instructions=3)
+    perf = core.execute(
+        [
+            Instruction("sjal", JType(rd=0, imm=0)),
+            Instruction("saddi", IType(rd=0, rs1=0, imm=0)),
+            Instruction("saddi", IType(rd=0, rs1=0, imm=0)),
+        ],
+        max_instructions=6,
+    )
 
     assert core.state.stop_reason == StopReason.STEP_LIMIT
-    assert perf.instructions == 3
-    assert perf.cycles == 3
+    assert perf.instructions == 6
+    assert perf.cycles == 6
 
 
 def test_dump_json_trace_emits_region_aware_trace(tmp_path: Path) -> None:

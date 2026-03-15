@@ -52,6 +52,11 @@ effect only after the instructions at `pc + 4` and `pc + 8` retire.
 If a branch or jump produces a non-aligned target, execution must stop with an
 instruction-address-misaligned error.
 
+If another branch or jump executes inside a delay slot, that younger
+control-transfer instruction replaces any older unresolved redirection. The
+younger instruction then contributes its own 2 delay slots before control
+redirects to its resolved target.
+
 ### Memory regions
 
 - DRAM is byte-addressed backing storage
@@ -157,6 +162,8 @@ Semantics:
 - `x[rd] <- pc + 4`
 - execute the 2 delay-slot instructions at `pc + 4` and `pc + 8`
 - after those 2 delay-slot instructions retire, `pc <- pc + imm`
+- if a younger control-transfer instruction executes in one of those delay
+  slots, the younger control transfer replaces this pending redirection
 
 #### `sjalr rd, rs1, imm`
 
@@ -166,6 +173,8 @@ Semantics:
 - `x[rd] <- pc + 4`
 - execute the 2 delay-slot instructions at `pc + 4` and `pc + 8`
 - after those 2 delay-slot instructions retire, `pc <- target`
+- if a younger control-transfer instruction executes in one of those delay
+  slots, the younger control transfer replaces this pending redirection
 
 ### Conditional branches
 
@@ -174,30 +183,48 @@ Semantics:
 If `x[rs1] == x[rs2]`, then branch to `pc + imm` after 2 delay slots, else
 continue sequentially after those same 2 delay slots.
 
+If a younger control-transfer instruction executes in one of the delay slots, it
+replaces this pending redirection.
+
 #### `sbne rs1, rs2, imm`
 
 If `x[rs1] != x[rs2]`, then branch to `pc + imm` after 2 delay slots, else
 continue sequentially after those same 2 delay slots.
+
+If a younger control-transfer instruction executes in one of the delay slots, it
+replaces this pending redirection.
 
 #### `sblt rs1, rs2, imm`
 
 If `signed(x[rs1]) < signed(x[rs2])`, then branch to `pc + imm` after 2 delay
 slots, else continue sequentially after those same 2 delay slots.
 
+If a younger control-transfer instruction executes in one of the delay slots, it
+replaces this pending redirection.
+
 #### `sbge rs1, rs2, imm`
 
 If `signed(x[rs1]) >= signed(x[rs2])`, then branch to `pc + imm` after 2 delay
 slots, else continue sequentially after those same 2 delay slots.
+
+If a younger control-transfer instruction executes in one of the delay slots, it
+replaces this pending redirection.
 
 #### `sbltu rs1, rs2, imm`
 
 If `unsigned(x[rs1]) < unsigned(x[rs2])`, then branch to `pc + imm` after 2
 delay slots, else continue sequentially after those same 2 delay slots.
 
+If a younger control-transfer instruction executes in one of the delay slots, it
+replaces this pending redirection.
+
 #### `sbgeu rs1, rs2, imm`
 
 If `unsigned(x[rs1]) >= unsigned(x[rs2])`, then branch to `pc + imm` after 2
 delay slots, else continue sequentially after those same 2 delay slots.
+
+If a younger control-transfer instruction executes in one of the delay slots, it
+replaces this pending redirection.
 
 ### Scalar memory access
 
@@ -278,15 +305,15 @@ Semantics:
 
 #### `sslli rd, rs1, shamt`
 
-`x[rd] <- x[rs1] << shamt`
+`x[rd] <- x[rs1] << (shamt & 0x1f)`
 
 #### `ssrli rd, rs1, shamt`
 
-`x[rd] <- unsigned(x[rs1]) >> shamt`
+`x[rd] <- unsigned(x[rs1]) >> (shamt & 0x1f)`
 
 #### `ssrai rd, rs1, shamt`
 
-`x[rd] <- signed(x[rs1]) >>> shamt`
+`x[rd] <- signed(x[rs1]) >>> (shamt & 0x1f)`
 
 ### R-type integer compute instructions
 

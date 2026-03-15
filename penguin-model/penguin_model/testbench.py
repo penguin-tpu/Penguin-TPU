@@ -92,6 +92,13 @@ class ScalarProgramBuilder:
     def empty(self, mnemonic: str) -> None:
         self._items.append(Instruction(mnemonic, EmptyType()))
 
+    def nop(self) -> None:
+        self._items.append(Instruction("saddi", IType(rd=0, rs1=0, imm=0)))
+
+    def delay_slots(self) -> None:
+        self.nop()
+        self.nop()
+
     def r(self, mnemonic: str, *, rd: int, rs1: int, rs2: int) -> None:
         self._items.append(Instruction(mnemonic, RType(rd=rd, rs1=rs1, rs2=rs2)))
 

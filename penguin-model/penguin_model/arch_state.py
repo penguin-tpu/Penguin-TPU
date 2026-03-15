@@ -22,6 +22,7 @@ if TYPE_CHECKING:
     from .logging import TraceLogger
 
 DRAM_LATENCY_CYCLES = 10
+CONTROL_FLOW_DELAY_SLOTS = 2
 
 
 class StopReason(str, Enum):
@@ -72,6 +73,8 @@ class ArchState:
     trace_start_cycle: int = 0
     trace_end_cycle: int = 0
     instruction_extra_cycles: int = 0
+    delay_slots_remaining: int = 0
+    control_transfer_set: bool = False
 
     @classmethod
     def with_memory_sizes(
@@ -111,6 +114,8 @@ class ArchState:
         self.stop_reason = None
         self.next_pc = None
         self.instruction_extra_cycles = 0
+        self.delay_slots_remaining = 0
+        self.control_transfer_set = False
 
     def clear_dma_channels(self) -> None:
         for channel in self.dma_channels:
@@ -121,6 +126,8 @@ class ArchState:
             self.stop(StopReason.INSTRUCTION_ADDRESS_MISALIGNED)
             return
         self.next_pc = value & 0xFFFF_FFFF
+        self.delay_slots_remaining = CONTROL_FLOW_DELAY_SLOTS
+        self.control_transfer_set = True
 
     def _log_memory_access(
         self,
@@ -263,5 +270,9 @@ class ArchState:
         self.perf.bytes_written += transfer.size
         dma_channel.pending = None
 
-
-__all__ = ["ArchState", "PerformanceCounters", "StopReason"]
+__all__ = [
+    "ArchState",
+    "CONTROL_FLOW_DELAY_SLOTS",
+    "PerformanceCounters",
+    "StopReason",
+]

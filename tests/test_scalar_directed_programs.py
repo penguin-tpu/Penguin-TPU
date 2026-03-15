@@ -36,10 +36,12 @@ def _add_fail_handlers(builder: ScalarProgramBuilder, fail_codes: range) -> None
         builder.label(f"fail_{fail_code}")
         _li(builder, FAIL_REG, fail_code)
         builder.jal(rd=0, target="done")
+        builder.delay_slots()
 
 
 def _finish_program(builder: ScalarProgramBuilder) -> list:
     builder.jal(rd=0, target="done")
+    builder.delay_slots()
     _add_fail_handlers(builder, range(1, 2))
     builder.label("done")
     return builder.build()
@@ -111,18 +113,23 @@ def _build_branch_case(mnemonic: str, lhs: int, rhs: int, taken: bool) -> list:
     _li(builder, 2, rhs)
     if taken:
         builder.branch(mnemonic, rs1=1, rs2=2, target="pass")
+        builder.delay_slots()
         builder.jal(rd=0, target="fail_1")
+        builder.delay_slots()
         builder.label("pass")
     else:
         builder.branch(mnemonic, rs1=1, rs2=2, target="fail_1")
+        builder.delay_slots()
     return _finish_program(builder)
 
 
 def _build_jal_case() -> list:
     builder = ScalarProgramBuilder()
     builder.jal(rd=10, target="target")
+    builder.delay_slots()
     builder.label("link")
     builder.jal(rd=0, target="fail_1")
+    builder.delay_slots()
     builder.label("target")
     _expect_reg_eq_label(builder, reg=10, label="link")
     return _finish_program(builder)
@@ -132,8 +139,10 @@ def _build_jalr_case() -> list:
     builder = ScalarProgramBuilder()
     builder.li_label(rd=12, target="target", offset=1)
     builder.i("sjalr", rd=11, rs1=12, imm=0)
+    builder.delay_slots()
     builder.label("link")
     builder.jal(rd=0, target="fail_1")
+    builder.delay_slots()
     builder.label("target")
     _expect_reg_eq_label(builder, reg=11, label="link")
     return _finish_program(builder)
@@ -181,7 +190,7 @@ def _build_sfence_case() -> list:
 def test_scalar_u_directed_program_case(mnemonic: str, imm: int, expected: int) -> None:
     program = _build_u_case(mnemonic, imm, expected)
     core, perf = run_scalar_program(program)
-    _assert_program_passed(mnemonic, core, perf, expected_instructions=4, expected_cycles=4)
+    _assert_program_passed(mnemonic, core, perf, expected_instructions=6, expected_cycles=6)
 
 
 @pytest.mark.parametrize(
@@ -204,7 +213,7 @@ def test_scalar_rr_directed_program_case(
 ) -> None:
     program = _build_r_case(mnemonic, lhs, rhs, expected)
     core, perf = run_scalar_program(program)
-    _assert_program_passed(mnemonic, core, perf, expected_instructions=6, expected_cycles=6)
+    _assert_program_passed(mnemonic, core, perf, expected_instructions=8, expected_cycles=8)
 
 
 @pytest.mark.parametrize(
@@ -226,7 +235,7 @@ def test_scalar_imm_directed_program_case(
 ) -> None:
     program = _build_i_case(mnemonic, lhs, imm, expected)
     core, perf = run_scalar_program(program)
-    _assert_program_passed(mnemonic, core, perf, expected_instructions=5, expected_cycles=5)
+    _assert_program_passed(mnemonic, core, perf, expected_instructions=7, expected_cycles=7)
 
 
 @pytest.mark.parametrize(
@@ -251,14 +260,14 @@ def test_scalar_branch_directed_program_case(
 ) -> None:
     program = _build_branch_case(mnemonic, lhs, rhs, taken)
     core, perf = run_scalar_program(program)
-    _assert_program_passed(mnemonic, core, perf, expected_instructions=4, expected_cycles=4)
+    _assert_program_passed(mnemonic, core, perf, expected_instructions=8, expected_cycles=8)
 
 
 @pytest.mark.parametrize(
     ("name", "builder_fn", "expected_instructions"),
     [
-        pytest.param("sjal", _build_jal_case, 4, id="sjal"),
-        pytest.param("sjalr", _build_jalr_case, 5, id="sjalr"),
+        pytest.param("sjal", _build_jal_case, 8, id="sjal"),
+        pytest.param("sjalr", _build_jalr_case, 9, id="sjalr"),
     ],
 )
 def test_scalar_jump_directed_program_case(
@@ -286,8 +295,8 @@ def test_scalar_load_directed_program_case() -> None:
         "sld",
         core,
         perf,
-        expected_instructions=5,
-        expected_cycles=5,
+        expected_instructions=7,
+        expected_cycles=7,
         expected_bytes_read=4,
     )
 
@@ -302,8 +311,8 @@ def test_scalar_store_directed_program_case() -> None:
         "sst",
         core,
         perf,
-        expected_instructions=7,
-        expected_cycles=7,
+        expected_instructions=9,
+        expected_cycles=9,
         expected_bytes_read=4,
         expected_bytes_written=4,
     )
@@ -318,8 +327,8 @@ def test_scalar_x0_load_directed_program_case() -> None:
         "sld-x0",
         core,
         perf,
-        expected_instructions=5,
-        expected_cycles=5,
+        expected_instructions=7,
+        expected_cycles=7,
         expected_bytes_read=4,
     )
 
@@ -327,4 +336,4 @@ def test_scalar_x0_load_directed_program_case() -> None:
 def test_scalar_sfence_directed_program_case() -> None:
     program = _build_sfence_case()
     core, perf = run_scalar_program(program)
-    _assert_program_passed("sfence", core, perf, expected_instructions=2, expected_cycles=2)
+    _assert_program_passed("sfence", core, perf, expected_instructions=4, expected_cycles=4)

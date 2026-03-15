@@ -182,12 +182,20 @@ Implemented today:
   nesting them under `state.memories`
 - the old `MemorySystem` wrapper has been removed; memory-region construction now goes
   through `ArchState.with_memory_sizes(...)`
+- scalar control flow now implements the spec-defined 2 branch/jump delay slots
+- a younger control-transfer instruction in a delay slot now overrides any older pending
+  redirect in both the spec and the model
 - VMEM-only scalar `sld` / `sst`
 - DMA channel issue/wait behavior for DRAM <-> VMEM byte transfers
 - DMA completion timing modeled with 10-cycle DRAM latency
 - trace and execution modeling now separate `EXU.SALU` from `EXU.DMA`
 - DRAM backing in the functional model is page-backed so the 16 GiB region is modeled
   sparsely rather than allocated densely
+- scalar verification is now grouped across ISA/unit tests, directed scalar programs,
+  workload tests, and locked performance regression tests
+- the scalar test surface now covers control-flow delay slots, shift-mask behavior,
+  DMA edge cases, VMEM-only data paths, workload-style address generation/copy/reduction,
+  and performance counters for representative scalar kernels
 
 Not yet implemented:
 

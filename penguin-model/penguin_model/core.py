@@ -160,8 +160,8 @@ class PenguinCore:
             self._trace_exu_ready[execute_lane],
         )
 
-        self.state.next_pc = None
         self.state.instruction_extra_cycles = 0
+        self.state.control_transfer_set = False
         self.state.trace_start_cycle = trace_fetch_start
         self.state.trace_end_cycle = (start_cycle + spec.latency) * TRACE_TICKS_PER_CYCLE
         if logger is not None:
@@ -233,10 +233,18 @@ class PenguinCore:
                     )
 
         if self.state.stop_reason is None:
-            if self.state.next_pc is None:
+            if self.state.control_transfer_set:
                 self.state.pc = (current_pc + 4) & 0xFFFF_FFFF
-            else:
+            elif self.state.delay_slots_remaining > 1:
+                self.state.delay_slots_remaining -= 1
+                self.state.pc = (current_pc + 4) & 0xFFFF_FFFF
+            elif self.state.delay_slots_remaining == 1:
+                self.state.delay_slots_remaining = 0
+                assert self.state.next_pc is not None
                 self.state.pc = self.state.next_pc
+                self.state.next_pc = None
+            else:
+                self.state.pc = (current_pc + 4) & 0xFFFF_FFFF
 
         if logger is not None:
             logger.log_stage_end(
@@ -250,7 +258,7 @@ class PenguinCore:
             if self.state.stop_reason is not None:
                 logger.log_stop(self.state.stop_reason.value, cycle=trace_execute_end)
 
-        self.state.next_pc = None
+        self.state.control_transfer_set = False
 
     def execute(
         self,
