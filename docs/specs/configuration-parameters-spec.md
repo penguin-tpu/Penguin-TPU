@@ -1,6 +1,6 @@
 # Penguin Shared Configuration Parameters
 
-Status: Working Baseline 0.1
+Status: Working Baseline 0.2
 
 ## 1. Purpose
 
@@ -26,12 +26,14 @@ The following parameters are part of the current Penguin baseline.
 | `MREG_ROW_BYTES` | 32 | bytes | Bytes per tensor-register row |
 | `MREG_BYTES` | 2048 | bytes | Total bytes per tensor register |
 | `MXU_COUNT` | 2 | - | Number of architected MXUs |
+| `XLU_COUNT` | 1 | - | Number of architected transpose units |
 | `WEIGHT_SLOTS_PER_MXU` | 2 | - | Number of architected weight slots per MXU |
 | `WEIGHT_TILE_ROWS` | 32 | rows | Rows in one MXU weight tile |
 | `WEIGHT_TILE_COLS_FP8` | 16 | elements | FP8 columns in one MXU weight tile |
 | `WEIGHT_SLOT_BYTES` | 512 | bytes | Bytes per MXU weight slot |
 | `DMA_CHANNELS` | 8 | - | Number of architected DMA channels |
 | `DMA_ALIGN` | 32 | bytes | Required DMA source/destination alignment |
+| `VMEM_TENSOR_ALIGN` | 32 | bytes | Required alignment for `vload`, `vstore`, and `mxu.push.*` |
 | `DRAM_BASE` | `0x8000_0000` | byte address | DRAM base address |
 | `DRAM_SIZE` | `16 GiB` | bytes | DRAM capacity |
 | `IMEM_BASE` | `0x0010_0000` | byte address | IMEM base address |
@@ -62,6 +64,7 @@ memory images:
 - tensor-register geometry affects compiler tiling, VMEM layout, and RTL storage
 - weight-slot geometry affects MXU program shape and test-vector packing
 - DMA channel count and alignment affect synchronization semantics and memory images
+- VMEM tensor-operation alignment affects instruction legality and blob layout
 - memory-map constants affect program loading and runtime addressing
 
 ## 5. Deliberately Not Frozen Yet

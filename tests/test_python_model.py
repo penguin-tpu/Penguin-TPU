@@ -9,7 +9,9 @@ import pytest
 import torch
 
 from penguin_model import (
+    DMA_ALIGNMENT_BYTES,
     DMA_CHANNEL_COUNT,
+    DMAType,
     DRAM_BASE,
     DRAM_SIZE,
     INSTRUCTION_LATENCY,
@@ -336,33 +338,33 @@ def test_scalar_load_store_and_branch_loop_program_uses_vmem_only() -> None:
 
 def test_dma_load_wait_moves_bytes_from_dram_to_vmem() -> None:
     state = _fresh_state()
-    _store_bytes(state.dram, DRAM_BASE + 0x100, [0x10, 0x20, 0x30, 0x40, 0x50, 0x60])
+    _store_bytes(state.dram, DRAM_BASE + 0x100, list(range(0x10, 0x30)))
 
     core = PenguinCore(state=state)
     perf = core.execute(_program("dma_load_wait"))
 
-    assert state.vmem.read(VMEM_BASE + 0x80, 6).tolist() == [0x10, 0x20, 0x30, 0x40, 0x50, 0x60]
-    assert state.dram.read(DRAM_BASE + 0x100, 6).tolist() == [0x10, 0x20, 0x30, 0x40, 0x50, 0x60]
+    assert state.vmem.read(VMEM_BASE + 0x80, 32).tolist() == list(range(0x10, 0x30))
+    assert state.dram.read(DRAM_BASE + 0x100, 32).tolist() == list(range(0x10, 0x30))
     assert core.state.stop_reason == StopReason.PROGRAM_END
     assert perf.instructions == 5
     assert perf.cycles == 13
-    assert perf.bytes_read == 6
-    assert perf.bytes_written == 6
+    assert perf.bytes_read == 32
+    assert perf.bytes_written == 32
 
 
 def test_dma_store_wait_moves_bytes_from_vmem_to_dram() -> None:
     state = _fresh_state()
-    _store_bytes(state.vmem, VMEM_BASE + 0x40, [1, 2, 3, 4, 5, 6, 7, 8])
+    _store_bytes(state.vmem, VMEM_BASE + 0x40, list(range(1, 33)))
 
     core = PenguinCore(state=state)
     perf = core.execute(_program("dma_store_wait"))
 
-    assert state.dram.read(DRAM_BASE + 0x180, 8).tolist() == [1, 2, 3, 4, 5, 6, 7, 8]
+    assert state.dram.read(DRAM_BASE + 0x180, 32).tolist() == list(range(1, 33))
     assert core.state.stop_reason == StopReason.PROGRAM_END
     assert perf.instructions == 5
     assert perf.cycles == 13
-    assert perf.bytes_read == 8
-    assert perf.bytes_written == 8
+    assert perf.bytes_read == 32
+    assert perf.bytes_written == 32
 
 
 def test_dma_load_requires_wait_before_vmem_sees_data() -> None:
@@ -376,8 +378,8 @@ def test_dma_load_requires_wait_before_vmem_sees_data() -> None:
     assert core.state.read_xreg(5) == 0xDEAD_BEEF
     assert perf.instructions == 7
     assert perf.cycles == 14
-    assert perf.bytes_read == 12
-    assert perf.bytes_written == 4
+    assert perf.bytes_read == 40
+    assert perf.bytes_written == 32
 
 
 def test_salu_progresses_while_dma_is_in_flight() -> None:
@@ -415,19 +417,49 @@ def test_dma_wait_without_pending_transfer_is_one_cycle_noop() -> None:
 
 def test_dma_channels_operate_independently() -> None:
     state = _fresh_state()
-    _store_bytes(state.dram, DRAM_BASE + 0x100, [1, 2, 3, 4])
-    _store_bytes(state.dram, DRAM_BASE + 0x120, [5, 6, 7, 8])
+    _store_bytes(state.dram, DRAM_BASE + 0x100, list(range(1, 33)))
+    _store_bytes(state.dram, DRAM_BASE + 0x120, list(range(33, 65)))
 
     core = PenguinCore(state=state)
     perf = core.execute(_program("dma_channels_independent"))
 
-    assert state.vmem.read(VMEM_BASE + 0x40, 4).tolist() == [1, 2, 3, 4]
-    assert state.vmem.read(VMEM_BASE + 0x80, 4).tolist() == [5, 6, 7, 8]
+    assert state.vmem.read(VMEM_BASE + 0x40, 32).tolist() == list(range(1, 33))
+    assert state.vmem.read(VMEM_BASE + 0x80, 32).tolist() == list(range(33, 65))
     assert core.state.stop_reason == StopReason.PROGRAM_END
     assert perf.instructions == 9
     assert perf.cycles == 17
-    assert perf.bytes_read == 8
-    assert perf.bytes_written == 8
+    assert perf.bytes_read == 64
+    assert perf.bytes_written == 64
+
+
+def test_dma_load_with_misaligned_address_stops_execution() -> None:
+    state = _fresh_state()
+    state.write_xreg(1, DRAM_BASE + DMA_ALIGNMENT_BYTES)
+    state.write_xreg(2, VMEM_BASE + 4)
+    state.write_xreg(3, DMA_ALIGNMENT_BYTES)
+
+    INSTRUCTION_SPECS["dma.load.ch0"].semantics(
+        state,
+        DMAType(dram_rs=1, vmem_rs=2, size_rs=3),
+    )
+
+    assert state.stop_reason == StopReason.DMA_MISALIGNED_ADDRESS
+    assert state.dma_channels[0].busy is False
+
+
+def test_dma_load_with_misaligned_size_stops_execution() -> None:
+    state = _fresh_state()
+    state.write_xreg(1, DRAM_BASE + DMA_ALIGNMENT_BYTES)
+    state.write_xreg(2, VMEM_BASE + DMA_ALIGNMENT_BYTES)
+    state.write_xreg(3, DMA_ALIGNMENT_BYTES - 4)
+
+    INSTRUCTION_SPECS["dma.load.ch0"].semantics(
+        state,
+        DMAType(dram_rs=1, vmem_rs=2, size_rs=3),
+    )
+
+    assert state.stop_reason == StopReason.DMA_MISALIGNED_SIZE
+    assert state.dma_channels[0].busy is False
 
 
 def test_misaligned_load_and_store_stop_execution() -> None:

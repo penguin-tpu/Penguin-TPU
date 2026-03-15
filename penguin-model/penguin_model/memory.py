@@ -14,6 +14,7 @@ DRAM_BASE = 0x8000_0000
 IMEM_SIZE = 32 * 1024
 VMEM_SIZE = 1 * 1024 * 1024
 DRAM_SIZE = 16 * 1024 * 1024 * 1024
+DMA_ALIGNMENT_BYTES = 32
 
 DEFAULT_PAGE_SIZE = 4096
 
@@ -163,6 +164,7 @@ class DMAChannel:
 
 
 __all__ = [
+    "DMA_ALIGNMENT_BYTES",
     "DEFAULT_PAGE_SIZE",
     "DMAChannel",
     "DMATransfer",

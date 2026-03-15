@@ -1,6 +1,6 @@
 # Penguin Memory Organization Specification
 
-Status: Working Baseline 0.3
+Status: Working Baseline 0.4
 
 ## 1. Purpose
 
@@ -126,6 +126,21 @@ Rationale:
 - keeps program-loading semantics simple and explicit
 - avoids inventing an instruction-fetch DMA path before the execution model is stable
 
+### 2.9 32-byte tensor-memory alignment
+
+Decision:
+
+- DMA source and destination addresses are 32-byte aligned
+- DMA sizes are integer multiples of 32 bytes
+- VMEM-facing tensor operations also require 32-byte-aligned addresses in the current
+  baseline
+
+Rationale:
+
+- matches the 32-byte tensor-register row quantum
+- simplifies DMA, VMEM access, and tensor-load/store interfaces
+- is a reasonable first alignment rule even before full tensor encodings are frozen
+
 ## 3. Memory Structures
 
 Penguin defines three primary memory structures:
@@ -189,7 +204,7 @@ Architectural properties:
 - VMEM is byte-addressed
 - tensor registers interact with VMEM, not DRAM
 - partial matrix tiles are staged in VMEM before being consumed by the compute units
-- alignment requirements for VMEM accesses are intentionally deferred to a later revision
+- VMEM-facing tensor accesses require 32-byte alignment in the current baseline
 
 ## 4. Data Movement Paths
 
@@ -243,6 +258,7 @@ Initial intended direction:
 - `vstore` moves data from `m` registers into VMEM
 - `vload` and `vstore` operate on whole `m` registers only
 - each `vload` or `vstore` transfers exactly one 2048-byte tensor register image
+- `vload` and `vstore` require 32-byte-aligned VMEM addresses
 - sub-tile windows and partial-row transfers are not part of the current contract
 
 These operations are on-chip and block execution if the transfer is not ready in time.
@@ -262,6 +278,7 @@ Architectural properties:
 - `mxu.push.*` uses scalar-register indirect VMEM addressing
 - one shared memory-base CSR extends `mxu.push.*` addressing beyond the 32-bit
   scalar-register range
+- `mxu.push.*` requires a 32-byte-aligned VMEM source address
 - each `mxu.push.*` transfers exactly one 512-byte weight tile into the selected slot
 
 ## 5. Determinism And Synchronization
@@ -307,9 +324,13 @@ Mandatory rules:
 - a program must not issue `vload`, `vstore`, or `mxu.push.*` against VMEM bytes whose
   correctness depends on an outstanding DMA transfer until the matching `dma.wait.chN`
   has completed
+- a program must not reuse a DMA channel for a new operation while that channel is still
+  busy
 - a program must not assume that two DMA channels become visible in issue order
 - a program must not overlap producer and consumer operations on the same VMEM byte range
   without an explicit ordering point
+- a program must not schedule concurrent tensor instructions that access the same
+  architectural tensor register
 
 If software violates these rules, behavior is architecturally undefined in this revision.
 
@@ -322,6 +343,7 @@ The following access rules are mandatory in this revision:
 - tensor registers do not write DRAM directly
 - tensor registers access VMEM only
 - VPU reads from and writes to `m` registers, not memory directly
+- XLU reads from and writes to `m` registers, not memory directly
 - MXU weight slots are populated from VMEM, not DRAM directly
 
 ## 8. Example Dataflow
@@ -348,5 +370,4 @@ For a weight tile:
 This revision still leaves these items open:
 
 - the exact `vload` / `vstore` instruction encodings
-- VMEM alignment requirements
 - whether VMEM is logically unified or internally partitioned by traffic class

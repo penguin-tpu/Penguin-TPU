@@ -94,14 +94,15 @@ Implication:
 
 ### 4.4 Dedicated transpose unit
 
-Upstream includes an XLU for transpose. Penguin currently has no dedicated transpose unit
-in the frozen baseline.
+Upstream includes an XLU for transpose. Penguin now also plans a dedicated XLU in the
+baseline direction, and the current design direction is to reuse the upstream XLU
+structure as a starting point.
 
-Implication:
+Frozen interpretation:
 
-- transpose, layout reshaping, or similar data movement must currently be handled through
-  VMEM layout choices, VPU support, or later hardware additions
-- if workload analysis proves transpose is hot, this may deserve revisiting
+- XLU is baseline hardware, not a deferred option
+- XLU scope is transpose only
+- Penguin is not currently adopting a broader TPU-style cross-lane function set
 
 ### 4.5 Datatype breadth
 
@@ -113,56 +114,46 @@ Implication:
 - the numeric contract is simpler and easier to verify
 - future broadening should be justified by workload evidence rather than added preemptively
 
-## 5. Questions Or Choice Points Still Worth User Review
+## 5. Resolved User Decisions
 
-These are the remaining places where a real design decision may still be needed.
+### 5.1 Host CSR map
 
-### 5.1 Exact host CSR map
+Resolved direction:
 
-Penguin now defines the logical control/status state it needs, but not the exact MMIO
-layout.
-
-Decision still needed:
-
-- whether to freeze host-visible CSR addresses now or wait for SoC integration
+- the architecture now keeps a required list of host-visible CSRs
+- those CSRs are laid out consecutively in memory
+- the CSR-region base address remains deferred until SoC integration
 
 ### 5.2 Shared memory-base CSR access path
 
-Penguin architecture requires a shared `mem_base` CSR, but the current scalar subset does
-not yet define a full CSR-manipulation instruction path.
+Resolved direction:
 
-Decision still needed:
-
-- host-programmed only for early bring-up
-- or add Penguin scalar CSR instructions earlier
+- host-only programming is sufficient for early bring-up
+- future Penguin code may access the CSR region through MMIO-style loads/stores or direct
+  hardware connections where needed
 
 ### 5.3 DMA channel reuse semantics
 
-The spec now defines busy state and waits, but not whether a channel supports internal
-queuing or exactly one outstanding operation.
+Resolved direction:
 
-Decision still needed:
-
-- single outstanding operation per channel
-- or queued operations behind each channel
+- each DMA channel allows only one outstanding operation
+- software is responsible for not reusing a busy channel
+- the functional/performance model should check this and fail explicitly on violation
 
 ### 5.4 VMEM alignment for tensor-facing operations
 
-DMA alignment is now frozen at 32 bytes. VMEM alignment for `vload`, `vstore`, and
-`mxu.push.*` is still open.
+Resolved direction:
 
-Decision still needed:
+- `vload`, `vstore`, and `mxu.push.*` require 32-byte alignment for now
+- this is still allowed to change in a later revision if implementation pressure justifies
+  it
 
-- likely choose between 32-byte alignment and stronger whole-object alignment
+### 5.5 Exact XLU contract
 
-### 5.5 Dedicated transpose support
+Resolved direction:
 
-The upstream XLU makes the cost of transpose explicit. Penguin currently leaves this out.
-
-Decision still needed:
-
-- keep transpose out of hardware for the first slice
-- or add a narrow transpose/move primitive if compiler analysis shows it is unavoidable
+- XLU only needs to handle transpose in the current Penguin baseline
+- broader TPU-style cross-lane functions are intentionally out of scope for now
 
 ## 6. Risks And Pitfalls Still Not Fully Covered
 
@@ -173,33 +164,31 @@ These are important even though they are not all ready to freeze yet.
 Whole-register execution means non-multiple problem shapes must be handled by padding,
 masked software scheduling, or layout choices.
 
-Missing contract:
+Resolved direction:
 
-- exact zero-fill or padding rules in the executable package and compiler output
+- software is responsible for placing memory in the correct tiled layout
+- software applies zero padding at tile granularity
+- OpenXLA tiled-layout material is a useful non-normative reference
 
 ### 6.2 Floating-point corner semantics
 
-The spec now covers output rounding and saturation, but it still does not fully define:
+Resolved direction:
 
-- NaN behavior
-- infinity behavior
-- subnormal handling
-- FP8/BF16 conversion corner cases
+- subnormals are treated as zero
+- infinities are not supported as a normal architectural outcome
+- overflow clamps to the largest-magnitude representable value
+- FP8/BF16 conversion uses round-to-nearest
+- NaNs are expected to be absent in valid software-generated workloads, but propagate if
+  encountered
 
-### 6.3 Trap behavior with in-flight long-chime operations
+### 6.3 Error handling model
 
-The scalar subset has trap conditions, but the tensor-side spec does not yet say what
-happens if a trap, halt, or host stop occurs while MXU/VPU work is in flight.
+Resolved direction:
 
-Missing contract:
-
-- drain before halt
-- immediate stop
-- or precise/imprecise trap policy
-
-Saturn is a useful reference here because it is explicit about commit boundaries and
-precise-fault handling. Penguin will almost certainly want a much simpler rule, but it
-should still be a consciously chosen rule.
+- Penguin does not support general trap or interrupt handling
+- on any architecturally detected error, execution halts and the error state is reported
+  via CSR/status
+- Penguin does not attempt recovery or exception-handler dispatch
 
 ### 6.4 Same-register simultaneous access
 
@@ -207,17 +196,19 @@ Penguin now rules out partial architectural completion, but it still needs a sha
 for same-cycle read/write or write/write targeting the same tensor register by different
 units.
 
-Missing contract:
+Resolved direction:
 
-- whether issue must prevent those cases
-- or whether arbitration plus a deterministic priority rule is allowed
+- multiple in-flight tensor instructions may not access the same architectural tensor
+  register
+- software is responsible for avoiding those cases
+- future perf modeling should check this rule explicitly
 
 ### 6.5 Executable-package schema
 
 The machine now has enough frozen structure that the package format should be defined
 soon.
 
-Missing contract:
+Still deferred:
 
 - IMEM image format
 - assembly/binary relationship
@@ -232,4 +223,3 @@ The next useful documents or revisions should be:
 2. executable-package spec
 3. tensor layout / padding / packing spec
 4. host control and CSR map spec
-5. floating-point corner-case behavior note

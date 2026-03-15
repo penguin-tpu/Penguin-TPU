@@ -39,12 +39,13 @@ is not itself fully defined by RV32I-style integer instructions:
 - one shared `mem_base` CSR used by memory-like tensor and DMA instructions to extend
   addressing beyond the raw 32-bit scalar-register range
 - execution-control state that enables or halts accelerator fetch
-- execution-status state that reports halt, done, or trap outcome
+- execution-status state that reports halt, done, or error outcome
 - DMA busy state for the 8 architected DMA channels
 
 The current scalar instruction subset does not yet define a full CSR-manipulation ISA for
-this state. In the baseline launch model, host-side software or future Penguin-specific
-CSR instructions may initialize or observe it.
+this state. In the baseline launch model, host-side software initializes or observes it.
+Later revisions may allow Penguin scalar code to access the same CSR region through
+MMIO-style load/store sequences or direct hardware connections.
 
 ### Program counter
 
@@ -277,6 +278,7 @@ Semantics:
   to VMEM at `x[rs_vmem]` on channel `N`
 - `x[rs_dram]` and `x[rs_vmem]` must both be 32-byte aligned
 - `x[rs_size]` must be a multiple of 32 bytes
+- the operation is only legal if channel `N` is currently idle
 - completion is not architecturally visible until `dma.wait.chN`
 
 #### `dma.store.chN rs_dram, rs_vmem, rs_size`
@@ -287,6 +289,7 @@ Semantics:
   to DRAM at `x[rs_dram]` on channel `N`
 - `x[rs_dram]` and `x[rs_vmem]` must both be 32-byte aligned
 - `x[rs_size]` must be a multiple of 32 bytes
+- the operation is only legal if channel `N` is currently idle
 - completion is not architecturally visible until `dma.wait.chN`
 
 #### `dma.wait.chN`
@@ -388,11 +391,11 @@ with RV32I.
 
 #### `secall`
 
-`secall` terminates execution with an environment-call trap status.
+`secall` terminates execution with an environment-call halt status.
 
 #### `sebreak`
 
-`sebreak` terminates execution with a breakpoint trap status.
+`sebreak` terminates execution with a breakpoint halt status.
 
 ## Functional Model Contract
 
@@ -407,6 +410,8 @@ behavior:
 - distinct DRAM, IMEM, and VMEM regions in the architectural state
 - scalar data loads and stores bound to VMEM rather than DRAM
 - DMA issue and wait behavior for DRAM <-> VMEM transfers
+- explicit DMA failure on channel reuse while a channel is still busy
+- explicit DMA failure on misaligned DMA address or size
 - explicit instruction-address-misaligned failures for invalid branch and jump
   targets
 - explicit misaligned-load and misaligned-store failures for `sld` and `sst`

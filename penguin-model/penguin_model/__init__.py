@@ -56,6 +56,7 @@ from .isa import (
 )
 from .logging import RetireType, TraceLogger, TraceLoggerConfig
 from .memory import (
+    DMA_ALIGNMENT_BYTES,
     DMAChannel,
     DMATransfer,
     DRAM_BASE,
@@ -72,6 +73,7 @@ __all__ = [
     "AssemblyProgram",
     "AssemblySyntaxError",
     "BType",
+    "DMA_ALIGNMENT_BYTES",
     "DMAChannel",
     "DMAType",
     "DMATransfer",

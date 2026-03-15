@@ -33,17 +33,14 @@ def test_scalar_benchmark_address_generation_perf() -> None:
 def test_scalar_benchmark_dma_overlap_hides_transfer_latency() -> None:
     core, perf = run_scalar_program(
         "scalar/performance/dma_overlap.S",
-        dram_words={0x100 + index * 4: value for index, value in enumerate((9, 8, 7, 6))},
+        dram_words={0x100 + index * 4: value for index, value in enumerate(range(1, 9))},
     )
 
-    assert [core.state.vmem.load_u32(VMEM_BASE + 0x100 + index * 4) for index in range(4)] == [
-        9,
-        8,
-        7,
-        6,
-    ]
+    assert [core.state.vmem.load_u32(VMEM_BASE + 0x100 + index * 4) for index in range(8)] == list(
+        range(1, 9)
+    )
     assert core.state.read_xreg(20) == 9
     assert perf.instructions == 14
     assert perf.cycles == 14
-    assert perf.bytes_read == 16
-    assert perf.bytes_written == 16
+    assert perf.bytes_read == 32
+    assert perf.bytes_written == 32

@@ -51,6 +51,8 @@ decisions, not open brainstorming.
   state, and the shared memory-base CSR
 - structural conflicts are resolved by stalls/arbitration, not by partial architectural
   completion
+- Penguin does not support general trap or interrupt recovery; errors halt and report
+  status
 
 Reasoning:
 
@@ -66,6 +68,8 @@ Reasoning:
 - one flat tensor register file shared across data types
 - whole-register tensor operations only
 - full-connectivity tensor crossbar between registers and functional units
+- one architecturally visible XLU for transpose work
+- XLU scope is now frozen to transpose only
 
 Reasoning:
 
@@ -73,6 +77,8 @@ Reasoning:
 - no type-specific tensor storage classes
 - no sub-tile window semantics in the first ISA cut
 - no architectural bank partitioning rules
+- dedicated transpose hardware avoids forcing layout-reordering work into VMEM or VPU
+- broader TPU-style cross-lane functionality is intentionally deferred
 
 ### MXU architecture
 
@@ -126,6 +132,20 @@ Reasoning:
 - gives a small but useful first VPU floor
 - avoids hidden data movement semantics
 
+### XLU contract
+
+- one architecturally visible XLU
+- XLU reads directly from `m` registers
+- XLU writes only to `m` registers
+- whole-register operations only
+- intended for transpose work
+
+Reasoning:
+
+- transpose is important enough to be a first-class accelerator operation
+- keeps tensor reordering out of MXU and out of DMA
+- avoids awkward software-only transpose sequences for common layouts
+
 ### Memory organization
 
 - DRAM: backing data storage
@@ -150,11 +170,14 @@ Reasoning:
 - `mxu.push.*` is a blocking VMEM -> `w*` transfer
 - `vload` / `vstore` transfer one full 2048-byte tensor register image
 - `mxu.push.*` transfers one full 512-byte weight tile
+- `vload` / `vstore` / `mxu.push.*` all require 32-byte-aligned VMEM addresses
 - DMA, `vload` / `vstore`, and `mxu.push.*` all use scalar-register indirect addressing
 - one shared memory-base CSR extends addressing beyond the 32-bit scalar range
 - IMEM is populated before execution by host-side software or firmware
 - `dma.wait.chN` returns immediately if the channel is already idle
 - DMA completion order across channels is not guaranteed by issue order
+- each DMA channel supports only one outstanding operation
+- software provides tiled tensor layout and tile-level zero padding
 
 Reasoning:
 
@@ -220,11 +243,15 @@ Implemented today:
 - the Saturn Microarchitecture Manual was noted as an additional future reference,
   especially for frontend/fault/memory-ordering questions that Penguin has not fully
   frozen yet
+- user review then resolved several previously open items: host CSR block semantics,
+  host-only early `MEM_BASE` programming, single-outstanding DMA channels, 32-byte
+  VMEM tensor alignment, transpose-only XLU scope, tile-level zero padding, and the
+  no-recovery error model
 
 Not yet implemented:
 
 - tensor instructions
-- MXU/VPU execution
+- MXU/VPU/XLU execution
 - executable package
 - compiler lowering
 
@@ -233,24 +260,23 @@ Not yet implemented:
 1. Define the executable package and manifest.
 2. Add formal tensor layout/packing spec, especially padding and tail-handling rules.
 3. Add a first binary/text assembly encoding spec for 32-bit instructions.
-4. Define the host control and CSR map for launch, halt, done, and trap reporting.
+4. Define the host control and CSR map for launch, halt, done, and error reporting.
 5. Implement tensor transfer instructions: `vload`, `vstore`, `mxu.push.*`.
-6. Implement the first tensor-side functional stubs for `matmul.*` and the initial VPU
-   op floor.
+6. Implement the first tensor-side functional stubs for `matmul.*`, XLU transpose, and
+   the initial VPU op floor.
 
 ## Remaining Open Items
 
 Only a small set of important questions remain:
 
-- VMEM alignment requirements
 - exact DMA instruction shapes
 - exact `vload` / `vstore` encodings
-- exact host-side CSR address map and access path
-- exact DMA channel reuse / queueing semantics
+- exact host-side CSR-region base address and field layout
+- exact DMA instruction shapes for tensor-era programs
+- exact XLU transpose instruction encoding and sequencing
 - whether VMEM is logically unified or internally partitioned by traffic class
 - final tensor ISA encoding details
-- floating-point corner-case behavior for FP8/BF16 conversion and arithmetic
-- precise halt / trap policy while long-chime tensor operations are in flight
+- halt behavior while long-chime tensor operations are in flight
 
 ## Checkpoint Note
 

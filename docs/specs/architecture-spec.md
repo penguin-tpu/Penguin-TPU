@@ -1,6 +1,6 @@
 # Penguin Architecture Specification
 
-Status: Working Baseline 0.3
+Status: Working Baseline 0.4
 
 ## 1. Purpose
 
@@ -14,6 +14,7 @@ an accelerator-first design with:
 - a tensor register file holding two-dimensional tiles
 - two matrix execution units (MXUs) for dense matrix-style arithmetic
 - a vector processing unit (VPU) for row-wise elementwise or reduction-style work
+- a cross-lane transpose unit (XLU) for transpose work
 - a single-instruction fetch and issue frontend rather than a VLIW issue bundle
 
 This specification captures architecture-visible behavior. Implementation tradeoffs and
@@ -163,7 +164,23 @@ Rationale:
 - avoids creating a second hidden data-movement path
 - gives a useful first elementwise floor without overcommitting to a large VPU ISA
 
-### 3.10 Explicit execution-state contract
+### 3.10 XLU as a register-to-register transpose unit
+
+Decision:
+
+- Penguin includes one architecturally visible XLU
+- XLU reads tensor registers and writes tensor registers only
+- XLU is intended for transpose work only in the baseline design
+
+Rationale:
+
+- makes transpose-style data movement a first-class accelerator operation
+- avoids forcing awkward transpose flows through VMEM or elementwise VPU sequences
+- keeps tensor reordering separate from arithmetic units and DMA
+- avoids overcommitting to a broader cross-lane function set before the workload requires
+  it
+
+### 3.11 Explicit execution-state contract
 
 Decision:
 
@@ -178,7 +195,7 @@ Rationale:
 - keeps host control and accelerator-local execution semantics from being left implicit
 - avoids burying architecturally relevant status in implementation-only notes
 
-### 3.11 No partial architectural retirement on structural conflict
+### 3.12 No partial architectural retirement on structural conflict
 
 Decision:
 
@@ -221,8 +238,18 @@ The current baseline requires the following architecture-visible state:
   accelerator
 - DMA channel busy state for the 8 architected DMA channels
 
-This section defines the required logical state only. The exact CSR encodings and host
-bus addresses are intentionally left to the SoC-integration specification.
+This section defines the required logical state only. The exact CSR encodings and CSR
+region base address are intentionally left to the SoC-integration specification.
+
+The baseline does, however, require one host-visible CSR region containing a consecutive
+logical block of at least:
+
+- `CTRL`
+- `STATUS`
+- `PC`
+- `MEM_BASE`
+- `DMA_BUSY`
+- scalar architectural registers `x0` through `x31`
 
 ### 4.1.2 Host launch and completion model
 
@@ -235,10 +262,17 @@ Architecture-visible requirements:
   phase depends on it
 - the accelerator begins fetching only after host-visible execution-control state enables
   execution
-- completion, halt, or trap outcome must be observable through host-visible status state
+- completion or error-halt outcome must be observable through host-visible status state
 
 The exact MMIO map is not frozen here, but the launch model is: the accelerator is not
 self-booting and does not fetch its program directly from DRAM in the baseline design.
+
+In the early bring-up model:
+
+- the host is responsible for initializing CSR state such as `MEM_BASE`
+- Penguin does not yet require a dedicated scalar CSR-manipulation ISA
+- future revisions may allow Penguin scalar code to access the same CSR region through
+  MMIO-style loads and stores or direct hardware connections where appropriate
 
 ### 4.2 Tensor register file
 
@@ -253,8 +287,8 @@ Architecture-visible requirements:
 - all tensor data types share the same flat architectural register file
 - the same tensor register may be viewed using different element types as defined by the
   instruction semantics
-- tensor registers are the main source operands for MXU and VPU instructions
-- tensor registers are read in row order by both MXU and VPU execution
+- tensor registers are the main source operands for MXU, VPU, and XLU instructions
+- tensor registers are read in row order by MXU, VPU, and XLU execution
 - every functional unit may access every tensor register through a shared interconnect
 - tensor register contents persist until overwritten by an architectural instruction
 
@@ -404,6 +438,30 @@ The VPU also does not directly write to memory in the current architecture direc
 The exact supported vector opcode set beyond the initial elementwise subset is not frozen
 in this revision.
 
+### 4.5 Cross-lane transpose unit
+
+The XLU executes long-chime transpose operations over tensor-register tiles.
+
+Architecture-visible requirements:
+
+- XLU instructions launch multi-cycle operations
+- XLU reads source data from `m0..m63`
+- XLU writes results only to `m0..m63`
+- XLU instructions operate on whole tensor registers as operands and destinations
+- XLU does not directly access VMEM or DRAM
+- XLU latency is deterministic for a fixed instruction form and configuration
+- XLU exists to implement transpose operations that are not a natural fit for MXU or VPU
+
+Baseline design direction:
+
+- the XLU may reuse the shift-based transpose structure described in the upstream
+  `npu_model` reference design
+- the architecture only commits to transpose support, not a broad family of rotate,
+  reduction, or pack-unpack operations
+
+The exact XLU instruction encoding and detailed multi-instruction transpose sequencing are
+not frozen in this revision.
+
 ## 5. Execution Model
 
 ### 5.1 Single-instruction frontend
@@ -503,6 +561,20 @@ The baseline architecture now defines the following reset expectations:
 Software must not rely on reset-time contents of architectural data state other than
 values explicitly defined above.
 
+### 5.7 Error handling model
+
+Penguin does not support general trap or interrupt recovery in the baseline design.
+
+Current rule:
+
+- if execution encounters an architecturally defined error condition, the accelerator
+  halts
+- the halt reason is reported through host-visible status state
+- the machine does not attempt recovery, trap handling, or restart from an exception
+  handler
+- environment instructions such as `secall` and `sebreak` are modeled as terminal halt
+  conditions rather than recoverable exceptions
+
 ## 6. Determinism Requirements
 
 For a fixed hardware configuration, the following shall be deterministic:
@@ -510,12 +582,42 @@ For a fixed hardware configuration, the following shall be deterministic:
 - scalar instruction latency
 - MXU instruction latency
 - VPU instruction latency
+- XLU instruction latency
 - architectural read and write ordering at instruction granularity
 
 Off-chip memory operations are explicitly excluded from single-latency determinism. Their
 completion is governed by asynchronous memory behavior plus explicit synchronization.
 
 This determinism is required so that compile-time scheduling remains meaningful.
+
+## 6.1 Tensor layout and padding responsibility
+
+The architecture assumes that software provides tensor data in the tiled layout expected
+by the issued program.
+
+Baseline rule:
+
+- the compiler or host-side packer is responsible for arranging tensor blobs in the
+  correct tiled layout
+- if a logical tensor shape does not fill a complete architectural tile, software must
+  apply zero padding at tile granularity
+- hardware does not synthesize masked tails automatically in the baseline design
+
+The OpenXLA tiled-layout material is a useful non-normative reference for this software
+packing problem, but Penguin will still need its own formal tensor-layout specification.
+
+## 6.2 Floating-point corner semantics
+
+The baseline tensor numeric model is intentionally narrow.
+
+Current rule:
+
+- subnormal inputs are treated as zero
+- operations do not intentionally produce IEEE infinities; values that overflow the
+  supported destination range clamp to the largest-magnitude representable value
+- BF16-to-FP8 conversion uses round-to-nearest
+- NaNs are not expected in valid software-generated workloads
+- if NaNs are encountered anyway, they propagate through the computation
 
 ## 7. Architectural Differences From Google TPU
 
@@ -528,6 +630,7 @@ Penguin intentionally preserves these TPU-like characteristics:
 
 - tile-oriented execution
 - explicit matrix and vector units
+- a dedicated transpose unit
 - long-lived tensor operands in a dedicated register file
 - compiler-visible deterministic execution timing
 
@@ -565,17 +668,18 @@ The intended memory-model split is:
   completion
 - DMA waits apply to specific channels such as `dma.wait.ch1`
 
-Alignment requirements for VMEM-facing operations remain to be specified later.
-IMEM fetch requires 4-byte alignment.
+VMEM-facing tensor operations require 32-byte alignment in the current baseline
+direction. IMEM fetch requires 4-byte alignment.
 
 ## 9. Remaining Open Architectural Items
 
 The following items remain open in this revision:
 
 - exact VPU opcode set
+- exact XLU transpose instruction encoding
 - exact matrix instruction set
 - executable-package format for program plus tensor data
-- exact host-side CSR address map and launch MMIO protocol
+- exact host-side CSR-region base address and launch MMIO protocol
 
 ## 10. Required Companion Specifications
 

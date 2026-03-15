@@ -7,6 +7,7 @@ from enum import Enum
 from typing import TYPE_CHECKING
 
 from .memory import (
+    DMA_ALIGNMENT_BYTES,
     DRAM_BASE,
     DRAM_SIZE,
     IMEM_BASE,
@@ -35,6 +36,8 @@ class StopReason(str, Enum):
     MISALIGNED_STORE = "misaligned_store"
     INSTRUCTION_ADDRESS_MISALIGNED = "instruction_address_misaligned"
     DMA_CHANNEL_BUSY = "dma_channel_busy"
+    DMA_MISALIGNED_ADDRESS = "dma_misaligned_address"
+    DMA_MISALIGNED_SIZE = "dma_misaligned_size"
     STEP_LIMIT = "step_limit"
 
 
@@ -180,6 +183,14 @@ class ArchState:
         dma_channel = self.dma_channels[channel]
         if dma_channel.busy:
             self.stop(StopReason.DMA_CHANNEL_BUSY)
+            return
+
+        if dram_address % DMA_ALIGNMENT_BYTES != 0 or vmem_address % DMA_ALIGNMENT_BYTES != 0:
+            self.stop(StopReason.DMA_MISALIGNED_ADDRESS)
+            return
+
+        if size % DMA_ALIGNMENT_BYTES != 0:
+            self.stop(StopReason.DMA_MISALIGNED_SIZE)
             return
 
         if direction == "load":

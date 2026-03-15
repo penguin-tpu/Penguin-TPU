@@ -2,6 +2,6 @@
 
     li x1, 0x80000100
     li x2, 0x08000020
-    li x3, 0x00000004
+    li x3, 0x00000020
     dma.load.ch1 x1, x2, x3
     dma.load.ch1 x1, x2, x3

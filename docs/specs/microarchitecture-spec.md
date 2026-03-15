@@ -1,6 +1,6 @@
 # Penguin Microarchitecture Specification
 
-Status: Working Baseline 0.3
+Status: Working Baseline 0.4
 
 ## 1. Purpose
 
@@ -34,7 +34,7 @@ Rationale:
 
 Decision:
 
-- `mxu0`, `mxu1`, and VPU may be active concurrently
+- `mxu0`, `mxu1`, VPU, and XLU may be active concurrently
 - only one new instruction may be issued in a cycle
 
 Rationale:
@@ -127,7 +127,7 @@ The intended Penguin microarchitecture is organized around four major subsystems
 - a single-instruction scalar fetch, decode, and issue frontend
 - a scalar execution path for control and orchestration
 - a tensor register file with 64 architectural tile registers
-- long-latency tensor functional units: `mxu0`, `mxu1`, and VPU
+- long-latency tensor functional units: `mxu0`, `mxu1`, VPU, and XLU
 
 The scalar path is responsible for launching long-chime tensor work. The tensor units are
 responsible for sustaining throughput over many cycles after a single issue event.
@@ -207,7 +207,7 @@ Microarchitectural requirements:
 - each row stores 32 bytes
 - the register file is physically shared across tensor data types
 - instruction semantics define how a given operation interprets row contents
-- both MXU and VPU consume tensor operands in row order
+- MXU, VPU, and XLU consume tensor operands through the shared tensor-register structure
 - a central crossbar connects tensor registers to the functional units
 - every functional unit can access every tensor register through that crossbar
 - the tensor register file must support row-wise readout at the throughput required by
@@ -263,12 +263,15 @@ state:
 
 - execution enable / disable state
 - current `pc`
-- halt / done / trap outcome state
+- halt / done / error outcome state
 - DMA busy indication for all 8 channels
 
 On reset, execution is disabled, DMA channels are idle, and any in-flight issue-side
 state is cleared. Tensor data arrays and weight slots need not be zeroed by reset unless
 some later integration requirement states otherwise.
+
+The CSR region containing this control and status state should be laid out consecutively
+in memory. The exact region base address remains a SoC-integration choice.
 
 ## 9. Matrix Execution Units
 
@@ -355,7 +358,28 @@ Microarchitectural expectations:
 
 The VPU exists to handle tensor work that is not best mapped onto the MXU.
 
-## 11. DMA And Memory Stall Behavior
+## 11. Cross-Lane Transpose Unit
+
+The XLU is a dedicated transpose unit that shares the tensor-register and
+long-chime execution model with the other tensor-side functional units.
+
+Microarchitectural expectations:
+
+- XLU operands are read from the tensor register file through the shared crossbar
+- XLU results are written back to the tensor register file rather than directly to memory
+- XLU operates on whole-register sources and destinations at the architectural level
+- XLU latency is deterministic for a fixed instruction form and configuration
+- XLU may execute concurrently with MXU or VPU when scheduling and structural resources
+  permit
+- the baseline XLU scope is transpose only
+- the implementation may reuse the shift-based transpose structure from the upstream
+  `npu_model` design as a starting point
+
+The detailed internal transpose fabric is intentionally not frozen in this revision. The
+important contract is that XLU is a dedicated on-chip transpose unit, not a DMA
+substitute.
+
+## 12. DMA And Memory Stall Behavior
 
 The first microarchitecture should make DMA behavior explicit enough for model and RTL
 alignment.
@@ -373,7 +397,13 @@ Microarchitectural expectations:
 The important invariant is that a channel-specific wait only releases once the
 architecture-visible destination bytes are valid for the transfer issued on that channel.
 
-## 12. Memory-System Direction
+Baseline DMA constraint:
+
+- each DMA channel supports at most one outstanding operation at a time
+- software is responsible for fencing or otherwise retiring a channel before reusing it
+- the functional/performance model should detect channel reuse violations explicitly
+
+## 13. Memory-System Direction
 
 The memory structure is an explicit intermediate milestone between scalar-core bring-up
 and matrix acceleration.
@@ -398,11 +428,12 @@ The future memory structure must support:
 - CSR-based high-address extension for memory regions beyond the 32-bit scalar range
 - one shared memory-base CSR rather than separate per-memory-space base CSRs
 - deterministic behavior suitable for static scheduling
-- concurrent MXU and VPU operation when bandwidth and structural resources permit
+- concurrent MXU, VPU, and XLU operation when bandwidth and structural resources permit
 - asynchronous off-chip transfers
 - explicit completion synchronization for off-chip transfers
 - channel-specific DMA completion waits
 - blocking on-chip transfers between VMEM and compute-local storage
+- 32-byte alignment for DMA and VMEM-facing tensor operations
 
 Software should still schedule with structural resource limits in mind, but tensor
 register reachability itself should not be restricted by static register partitioning.
@@ -410,7 +441,7 @@ register reachability itself should not be restricted by static register partiti
 Formal details are further defined in
 [memory-organization-spec.md](/home/tk/Desktop/Penguin-TPU/docs/specs/memory-organization-spec.md).
 
-## 13. Performance And Comparison Goals
+## 14. Performance And Comparison Goals
 
 The microarchitecture is intended to support disciplined comparison rather than ad hoc
 tuning.
@@ -423,7 +454,7 @@ At minimum, the design flow should eventually compare `mxu0` and `mxu1` on:
 - achievable clock frequency
 - energy or power proxies when available
 
-## 14. Remaining Open Microarchitectural Items
+## 15. Remaining Open Microarchitectural Items
 
 This revision still leaves these items open:
 
@@ -431,11 +462,12 @@ This revision still leaves these items open:
 - exact long-chime pipeline depth per unit
 - exact busy-bit or scoreboard structure
 - exact scalar-to-tensor hazard rules
+- exact XLU datapath organization and instruction shapes
 - exact DMA instruction shapes
 - exact VMEM-facing tensor load/store instruction shapes
-- exact VMEM alignment requirements
+- halt behavior when an unrecoverable error arrives with long-chime work in flight
 
-## 15. Immediate Next Spec Work
+## 16. Immediate Next Spec Work
 
 The next design-spec iterations should define:
 
@@ -443,4 +475,5 @@ The next design-spec iterations should define:
 - the tensor instruction set
 - the executable-package format
 - the tile data-layout rules
+- the XLU instruction contract
 - the criteria for comparing `mxu0` versus `mxu1`

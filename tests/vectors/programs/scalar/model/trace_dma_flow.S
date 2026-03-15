@@ -2,7 +2,7 @@
 
     li x1, 0x80000020
     li x2, 0x08000080
-    li x3, 0x00000004
+    li x3, 0x00000020
     dma.load.ch0 x1, x2, x3
     dma.wait.ch0
     sld x4, 0x00000000(x2)
