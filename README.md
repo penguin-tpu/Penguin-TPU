@@ -24,10 +24,13 @@ pyproject.toml     Root uv workspace
 
 To keep the first version manageable:
 
+- first implement a function-complete RISC-V-like integer scalar core
+- then establish the proper memory structure around that scalar core
+- then build the testing and validation system around the scalar and memory path
+- only after that add matrix processing and other accelerator-specific features
 - support one specific PyTorch model first
 - skip a general IR and export assembly directly
 - separate the compile flow and perf model flow into two top-level Python packages
-- support a tiny operator set first: GEMM, add, ReLU, data movement
 - let both packages interact through an executable package: assembly + JSON manifest + binary constants
 - keep one hardware target first: a single RTL core and one FPGA board
 - keep one verification loop first: framework -> penguin-model -> RTL

@@ -2,266 +2,224 @@
 
 ## Current State
 
-This repository has moved beyond pure scaffolding.
-
-The first real `penguin-model` execution slice now exists:
-
-- Torch-backed byte-addressed memory
-- explicit scalar instruction classes with Python semantics
-- a minimal execution core with integer and float register files
-- performance counters for cycles, bytes, and per-opcode counts
-- a scalar float32 matmul builder that uses the implemented instruction subset
-- tests that verify `lw`, `sw`, and matmul correctness against PyTorch
-
-Recent project policy update:
-
-- `docs/specs/` is now explicitly reserved for formal architecture and
-  microarchitecture specification documents.
-- All repository documents should be human-facing except `AGENTS.md` and `SOUL.md`.
-- Agents are expected to create git checkpoint commits at meaningful stable points.
-- `SOUL.md` should track intentions and unresolved questions alongside technical state.
-
-Current checkpoint intention:
-
-- create the initial framework commit once the repository scaffold, package split,
-  agent guidance, and planning documents are coherent
-- treat this checkpoint as a baseline for future implementation work, not as proof of
-  working functionality
+The repository is no longer just a scaffold. The design direction is now stable enough
+to treat the current spec set as the baseline for implementation.
 
 What exists now:
 
-- top-level `uv` workspace in `pyproject.toml`
-- two top-level Python package shells:
+- a `uv` workspace with two Python packages:
   - `penguin-compiler`
   - `penguin-model`
-- package metadata and placeholder CLI entry points
-- a working scalar functional model in `penguin-model` for:
-  - `lw`
-  - `sw`
-  - `flw`
-  - `fsw`
-  - `fmul.s`
-  - `fadd.s`
-- top-level docs:
-  - `README.md`
-  - `docs/specs/scalar-functional-subset.md`
-- hardware directory split under `rtl/`:
-  - `rtl/penguin_tpu`
-  - `rtl/vivado_ips`
-- top-level `tests/` directory structure for vectors, unit tests, cocotb, and regressions
+- a working scalar integer functional model in `penguin-model`
+- scalar tests covering the current RV32I-derived scalar subset
+- a directed scalar-program testbench for the functional/perf model, including
+  label-resolved self-checking programs inspired by `riscv-tests` `rv32ui`
+- a GitHub Actions CI workflow that installs the `uv` workspace and runs
+  the full Python test suite on pushes and pull requests
+- formal baseline specs:
+  - [scalar-functional-subset.md](/home/tk/Desktop/Penguin-TPU/docs/specs/scalar-functional-subset.md)
+  - [architecture-spec.md](/home/tk/Desktop/Penguin-TPU/docs/specs/architecture-spec.md)
+  - [microarchitecture-spec.md](/home/tk/Desktop/Penguin-TPU/docs/specs/microarchitecture-spec.md)
+  - [memory-organization-spec.md](/home/tk/Desktop/Penguin-TPU/docs/specs/memory-organization-spec.md)
 
 What does not exist yet:
 
-- actual compiler logic
-- assembly parser / bundle-driven model execution logic
+- actual `penguin-compiler` export logic
 - executable package loader/writer implementation
-- ISA specification
-- `manifest.json` schema
-- tensor layout specification
-- golden vectors
-- working RTL testbench flow
-- FPGA bring-up scripts
-
-## Progress Summary
-
-The project has converged on a deliberate architectural stance:
-
-- keep scope narrow
-- target one fixed model first
-- avoid a general IR
-- separate compiler and model into two Python packages
-- let both packages communicate through an executable package
-
-This is a good decision for getting a first vertical slice working quickly.
-
-## Ground Truth About The Code
-
-`penguin-compiler` currently contains only:
-
-- package metadata
-- a minimal `ExecutableBundle` dataclass
-- a CLI stub that exits with “not implemented yet”
-
-`penguin-model` now contains:
-
-- Torch-backed main memory modeled after the referenced Google TPU Python memory style
-- executable instruction semantics for a minimal scalar subset
-- a small execution core and simple performance counters
-- a scalar matmul program builder used for the first functional tests
-- a CLI that no longer lies about total package emptiness, but still does not load bundles
-
-There is no shared implementation beyond those stubs.
-
-## Immediate TODOs
-
-### 1. Freeze the executable package contract
-
-Define exactly:
-
-- assembly file naming
-- `manifest.json` schema
-- constants blob format
-- input/output blob conventions
-- address and memory-region encoding
-
-Without this, the compiler, model, and RTL will drift.
-
-### 2. Write the missing specs
-
-Add files under `docs/specs/` for:
-
-- architecture specification
-- microarchitecture specification
-- ISA semantics
-- tensor layout and packing
-- memory map
-- configuration parameters visible to software and hardware
-
-### 3. Extend the first vertical slice
-
-The smallest software-side slice now exists. The next step is to stop using only
-Python-built programs and move toward the real contract:
-
-- define textual assembly syntax
-- add program parsing/loading
-- define bundle metadata for memory regions
-- place one golden matmul vector under `tests/vectors/`
-- keep matching PyTorch as the source of truth
-
-### 4. Decide how shared code should live
-
-Right now `ExecutableBundle` is duplicated in both Python packages. That is acceptable as
-a temporary scaffold, but it will become a maintenance problem if both copies evolve.
-
-Open question:
-
-- keep the duplication for loose coupling
-- or introduce a tiny shared package later, such as `penguin-common`
-
-For now, do not introduce a third package unless the interface is actually stabilizing.
-
-### 5. Add real tests before adding real features
-
-Priority order:
-
-- package unit tests
-- golden-vector tests
-- model-vs-reference tests
-- RTL cocotb tests
-
-## Design Caveats
-
-### No general IR
-
-This is intentional, but brittle.
-
-It is a good choice if:
-
-- the model topology is fixed
-- shapes are static
-- the compiler is really a specialized exporter
-
-It becomes risky if:
-
-- the supported model family grows
-- layer ordering changes often
-- kernel scheduling becomes nontrivial
-
-If that happens, revisit the no-IR decision, but not before a working vertical slice.
-
-### Executable package is still underspecified
-
-Everyone agrees on the rough shape:
-
-- assembly
-- JSON manifest
-- binary constants
-
-But the exact schema is missing. This is the single highest-risk ambiguity in the repo.
-
-### Formal specs are now a first-class deliverable
-
-The project now explicitly expects `docs/specs/` to hold formal arch/uarch specs rather
-than casual notes. That is the right direction, but it raises the bar on discipline:
-
-- terminology needs to be consistent
-- architecture-visible behavior and implementation details need clear separation
-- the executable package format must line up with those specs
-
-### Performance modeling is still placeholder-grade
-
-The model now records instruction counts, cycle counts, and byte traffic, but the cycle
-latencies are simple placeholders chosen for early bring-up. They are useful for smoke
-tests and relative accounting, not for trustworthy PPA conclusions.
-
-### Hardware tree exists, but its implementation status is unknown
-
-The repo has:
-
-- `rtl/penguin_tpu`
-- `rtl/vivado_ips`
-
-The planning docs are aligned to that structure, but this memory file does not assume
-the hardware internals are complete or validated. A future agent should inspect those
-directories before making hardware claims.
-
-## External Design References
-
-Four external resources are documented in `AGENTS.md` and summarized in `README.md`.
-They cover TPU functional modeling, NPU performance modeling, TPU compiler internals, and
-TPU hardware organization. All are design references only — Penguin is a scaled-down
-design and does not need all features from any of them. When adopting ideas from these
-references, scope them to Penguin's immediate vertical slice.
-
-## MVP Milestones
-
-These are the near-term targets, in order. Do not skip ahead.
-
-### Milestone 1 — not started
-
-Make one hand-written assembly program run in both `penguin-model` and RTL.
-
-### Milestone 2 — not started
-
-Export one specific PyTorch model into that assembly format and match PyTorch outputs in
-`penguin-model`.
-
-### Milestone 3 — not started
-
-Run the same compiled artifact on RTL through cocotb.
-
-### Milestone 4 — not started
-
-Deploy the same artifact on one FPGA board and collect basic timing and utilization
-reports.
-
-Only after these four milestones should you consider adding a general IR, expanding
-operator coverage, adding JAX support, or splitting the simulator into richer functional
-and performance submodels.
-
-## Questions And Doubts
-
-- Should the initial architectural subset keep both integer word loads/stores and float
-  loads/stores, or should the eventual ISA surface expose only one memory-access form?
-- Should assembly syntax follow RISC-V conventions literally, or remain only
-  RISC-V-inspired while the project is still narrowing scope?
-- Should `manifest.json` describe only static constants, or also runtime input/output buffers?
-- Will inputs be fixed test vectors or variable runtime payloads?
-- Is the assembly textual only, or should a binary encoding be emitted early as well?
-- Should `penguin-model` parse assembly directly, or should both sides consume a lower-level encoded format derived from it?
-- How much of Vivado/IP generation should live in-repo versus being regenerated externally?
-- Does the hardware plan assume one clock domain and one memory space, or are there already multiple domains/interfaces in mind?
-
-## Recommended Next Move
-
-The highest-leverage next step is not more scaffolding. It is one concrete spec file for
-the executable package plus one tiny end-to-end example that exercises it.
-
-If a future agent needs a starting sequence, use this:
-
-1. Add `docs/specs/executable-package.md`.
-2. Define textual assembly syntax for the implemented scalar subset.
-3. Define one example package under `tests/vectors/`.
-4. Implement a loader/parser in `penguin-model`.
-5. Make `penguin-compile` emit that same format.
-6. Only then connect the format to RTL.
+- tensor ISA implementation in the model
+- RTL testbench flow
+- FPGA bring-up flow
+
+## Frozen Baseline
+
+These are the design choices that should now be treated as intentional baseline
+decisions, not open brainstorming.
+
+### Execution model
+
+- single-issue frontend
+- fixed-width 32-bit instructions
+- one instruction launch per cycle
+- long-chime tensor instructions
+- statically scheduled machine
+- on-chip execution is deterministic
+- off-chip memory activity is asynchronous
+- branches and jumps have 2 architecturally visible delay slots
+
+Reasoning:
+
+- keeps the machine explainable
+- minimizes frontend complexity
+- makes compiler scheduling meaningful
+- keeps async behavior limited to off-chip traffic
+
+### Tensor architecture
+
+- 64 tensor registers: `m0..m63`
+- each register is `64 rows x 32 bytes`
+- one flat tensor register file shared across data types
+- whole-register tensor operations only
+- full-connectivity tensor crossbar between registers and functional units
+
+Reasoning:
+
+- simple software-visible storage model
+- no type-specific tensor storage classes
+- no sub-tile window semantics in the first ISA cut
+- no architectural bank partitioning rules
+
+### MXU architecture
+
+- two MXUs:
+  - `mxu0`: systolic-array-based
+  - `mxu1`: inner-product-tree-based
+- both are architecturally visible
+- both can execute concurrently, but only one new instruction may issue per cycle
+- weight-stationary dataflow
+- each MXU has distinct `w0` and `w1` weight-slot state
+- MXU does pure matmul/partial-sum accumulation only
+- no bias/residual/activation fusion in the MXU
+
+Reasoning:
+
+- comparison between `mxu0` and `mxu1` is a design goal
+- weight residency is explicit and software-visible
+- matrix hardware stays focused on matrix work
+- fusion is deferred to VPU/software scheduling
+
+### MXU numerical contract
+
+- `FP8_e4m3 x FP8_e4m3 -> BF16`
+- output-only scaling per workload-level matmul
+- optional BF16-to-FP8 writeback
+- BF16-to-FP8 uses round-to-nearest-even with saturation on overflow
+
+Reasoning:
+
+- low-precision multiplicands keep matrix hardware efficient
+- BF16 accumulation is a practical first target
+- output-only scaling is simpler than per-input scaling
+
+### VPU contract
+
+- VPU reads directly from `m` registers
+- VPU writes only to `m` registers
+- no local operand buffers
+- whole-register operations only
+- first opcode floor:
+  - `vadd`
+  - `vmul`
+  - `vmax`
+  - `vmin`
+  - `vrelu`
+  - `vmov`
+
+Reasoning:
+
+- keeps compute separate from memory movement
+- gives a small but useful first VPU floor
+- avoids hidden data movement semantics
+
+### Memory organization
+
+- DRAM: backing data storage
+- DRAM base is `0x8000_0000`
+- DRAM size is `16 GiB`
+- IMEM: instruction memory
+- IMEM base is `0x0010_0000`
+- IMEM size is `32 KiB`
+- VMEM: on-chip tensor/vector data memory
+- VMEM base is `0x0800_0000`
+- VMEM size is `1 MiB`
+- IMEM and VMEM are byte-addressed
+- IMEM fetch is 4-byte aligned
+- tensor registers access VMEM only
+- DMA is the only DRAM <-> VMEM path
+- DMA moves unit-stride raw bytes only
+- DMA is asynchronous and fenced by channel
+- DRAM latency is currently modeled as 10 cycles in the functional model
+- first revision exposes 8 symmetric DMA channels
+- `vload` / `vstore` are blocking VMEM <-> `m` transfers
+- `mxu.push.*` is a blocking VMEM -> `w*` transfer
+- DMA, `vload` / `vstore`, and `mxu.push.*` all use scalar-register indirect addressing
+- one shared memory-base CSR extends addressing beyond the 32-bit scalar range
+
+Reasoning:
+
+- one narrow async boundary is easier to implement and validate
+- DMA stays simple because it is byte-oriented, not tensor-aware
+- whole-register on-chip transfers match the whole-tile tensor model
+- scalar-directed addressing preserves the one-word instruction rule
+
+## Design Intent
+
+The project is deliberately ordered this way:
+
+1. scalar core first
+2. memory structure next
+3. testing/regression infrastructure next
+4. tensor accelerator features after the scalar-plus-memory base is solid
+
+This ordering still stands. The tensor specs are now far enough along that they can guide
+implementation, but they should not cause the project to skip the scalar and memory
+bring-up steps.
+
+## Implementation Reality
+
+The codebase still lags the tensor specs significantly.
+
+Implemented today:
+
+- scalar functional model
+- scalar tests
+- reusable scalar directed-program builder and runner for model tests
+- directed scalar ALU, branch/jump, and load/store program tests with perf checks
+- GitHub CI for automatic `uv run pytest` coverage
+- trace logging
+- separate DRAM / VMEM / IMEM memory regions in the functional model
+- fixed architectural base addresses for IMEM, VMEM, and DRAM in the functional model
+- `ArchState` now owns `dram`, `vmem`, `imem`, and DMA channels directly rather than
+  nesting them under `state.memories`
+- the old `MemorySystem` wrapper has been removed; memory-region construction now goes
+  through `ArchState.with_memory_sizes(...)`
+- VMEM-only scalar `sld` / `sst`
+- DMA channel issue/wait behavior for DRAM <-> VMEM byte transfers
+- DMA completion timing modeled with 10-cycle DRAM latency
+- trace and execution modeling now separate `EXU.SALU` from `EXU.DMA`
+- DRAM backing in the functional model is page-backed so the 16 GiB region is modeled
+  sparsely rather than allocated densely
+
+Not yet implemented:
+
+- tensor instructions
+- MXU/VPU execution
+- executable package
+- compiler lowering
+
+## Immediate Next Steps
+
+1. Define the executable package and manifest.
+2. Add formal tensor layout/packing spec.
+3. Add a first binary/text assembly encoding spec for 32-bit instructions.
+4. Connect the new memory hierarchy model to a real IMEM/program-loading path.
+5. Implement tensor transfer instructions: `vload`, `vstore`, `mxu.push.*`.
+6. Implement the first tensor-side functional stubs for `matmul.*` and the initial VPU
+   op floor.
+
+## Remaining Open Items
+
+Only a small set of important questions remain:
+
+- VMEM alignment requirements
+- exact DMA instruction shapes
+- exact `vload` / `vstore` encodings
+- IMEM population flow
+- whether VMEM is logically unified or internally partitioned by traffic class
+- final tensor ISA encoding details
+
+## Checkpoint Note
+
+The current document set should be treated as the first coherent baseline for the tensor
+architecture and memory organization. Future changes should update the formal specs and
+then reflect the delta here, rather than letting `SOUL.md` become a second competing
+specification.

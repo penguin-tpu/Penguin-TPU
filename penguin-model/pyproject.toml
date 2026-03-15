@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
   "numpy>=2.1",
+  "torch>=2.10.0",
 ]
 
 [project.scripts]
@@ -15,3 +16,5 @@ penguin-model = "penguin_model.cli:main"
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
+[hatch.build.targets.wheel]
+packages = ["."]

@@ -3,7 +3,11 @@ name = "penguin-tpu-workspace"
 version = "0.1.0"
 description = "Workspace for the Penguin TPU software and hardware stack"
 requires-python = ">=3.11"
-dependencies = []
+dependencies = [
+    "numpy>=2.4.3",
+    "torch>=2.10.0",
+    "penguin-model",
+]
 
 [dependency-groups]
 dev = [
@@ -16,3 +20,8 @@ members = [
   "penguin-model",
 ]
 
+[tool.uv.sources]
+penguin-model = { workspace = true }
+
+[tool.pytest.ini_options]
+addopts = "-ra"

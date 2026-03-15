@@ -14,6 +14,10 @@ into Penguin assembly plus metadata and packed constants.
 
 ## Project Goals
 
+- implement a function-complete RISC-V-like integer scalar core first
+- establish a proper memory structure around that scalar core
+- build the testing and validation system before broadening accelerator features
+- only then add matrix processing and other Penguin-specific acceleration features
 - compile one specific PyTorch model into a Penguin executable package
 - execute that package in a Python reference/performance model
 - execute the same package in RTL
@@ -224,10 +228,14 @@ Specification documents under `docs/specs/` should eventually cover:
 
 Keep these constraints unless the user explicitly broadens scope:
 
+- scalar-core bring-up comes before matrix acceleration
+- the first hardware goal is a function-complete RISC-V-like integer scalar core
+- the next system goal is a proper memory structure around that core
+- the next infrastructure goal is a real testing and validation loop
+- matrix processing is a later layer on top of the validated scalar/memory base
 - one specific PyTorch model first, static shapes only, fixed layer ordering
 - reject unsupported variants early instead of trying to be flexible
 - no general IR
-- small operator set first: GEMM, add, ReLU, data movement
 - one activation datatype first (such as int8), one accumulation type first (such as int32)
 - one compute array shape, one scratchpad organization
 - one hardware configuration first, one FPGA board target first
@@ -246,6 +254,14 @@ Deliberately defer until after a working vertical slice:
 The intended correctness loop is:
 
 PyTorch eager output -> `penguin-model` output -> RTL output -> FPGA output
+
+Recommended implementation order:
+
+1. verify scalar ISA semantics
+2. verify memory behavior and memory-system invariants
+3. verify the scalar core in RTL
+4. verify the executable-package flow end to end
+5. only then extend the same harnesses to matrix instructions and accelerator features
 
 Planned verification organization:
 

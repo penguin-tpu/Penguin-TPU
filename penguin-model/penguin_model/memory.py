@@ -1,0 +1,176 @@
+"""Memory-region primitives for the Penguin functional model."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+import struct
+
+import torch
+
+IMEM_BASE = 0x0010_0000
+VMEM_BASE = 0x0800_0000
+DRAM_BASE = 0x8000_0000
+
+IMEM_SIZE = 32 * 1024
+VMEM_SIZE = 1 * 1024 * 1024
+DRAM_SIZE = 16 * 1024 * 1024 * 1024
+
+DEFAULT_PAGE_SIZE = 4096
+
+
+class Memory:
+    """Byte-addressed little-endian memory region with dense or paged backing."""
+
+    def __init__(
+        self,
+        name: str,
+        size: int,
+        base: int = 0x0000_0000,
+        verbose: bool = False,
+        paged: bool = False,
+        page_size: int = DEFAULT_PAGE_SIZE,
+    ) -> None:
+        self.name = name
+        self.base = base
+        self.size = size
+        self.verbose = verbose
+        self.paged = paged
+        self.page_size = page_size
+        self.mem: torch.Tensor | None = None
+        self.pages: dict[int, torch.Tensor] = {}
+        if self.paged:
+            assert self.page_size > 0, "page_size must be positive"
+        else:
+            self.mem = torch.zeros(self.size, dtype=torch.uint8)
+
+    def _offset(self, address: int, size: int) -> int:
+        offset = address - self.base
+        assert offset >= 0, (
+            f"Memory '{self.name}': address below base: 0x{address:08x} < 0x{self.base:08x}"
+        )
+        assert offset + size <= self.size, (
+            f"Memory '{self.name}': access out of bounds: 0x{address:08x} + {size} bytes"
+        )
+        return offset
+
+    def _page(self, page_index: int, *, create: bool) -> torch.Tensor | None:
+        page = self.pages.get(page_index)
+        if page is None and create:
+            page = torch.zeros(self.page_size, dtype=torch.uint8)
+            self.pages[page_index] = page
+        return page
+
+    def read(self, address: int, size: int) -> torch.Tensor:
+        offset = self._offset(address, size)
+        if self.verbose:
+            print(
+                f"\033[90m  Memory '{self.name}': read {size} bytes <- 0x{address:08x}\033[0m"
+            )
+        if not self.paged:
+            assert self.mem is not None
+            return self.mem[offset : offset + size]
+
+        result = torch.zeros(size, dtype=torch.uint8)
+        copied = 0
+        while copied < size:
+            absolute_offset = offset + copied
+            page_index = absolute_offset // self.page_size
+            page_offset = absolute_offset % self.page_size
+            chunk_size = min(size - copied, self.page_size - page_offset)
+            page = self._page(page_index, create=False)
+            if page is not None:
+                result[copied : copied + chunk_size] = page[page_offset : page_offset + chunk_size]
+            copied += chunk_size
+        return result
+
+    def write(self, address: int, data: torch.Tensor) -> None:
+        offset = self._offset(address, int(data.numel()))
+        assert data.dtype == torch.uint8, (
+            f"Memory '{self.name}': write data must be uint8, got {data.dtype}"
+        )
+        flattened = data.flatten()
+        if not self.paged:
+            assert self.mem is not None
+            self.mem[offset : offset + flattened.numel()] = flattened
+        else:
+            written = 0
+            size = int(flattened.numel())
+            while written < size:
+                absolute_offset = offset + written
+                page_index = absolute_offset // self.page_size
+                page_offset = absolute_offset % self.page_size
+                chunk_size = min(size - written, self.page_size - page_offset)
+                page = self._page(page_index, create=True)
+                assert page is not None
+                page[page_offset : page_offset + chunk_size] = flattened[
+                    written : written + chunk_size
+                ]
+                written += chunk_size
+        if self.verbose:
+            print(
+                f"\033[90m  Memory '{self.name}': wrote {data.numel()} bytes -> 0x{address:08x}\033[0m"
+            )
+
+    def copy_from(self, src: Memory, src_address: int, dst_address: int, size: int) -> None:
+        self.write(dst_address, src.read(src_address, size).clone())
+
+    def load_u32(self, address: int) -> int:
+        data = self.read(address, 4)
+        return int.from_bytes(bytes(data.tolist()), byteorder="little", signed=False)
+
+    def store_u32(self, address: int, value: int) -> None:
+        word = value & 0xFFFF_FFFF
+        data = torch.tensor(
+            [
+                (word >> 0) & 0xFF,
+                (word >> 8) & 0xFF,
+                (word >> 16) & 0xFF,
+                (word >> 24) & 0xFF,
+            ],
+            dtype=torch.uint8,
+        )
+        self.write(address, data)
+
+    def load_f32(self, address: int) -> float:
+        return struct.unpack("<f", struct.pack("<I", self.load_u32(address)))[0]
+
+    def store_f32(self, address: int, value: float) -> None:
+        bits = struct.unpack("<I", struct.pack("<f", float(value)))[0]
+        self.store_u32(address, bits)
+
+
+@dataclass(slots=True)
+class DMATransfer:
+    """Pending DMA transfer between DRAM and VMEM."""
+
+    direction: str
+    dram_address: int
+    vmem_address: int
+    size: int
+    payload: torch.Tensor
+    ready_cycle: int
+
+
+@dataclass(slots=True)
+class DMAChannel:
+    """Single DMA channel state."""
+
+    pending: DMATransfer | None = None
+
+    @property
+    def busy(self) -> bool:
+        return self.pending is not None
+
+
+__all__ = [
+    "DEFAULT_PAGE_SIZE",
+    "DMAChannel",
+    "DMATransfer",
+    "DRAM_BASE",
+    "DRAM_SIZE",
+    "IMEM_BASE",
+    "IMEM_SIZE",
+    "Memory",
+    "VMEM_BASE",
+    "VMEM_SIZE",
+]
