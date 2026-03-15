@@ -7,16 +7,19 @@ import struct
 
 import torch
 
-IMEM_BASE = 0x0010_0000
-VMEM_BASE = 0x0800_0000
-DRAM_BASE = 0x8000_0000
+from .core_config import DEFAULT_PENGUIN_CORE_CONFIG
 
-IMEM_SIZE = 32 * 1024
-VMEM_SIZE = 1 * 1024 * 1024
-DRAM_SIZE = 16 * 1024 * 1024 * 1024
-DMA_ALIGNMENT_BYTES = 32
+IMEM_BASE = DEFAULT_PENGUIN_CORE_CONFIG.memory_map.imem.base
+VMEM_BASE = DEFAULT_PENGUIN_CORE_CONFIG.memory_map.vmem.base
+DRAM_BASE = DEFAULT_PENGUIN_CORE_CONFIG.memory_map.dram.base
 
-DEFAULT_PAGE_SIZE = 4096
+IMEM_SIZE = DEFAULT_PENGUIN_CORE_CONFIG.memory_map.imem.size
+VMEM_SIZE = DEFAULT_PENGUIN_CORE_CONFIG.memory_map.vmem.size
+DRAM_SIZE = DEFAULT_PENGUIN_CORE_CONFIG.memory_map.dram.size
+DMA_ALIGNMENT_BYTES = DEFAULT_PENGUIN_CORE_CONFIG.dma.alignment_bytes
+DMA_CHANNEL_COUNT = DEFAULT_PENGUIN_CORE_CONFIG.dma.channel_count
+
+DEFAULT_PAGE_SIZE = DEFAULT_PENGUIN_CORE_CONFIG.memory_backend.dram_page_size_bytes
 
 
 class Memory:
@@ -157,6 +160,9 @@ class DMAChannel:
     """Single DMA channel state."""
 
     pending: DMATransfer | None = None
+    # Trace-only: when a load logs transfer start, store so the matching wait can log end in trace time.
+    trace_transfer_insn_id: int | None = None
+    trace_transfer_start: int | None = None
 
     @property
     def busy(self) -> bool:
@@ -165,6 +171,7 @@ class DMAChannel:
 
 __all__ = [
     "DMA_ALIGNMENT_BYTES",
+    "DMA_CHANNEL_COUNT",
     "DEFAULT_PAGE_SIZE",
     "DMAChannel",
     "DMATransfer",

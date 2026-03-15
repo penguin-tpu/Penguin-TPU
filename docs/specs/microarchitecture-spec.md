@@ -273,6 +273,20 @@ some later integration requirement states otherwise.
 The CSR region containing this control and status state should be laid out consecutively
 in memory. The exact region base address remains a SoC-integration choice.
 
+## 8.2 Performance-model trace semantics
+
+The reference performance model emits a Perfetto-compatible trace. For alignment with
+the pipeline view:
+
+- **PC**: The logged PC is the value at the instruction fetch stage—i.e. the address of
+  the instruction currently in the IFU. The model logs PC when an instruction enters
+  the IFU so that the logged PC always matches the fetch address of the instruction
+  in the IFU.
+- **DMA transfer bars**: The start of a DMA transfer is logged when the load/store
+  issues; the end is logged when the matching `dma.wait.chN` completes. Both use the
+  same trace (pipeline) time base so that dependent instructions (e.g. `vload` after
+  a wait) do not appear to start before the fence resolves.
+
 ## 9. Matrix Execution Units
 
 ### 9.1 Functional role
@@ -393,6 +407,9 @@ Microarchitectural expectations:
 - completion order across different DMA channels need not match issue order
 - request queues, transaction counters, and request/response bookkeeping are
   microarchitectural choices rather than architecture-visible contracts
+- the baseline performance model shall account for both:
+  - off-chip serialized-link bandwidth on the DRAM side
+  - on-chip VMEM/system-bus bandwidth on the scratchpad side
 
 The important invariant is that a channel-specific wait only releases once the
 architecture-visible destination bytes are valid for the transfer issued on that channel.

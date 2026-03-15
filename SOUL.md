@@ -28,7 +28,6 @@ What does not exist yet:
 
 - actual `penguin-compiler` export logic
 - executable package loader/writer implementation
-- tensor ISA implementation in the model
 - RTL testbench flow
 - FPGA bring-up flow
 
@@ -247,13 +246,119 @@ Implemented today:
   host-only early `MEM_BASE` programming, single-outstanding DMA channels, 32-byte
   VMEM tensor alignment, transpose-only XLU scope, tile-level zero padding, and the
   no-recovery error model
+- first tensor-side model slice now exists in `penguin-model`:
+  - architectural tensor register storage for `m0..m63`
+  - architectural MXU weight-slot storage for `mxu0/1.w0/1`
+  - blocking `vload` / `vstore` VMEM transfers
+  - blocking `mxu.push.mxu0/1` VMEM -> weight-slot transfers
+  - `matmul.mxu0/1` and `matmul.add.mxu0/1` functional semantics
+  - assembly parsing support for `m*` and `w*` operands
+  - FP8 activation/weight interpretation and BF16 result storage
+- tensor-side verification is now active in the main pytest suite:
+  - MXU tests no longer sit behind a stale registry gate
+  - parser coverage now includes tensor-memory and MXU operand forms
+  - tensor-memory tests cover `vload` / `vstore` round-trip behavior and alignment faults
+  - MXU tests cover weight-slot isolation, cross-MXU isolation, explicit partial sums,
+    VMEM sourcing, and perf-counter / latency accounting for tensor ops
+- the public `INSTRUCTION_LATENCY` view now includes tensor instructions in addition to
+  the scalar and DMA subset
+- runnable tensor examples now exist for:
+  - single-tile `matmul`
+  - tiled `linear` without bias over a 128x32 input batch and 32 output features
+- the tensor examples load checked-in assembly from `tests/vectors/programs/tensor/examples/`,
+  emit Perfetto-compatible JSON traces, and verify simulator output against a PyTorch
+  BF16-accumulation golden reference
+- trace and performance-model fixes for correct observability:
+  - **PC in trace**: the logged PC records the value at the instruction fetch stage so that
+    the instruction in the IFU matches the logged PC (fetch address). PC is emitted when
+    an instruction enters the IFU, not at retire.
+  - **DMA transfer bar**: the DMA transfer interval on the trace is now logged entirely in
+    trace (pipeline) time. The transfer start is logged when the load/store issues; the
+    transfer end is logged when the matching `dma.wait.chN` completes. Previously the
+    transfer end used cycle-based time, which made it look like dependent instructions
+    (e.g. `vload`) could start before the fence resolved.
+  - **Delay slots**: control-flow redirects still retire two delay-slot instructions before
+    the next fetch uses the target; only the PC log semantics were adjusted to reflect
+    fetch-stage PC.
 
 Not yet implemented:
 
-- tensor instructions
-- MXU/VPU/XLU execution
+- VPU execution
+- XLU execution
 - executable package
 - compiler lowering
+
+## Tensor Modeling Notes
+
+The tensor-side implementation intentionally made a few conservative choices where the
+spec is not fully frozen yet.
+
+- The current assembly parser accepts:
+  - `vload mD, imm(xN)`
+  - `vstore mS, imm(xN)`
+  - `mxu.push.mxu0 w0, imm(xN)` and analogous forms
+  - `matmul.mxu0 mD, mS, w0`
+  - `matmul.add.mxu0 mD, mS, w0, mP`
+- This memory-operand syntax is a model choice, not a fully frozen ISA encoding.
+- The model uses `torch.float8_e4m3fn` as the practical stand-in for the spec’s
+  `FP8_e4m3` contract. Confirm later whether this is acceptable or whether a stricter
+  custom FP8 implementation is required.
+- The model computes MXU results into BF16 tensor-register images and does not yet
+  implement optional BF16-to-FP8 writeback, because the writeback-mode instruction forms
+  are not frozen.
+- The model does not yet implement workload-level scalar output scaling for matmul,
+  because that control path is specified at the workload level but not yet frozen as an
+  instruction or CSR interface.
+- Tensor instruction latency is currently modeled with deterministic placeholders:
+  - `vload`: 64 cycles
+  - `vstore`: 64 cycles
+  - `mxu.push.*`: 32 cycles
+  - `matmul.*`: 64 cycles
+- Tensor operations are currently modeled as blocking and atomic at instruction
+  retirement. This preserves deterministic correctness, but it does not yet model the
+  full spec intent that long-chime MXU work may overlap with younger scalar issue when
+  hazards permit.
+
+## DMA Modeling Notes
+
+The DRAM <-> VMEM DMA path already existed in the scalar model. The current refactor
+keeps that unit-stride functionality and tightens the architectural-state contract
+around it.
+
+- The model now carries an explicit host-programmable `mem_base` field in `ArchState`.
+- For the current baseline, the model interprets `mem_base` as the shared high-address
+  extension for memory-like instructions:
+  - effective address = `(mem_base << 32) | low32`
+  - `low32` comes from the scalar-register-indirect address calculation
+- This choice preserves the current absolute 32-bit-address programs while still making
+  it possible to model memory above 4 GiB later.
+- DMA issue and wait remain channel-specific and unit-stride only.
+- DMA still snapshots the source byte payload at issue time and makes the destination
+  bytes architecturally visible only when the matching `dma.wait.chN` completes.
+- DMA completion timing is no longer a fixed placeholder:
+  - off-chip DRAM link timing now models a 32-bit serialized interface at half core
+    frequency
+  - the off-chip timing includes 2 serialized overhead words per DMA operation
+  - VMEM-side timing now models a 128-bit on-chip system bus
+  - DMA completion uses the slower of the off-chip and VMEM transfer paths
+- `vload` / `vstore` and `mxu.push.*` now derive their default latency from the VMEM
+  bus width instead of using row-count placeholders.
+- the Python model now has one hierarchical `PenguinCoreConfig` entry point that owns:
+  - memory-map constants
+  - DMA alignment/channel-count parameters
+  - tensor register and weight-slot geometry
+  - off-chip and VMEM bandwidth parameters
+  - trace-timing and scalar delay-slot parameters
+- module-level constants such as `DRAM_BASE`, `MREG_BYTES`, and `DMA_CHANNEL_COUNT`
+  remain as aliases of the default core configuration for compatibility, but the active
+  runtime behavior now flows through `ArchState.config`
+- `PenguinCore`, `ArchState`, the example workloads, and the shared scalar testbench
+  helper now instantiate through `PenguinCoreConfig`
+
+Open question to confirm later:
+
+- whether the intended `MEM_BASE` behavior is exactly a high-bits extension
+  `(mem_base << 32) | low32`, or some other shared offset encoding
 
 ## Immediate Next Steps
 
@@ -261,9 +366,9 @@ Not yet implemented:
 2. Add formal tensor layout/packing spec, especially padding and tail-handling rules.
 3. Add a first binary/text assembly encoding spec for 32-bit instructions.
 4. Define the host control and CSR map for launch, halt, done, and error reporting.
-5. Implement tensor transfer instructions: `vload`, `vstore`, `mxu.push.*`.
-6. Implement the first tensor-side functional stubs for `matmul.*`, XLU transpose, and
-   the initial VPU op floor.
+5. Refine tensor execution timing and overlap semantics for long-chime MXU work.
+6. Implement the next tensor-side functional units: XLU transpose and the initial VPU
+   op floor.
 
 ## Remaining Open Items
 
@@ -273,6 +378,7 @@ Only a small set of important questions remain:
 - exact `vload` / `vstore` encodings
 - exact host-side CSR-region base address and field layout
 - exact DMA instruction shapes for tensor-era programs
+- exact `MEM_BASE` address-extension encoding
 - exact XLU transpose instruction encoding and sequencing
 - whether VMEM is logically unified or internally partitioned by traffic class
 - final tensor ISA encoding details

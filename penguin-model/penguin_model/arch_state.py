@@ -6,24 +6,23 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING
 
+import torch
+
+from .core_config import DEFAULT_PENGUIN_CORE_CONFIG, PenguinCoreConfig
 from .memory import (
-    DMA_ALIGNMENT_BYTES,
-    DRAM_BASE,
-    DRAM_SIZE,
-    IMEM_BASE,
-    IMEM_SIZE,
-    VMEM_BASE,
-    VMEM_SIZE,
     DMAChannel,
     DMATransfer,
     Memory,
+)
+from .tensor import (
+    make_tensor_register_file_for_config,
+    make_weight_slot_file_for_config,
 )
 
 if TYPE_CHECKING:
     from .logging import TraceLogger
 
-DRAM_LATENCY_CYCLES = 10
-CONTROL_FLOW_DELAY_SLOTS = 2
+CONTROL_FLOW_DELAY_SLOTS = DEFAULT_PENGUIN_CORE_CONFIG.scalar.control_flow_delay_slots
 
 
 class StopReason(str, Enum):
@@ -38,6 +37,7 @@ class StopReason(str, Enum):
     DMA_CHANNEL_BUSY = "dma_channel_busy"
     DMA_MISALIGNED_ADDRESS = "dma_misaligned_address"
     DMA_MISALIGNED_SIZE = "dma_misaligned_size"
+    TENSOR_MEMORY_MISALIGNED = "tensor_memory_misaligned"
     STEP_LIMIT = "step_limit"
 
 
@@ -67,8 +67,12 @@ class ArchState:
     vmem: Memory
     imem: Memory
     dma_channels: list[DMAChannel]
+    config: PenguinCoreConfig = field(default_factory=lambda: DEFAULT_PENGUIN_CORE_CONFIG)
+    mreg: torch.Tensor | None = None
+    mxu_weight: torch.Tensor | None = None
     xreg: list[int] = field(default_factory=lambda: [0] * 32)
     pc: int = 0
+    mem_base: int = 0
     perf: PerformanceCounters = field(default_factory=PerformanceCounters)
     stop_reason: StopReason | None = None
     next_pc: int | None = None
@@ -79,19 +83,54 @@ class ArchState:
     delay_slots_remaining: int = 0
     control_transfer_set: bool = False
 
+    def __post_init__(self) -> None:
+        if self.mreg is None:
+            self.mreg = make_tensor_register_file_for_config(self.config)
+        if self.mxu_weight is None:
+            self.mxu_weight = make_weight_slot_file_for_config(self.config)
+
+    @classmethod
+    def from_config(
+        cls,
+        config: PenguinCoreConfig = DEFAULT_PENGUIN_CORE_CONFIG,
+    ) -> ArchState:
+        return cls(
+            dram=Memory(
+                name="dram",
+                size=config.memory_map.dram.size,
+                base=config.memory_map.dram.base,
+                paged=config.memory_backend.dram_paged,
+                page_size=config.memory_backend.dram_page_size_bytes,
+            ),
+            vmem=Memory(
+                name="vmem",
+                size=config.memory_map.vmem.size,
+                base=config.memory_map.vmem.base,
+            ),
+            imem=Memory(
+                name="imem",
+                size=config.memory_map.imem.size,
+                base=config.memory_map.imem.base,
+            ),
+            dma_channels=[DMAChannel() for _ in range(config.dma.channel_count)],
+            config=config,
+        )
+
     @classmethod
     def with_memory_sizes(
         cls,
         *,
-        dram_size: int = DRAM_SIZE,
-        vmem_size: int = VMEM_SIZE,
-        imem_size: int = IMEM_SIZE,
+        dram_size: int | None = None,
+        vmem_size: int | None = None,
+        imem_size: int | None = None,
+        config: PenguinCoreConfig = DEFAULT_PENGUIN_CORE_CONFIG,
     ) -> ArchState:
-        return cls(
-            dram=Memory(name="dram", size=dram_size, base=DRAM_BASE, paged=True),
-            vmem=Memory(name="vmem", size=vmem_size, base=VMEM_BASE),
-            imem=Memory(name="imem", size=imem_size, base=IMEM_BASE),
-            dma_channels=[DMAChannel() for _ in range(8)],
+        return cls.from_config(
+            config.with_memory_sizes(
+                dram_size=dram_size,
+                vmem_size=vmem_size,
+                imem_size=imem_size,
+            )
         )
 
     def read_xreg(self, index: int) -> int:
@@ -123,14 +162,34 @@ class ArchState:
     def clear_dma_channels(self) -> None:
         for channel in self.dma_channels:
             channel.pending = None
+            channel.trace_transfer_insn_id = None
+            channel.trace_transfer_start = None
 
     def set_next_pc(self, value: int) -> None:
         if value % 4 != 0:
             self.stop(StopReason.INSTRUCTION_ADDRESS_MISALIGNED)
             return
         self.next_pc = value & 0xFFFF_FFFF
-        self.delay_slots_remaining = CONTROL_FLOW_DELAY_SLOTS
+        self.delay_slots_remaining = self.config.scalar.control_flow_delay_slots
         self.control_transfer_set = True
+
+    def read_mem_base(self) -> int:
+        return self.mem_base
+
+    def write_mem_base(self, value: int) -> None:
+        self.mem_base = int(value)
+
+    @property
+    def bandwidth(self):
+        """Backward-compatible access to the bandwidth fragment of the core config."""
+
+        return self.config.bandwidth
+
+    def extend_address(self, address: int) -> int:
+        return (self.mem_base << 32) | (int(address) & 0xFFFF_FFFF)
+
+    def resolve_indirect_address(self, rs1: int, imm: int = 0) -> int:
+        return self.extend_address((self.read_xreg(rs1) + imm) & 0xFFFF_FFFF)
 
     def _log_memory_access(
         self,
@@ -171,6 +230,80 @@ class ArchState:
         self._log_memory_access("vmem", "store", address, value, size=4)
         return True
 
+    def load_mreg(self, index: int) -> torch.Tensor:
+        assert self.mreg is not None
+        return self.mreg[index].clone()
+
+    def store_mreg(self, index: int, raw: torch.Tensor) -> None:
+        if raw.numel() != self.config.mreg_bytes:
+            raise ValueError(
+                f"tensor register write expects {self.config.mreg_bytes} bytes, got {raw.numel()}"
+            )
+        assert self.mreg is not None
+        self.mreg[index] = raw.reshape(self.config.mreg_bytes).to(torch.uint8)
+
+    def load_weight_slot(self, mxu: int, slot: int) -> torch.Tensor:
+        assert self.mxu_weight is not None
+        return self.mxu_weight[mxu, slot].clone()
+
+    def store_weight_slot(self, mxu: int, slot: int, raw: torch.Tensor) -> None:
+        if raw.numel() != self.config.weight_slot_bytes:
+            raise ValueError(
+                f"weight-slot write expects {self.config.weight_slot_bytes} bytes, got {raw.numel()}"
+            )
+        assert self.mxu_weight is not None
+        self.mxu_weight[mxu, slot] = raw.reshape(self.config.weight_slot_bytes).to(
+            torch.uint8
+        )
+
+    def _check_tensor_alignment(self, address: int) -> bool:
+        if address % self.config.tensor.vmem_alignment_bytes != 0:
+            self.stop(StopReason.TENSOR_MEMORY_MISALIGNED)
+            return False
+        return True
+
+    def vload(self, mreg: int, address: int) -> None:
+        if not self._check_tensor_alignment(address):
+            return
+        payload = self.vmem.read(address, self.config.mreg_bytes).clone()
+        self.instruction_extra_cycles = (
+            self.config.vmem_transfer_cycles(self.config.mreg_bytes)
+            - self.config.vload_latency_cycles
+        )
+        self.perf.bytes_read += self.config.mreg_bytes
+        self.store_mreg(mreg, payload)
+        self._log_memory_access("vmem", "vload", address, 0, size=self.config.mreg_bytes)
+
+    def vstore(self, mreg: int, address: int) -> None:
+        if not self._check_tensor_alignment(address):
+            return
+        payload = self.load_mreg(mreg)
+        self.instruction_extra_cycles = (
+            self.config.vmem_transfer_cycles(self.config.mreg_bytes)
+            - self.config.vstore_latency_cycles
+        )
+        self.perf.bytes_written += self.config.mreg_bytes
+        self.vmem.write(address, payload)
+        self._log_memory_access("vmem", "vstore", address, 0, size=self.config.mreg_bytes)
+
+    def push_weight_slot(self, mxu: int, slot: int, address: int) -> None:
+        if not self._check_tensor_alignment(address):
+            return
+        payload = self.vmem.read(address, self.config.weight_slot_bytes).clone()
+        self.instruction_extra_cycles = (
+            self.config.vmem_transfer_cycles(self.config.weight_slot_bytes)
+            - self.config.mxu_push_latency_cycles
+        )
+        self.perf.bytes_read += self.config.weight_slot_bytes
+        self.store_weight_slot(mxu, slot, payload)
+        self._log_memory_access(
+            "vmem",
+            f"mxu.push.mxu{mxu}",
+            address,
+            slot,
+            size=self.config.weight_slot_bytes,
+        )
+
     def _issue_dma(
         self,
         channel: int,
@@ -185,11 +318,14 @@ class ArchState:
             self.stop(StopReason.DMA_CHANNEL_BUSY)
             return
 
-        if dram_address % DMA_ALIGNMENT_BYTES != 0 or vmem_address % DMA_ALIGNMENT_BYTES != 0:
+        if (
+            dram_address % self.config.dma.alignment_bytes != 0
+            or vmem_address % self.config.dma.alignment_bytes != 0
+        ):
             self.stop(StopReason.DMA_MISALIGNED_ADDRESS)
             return
 
-        if size % DMA_ALIGNMENT_BYTES != 0:
+        if size % self.config.dma.alignment_bytes != 0:
             self.stop(StopReason.DMA_MISALIGNED_SIZE)
             return
 
@@ -204,7 +340,7 @@ class ArchState:
             vmem_address=vmem_address,
             size=size,
             payload=payload,
-            ready_cycle=self.perf.cycles + DRAM_LATENCY_CYCLES,
+            ready_cycle=self.perf.cycles + self.config.dma_transfer_cycles(size),
         )
 
     def issue_dma_load(self, channel: int, dram_address: int, vmem_address: int, size: int) -> None:
