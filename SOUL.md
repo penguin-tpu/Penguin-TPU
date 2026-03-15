@@ -208,6 +208,11 @@ Implemented today:
 - the scalar test surface now covers control-flow delay slots, shift-mask behavior,
   DMA edge cases, VMEM-only data paths, workload-style address generation/copy/reduction,
   and performance counters for representative scalar kernels
+- a text assembly parser now loads checked-in `.S` programs into the Python model
+- scalar tests and the runnable scalar example now execute checked-in assembly sources
+  from `tests/vectors/programs/` instead of constructing instruction lists in Python
+- `scripts/generate_scalar_programs.py` now regenerates the current scalar test/example
+  assembly corpus deterministically
 - the formal tensor-side specs were tightened after a direct review of the upstream
   `ucb-ee194-tapeout/npu_model/npu_spec` documents
 - that merge pass added explicit execution-state inventory, host launch/reset semantics,

@@ -2,19 +2,9 @@
 
 from __future__ import annotations
 
-from penguin_model import (
-    ArchState,
-    BType,
-    DMAType,
-    DRAM_BASE,
-    EmptyType,
-    IType,
-    Instruction,
-    PenguinCore,
-    RType,
-    SType,
-    VMEM_BASE,
-)
+from pathlib import Path
+
+from penguin_model import ArchState, DRAM_BASE, PenguinCore, VMEM_BASE, assemble_file
 
 
 def main() -> int:
@@ -22,25 +12,18 @@ def main() -> int:
     for index, value in enumerate((3, 5, 7, 11)):
         state.dram.store_u32(DRAM_BASE + 0x100 + index * 4, value)
 
+    program_path = (
+        Path(__file__).resolve().parents[1]
+        / "tests"
+        / "vectors"
+        / "programs"
+        / "scalar"
+        / "examples"
+        / "scalar_matmul.S"
+    )
     core = PenguinCore(state=state)
-    program = [
-        Instruction("saddi", IType(rd=10, rs1=0, imm=DRAM_BASE + 0x100)),
-        Instruction("saddi", IType(rd=11, rs1=0, imm=VMEM_BASE + 0x040)),
-        Instruction("saddi", IType(rd=12, rs1=0, imm=16)),
-        Instruction("dma.load.ch0", DMAType(dram_rs=10, vmem_rs=11, size_rs=12)),
-        Instruction("saddi", IType(rd=1, rs1=0, imm=VMEM_BASE + 0x40)),
-        Instruction("saddi", IType(rd=2, rs1=0, imm=4)),
-        Instruction("saddi", IType(rd=3, rs1=0, imm=0)),
-        Instruction("dma.wait.ch0", EmptyType()),
-        Instruction("sld", IType(rd=4, rs1=1, imm=0)),
-        Instruction("sadd", RType(rd=3, rs1=3, rs2=4)),
-        Instruction("saddi", IType(rd=1, rs1=1, imm=4)),
-        Instruction("saddi", IType(rd=2, rs1=2, imm=-1)),
-        Instruction("sbne", BType(rs1=2, rs2=0, imm=-16)),
-        Instruction("sst", SType(rs1=0, rs2=3, imm=VMEM_BASE + 0x80)),
-    ]
     trace_path = "scalar_trace.json"
-    perf = core.dump_json_trace(program, trace_path)
+    perf = core.dump_json_trace(assemble_file(program_path), trace_path)
 
     print("Input words in DRAM:")
     print([state.dram.load_u32(DRAM_BASE + 0x100 + index * 4) for index in range(4)])

@@ -1,5 +1,6 @@
 """Penguin model package."""
 
+from .assembler import AssemblyProgram, AssemblySyntaxError, assemble_file, assemble_text
 from .arch_state import ArchState, PerformanceCounters, StopReason
 from .bundle import ExecutableBundle
 from .core import INSTRUCTION_LATENCY, PenguinCore
@@ -68,6 +69,8 @@ from .memory import (
 
 __all__ = [
     "ArchState",
+    "AssemblyProgram",
+    "AssemblySyntaxError",
     "BType",
     "DMAChannel",
     "DMAType",
@@ -99,6 +102,8 @@ __all__ = [
     "VMEM_SIZE",
     "sadd",
     "saddi",
+    "assemble_file",
+    "assemble_text",
     "sand",
     "sandi",
     "sauipc",
