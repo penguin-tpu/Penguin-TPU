@@ -66,7 +66,8 @@ db.sqlite3-journal
 instance/
 .webassets-cache
 
-# Generated example traces
+# Generated traces and bundle outputs
+outputs/
 examples/out/
 
 # Scrapy stuff:
