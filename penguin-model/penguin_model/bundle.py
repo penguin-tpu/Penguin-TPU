@@ -11,4 +11,3 @@ class ExecutableBundle:
     program: Path
     manifest: Path
     constants: Path
-

@@ -226,6 +226,8 @@ Architectural properties:
 - DMA synchronization is channel-specific rather than global
 - DMA source and destination addresses must be 32-byte aligned
 - DMA transfer sizes must be integer multiples of 32 bytes
+- DMA completion time is bandwidth-limited by both the off-chip serialized DRAM link and
+  the on-chip VMEM/system bus
 
 Initial intended direction:
 
@@ -235,6 +237,24 @@ Initial intended direction:
 - the 8 DMA channels are symmetric in capability
 - `dma.wait.chN` returns immediately if `chN` is already idle
 - completion order across different channels is not guaranteed by issue order
+
+Baseline timing model:
+
+- the off-chip DRAM link is 32 bits wide
+- the off-chip DRAM link transfers one beat every 2 core cycles
+- DMA command overhead consumes 2 serialized 32-bit words on that off-chip link:
+  - operation type
+  - DRAM address value
+- the on-chip VMEM/system bus is 128 bits wide
+- the on-chip VMEM/system bus transfers one beat every core cycle
+- for a transfer of `size_bytes`, the baseline model uses:
+  - `dma_offchip_cycles = ceil((size_bytes + 8) / 4) * 2`
+  - `vmem_transfer_cycles = ceil(size_bytes / 16)`
+  - `dma_transfer_cycles = max(dma_offchip_cycles, vmem_transfer_cycles)`
+
+This bandwidth model is parameterized in the software model and configuration spec so
+that later revisions can retune widths or serialization ratios without rewriting the DMA
+semantics.
 
 ### 4.2 VMEM <-> Tensor Registers
 
@@ -260,6 +280,13 @@ Initial intended direction:
 - each `vload` or `vstore` transfers exactly one 2048-byte tensor register image
 - `vload` and `vstore` require 32-byte-aligned VMEM addresses
 - sub-tile windows and partial-row transfers are not part of the current contract
+- their baseline latency is determined by VMEM/system-bus bandwidth rather than a fixed
+  ad hoc constant
+
+Baseline timing model:
+
+- `vload` and `vstore` each transfer one 2048-byte tensor-register image
+- with a 128-bit VMEM/system bus, one transfer takes `ceil(2048 / 16) = 128` cycles
 
 These operations are on-chip and block execution if the transfer is not ready in time.
 They do not create a separate asynchronous completion model.
@@ -280,6 +307,11 @@ Architectural properties:
   scalar-register range
 - `mxu.push.*` requires a 32-byte-aligned VMEM source address
 - each `mxu.push.*` transfers exactly one 512-byte weight tile into the selected slot
+- the baseline latency is determined by the VMEM/system-bus width
+
+Baseline timing model:
+
+- with a 128-bit VMEM/system bus, `mxu.push.*` takes `ceil(512 / 16) = 32` cycles
 
 ## 5. Determinism And Synchronization
 

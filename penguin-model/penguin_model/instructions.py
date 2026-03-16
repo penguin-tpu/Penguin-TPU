@@ -74,8 +74,56 @@ class DMAType:
     size_rs: int
 
 
+@dataclass(frozen=True, slots=True)
+class TensorMemType:
+    """Tensor register plus scalar-register-indirect VMEM address."""
+
+    mreg: int
+    rs1: int
+    imm: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class WeightMemType:
+    """MXU weight-slot selector plus scalar-register-indirect VMEM address."""
+
+    slot: int
+    rs1: int
+    imm: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class MXUMatmulType:
+    """Fresh matmul launch: dest tensor, activation tensor, weight selector."""
+
+    md: int
+    ms: int
+    ws: int
+
+
+@dataclass(frozen=True, slots=True)
+class MXUMatmulAccType:
+    """Accumulating matmul launch with an explicit partial-sum tensor."""
+
+    md: int
+    ms: int
+    ws: int
+    mp: int
+
+
 InstructionParams: TypeAlias = (
-    RType | IType | SType | BType | UType | JType | EmptyType | DMAType
+    RType
+    | IType
+    | SType
+    | BType
+    | UType
+    | JType
+    | EmptyType
+    | DMAType
+    | TensorMemType
+    | WeightMemType
+    | MXUMatmulType
+    | MXUMatmulAccType
 )
 
 InstructionFn: TypeAlias = Callable[[ArchState, InstructionParams], None]
@@ -100,23 +148,32 @@ class InstructionSpec:
 
 
 INSTRUCTION_SPECS: dict[str, InstructionSpec] = {}
+TENSOR_INSTRUCTION_SPECS: dict[str, InstructionSpec] = {}
+ALL_INSTRUCTION_SPECS: dict[str, InstructionSpec] = {}
 
 
 def instruction(
-    *, mnemonic: str, params_type: type[InstructionParams], latency: int
+    *,
+    mnemonic: str,
+    params_type: type[InstructionParams],
+    latency: int,
+    registry: dict[str, InstructionSpec] | None = None,
 ) -> Callable[[InstructionFn], InstructionFn]:
     """Register a semantic function as the implementation of one instruction."""
 
     def decorate(semantics: InstructionFn) -> InstructionFn:
+        target_registry = INSTRUCTION_SPECS if registry is None else registry
         setattr(semantics, "mnemonic", mnemonic)
         setattr(semantics, "params_type", params_type)
         setattr(semantics, "latency", latency)
-        INSTRUCTION_SPECS[mnemonic] = InstructionSpec(
+        spec = InstructionSpec(
             mnemonic=mnemonic,
             params_type=params_type,
             semantics=semantics,
             latency=latency,
         )
+        target_registry[mnemonic] = spec
+        ALL_INSTRUCTION_SPECS[mnemonic] = spec
         return semantics
 
     return decorate
@@ -127,14 +184,20 @@ __all__ = [
     "DMAType",
     "EmptyType",
     "IType",
+    "ALL_INSTRUCTION_SPECS",
     "INSTRUCTION_SPECS",
     "Instruction",
     "InstructionFn",
     "InstructionParams",
     "InstructionSpec",
     "JType",
+    "MXUMatmulAccType",
+    "MXUMatmulType",
     "RType",
     "SType",
+    "TENSOR_INSTRUCTION_SPECS",
+    "TensorMemType",
     "UType",
+    "WeightMemType",
     "instruction",
 ]

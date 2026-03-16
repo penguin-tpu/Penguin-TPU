@@ -262,6 +262,17 @@ Implemented today:
     VMEM sourcing, and perf-counter / latency accounting for tensor ops
 - the public `INSTRUCTION_LATENCY` view now includes tensor instructions in addition to
   the scalar and DMA subset
+- runnable tensor examples now include both single-tile demos and larger DMA-backed
+  stripmined workloads backed by checked-in `.S` programs under
+  `tests/vectors/programs/tensor/examples/`
+- the functional/perf model now carries explicit bandwidth-based transfer timing knobs
+  and systematic verification for:
+  - delay-slot execution order and target-start timing
+  - younger control-transfer replacement inside delay slots
+  - DMA wait ordering in traces
+  - intermediate tensor-register and DRAM tile state during larger workloads
+- current Python verification status at this checkpoint:
+  - `uv run pytest` passes with 144 tests
 - runnable tensor examples now exist for:
   - single-tile `matmul`
   - tiled `linear` without bias over a 128x32 input batch and 32 output features

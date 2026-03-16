@@ -279,6 +279,10 @@ Semantics:
 - `x[rs_dram]` and `x[rs_vmem]` must both be 32-byte aligned
 - `x[rs_size]` must be a multiple of 32 bytes
 - the operation is only legal if channel `N` is currently idle
+- the modeled completion time is bandwidth-driven rather than a fixed constant:
+  - off-chip serialized DRAM-link time includes 2 overhead words
+  - on-chip VMEM write time is determined by VMEM/system-bus width
+  - the transfer becomes visible after the slower of those two paths completes
 - completion is not architecturally visible until `dma.wait.chN`
 
 #### `dma.store.chN rs_dram, rs_vmem, rs_size`
@@ -290,6 +294,10 @@ Semantics:
 - `x[rs_dram]` and `x[rs_vmem]` must both be 32-byte aligned
 - `x[rs_size]` must be a multiple of 32 bytes
 - the operation is only legal if channel `N` is currently idle
+- the modeled completion time is bandwidth-driven rather than a fixed constant:
+  - off-chip serialized DRAM-link time includes 2 overhead words
+  - on-chip VMEM read time is determined by VMEM/system-bus width
+  - the transfer becomes visible after the slower of those two paths completes
 - completion is not architecturally visible until `dma.wait.chN`
 
 #### `dma.wait.chN`
@@ -298,6 +306,10 @@ Semantics:
 
 - block until channel `N` has no pending DMA transfer
 - once complete, the destination memory region reflects the transferred bytes
+- for the baseline parameter set, transfer time is determined from:
+  - `dma_offchip_cycles = ceil((size_bytes + 8) / 4) * 2`
+  - `vmem_transfer_cycles = ceil(size_bytes / 16)`
+  - `dma_transfer_cycles = max(dma_offchip_cycles, vmem_transfer_cycles)`
 - if channel `N` is already idle at issue time, the instruction completes immediately
 
 ### I-type integer compute instructions

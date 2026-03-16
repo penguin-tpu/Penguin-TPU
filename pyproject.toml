@@ -7,6 +7,7 @@ dependencies = [
     "numpy>=2.4.3",
     "torch>=2.10.0",
     "penguin-model",
+    "slackbot",
 ]
 
 [dependency-groups]
@@ -22,6 +23,7 @@ members = [
 
 [tool.uv.sources]
 penguin-model = { workspace = true }
+slackbot = { git = "https://github.com/penguin-tpu/SlackBot.git" }
 
 [tool.pytest.ini_options]
 addopts = "-ra"

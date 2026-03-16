@@ -217,6 +217,10 @@ Rationale:
 The scalar path is integer-only in the current direction of the project. The scalar ISA
 subset is defined in [scalar-functional-subset.md](/home/tk/Desktop/Penguin-TPU/docs/specs/scalar-functional-subset.md).
 
+In the Python functional/performance model, a concrete machine instance is created
+through one hierarchical software configuration entry point, `PenguinCoreConfig`, whose
+fields are constrained by the shared-parameter specification.
+
 The scalar path is responsible for:
 
 - control flow

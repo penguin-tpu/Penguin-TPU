@@ -10,7 +10,10 @@ from penguin_model import (
     IType,
     Instruction,
     JType,
+    MXUMatmulAccType,
+    TensorMemType,
     VMEM_BASE,
+    WeightMemType,
     assemble_text,
 )
 
@@ -53,3 +56,21 @@ target:
 def test_assembler_rejects_invalid_register_names() -> None:
     with pytest.raises(AssemblySyntaxError, match="invalid register"):
         assemble_text("saddi y1, x0, 1\n")
+
+
+def test_assembler_parses_tensor_memory_and_mxu_operands() -> None:
+    program = assemble_text(
+        """
+    vload m3, 32(x1)
+    mxu.push.mxu1 w0, 64(x2)
+    matmul.add.mxu1 m4, m3, w0, m5
+    vstore m4, 96(x6)
+"""
+    )
+
+    assert list(program) == [
+        Instruction("vload", TensorMemType(mreg=3, rs1=1, imm=32)),
+        Instruction("mxu.push.mxu1", WeightMemType(slot=0, rs1=2, imm=64)),
+        Instruction("matmul.add.mxu1", MXUMatmulAccType(md=4, ms=3, ws=0, mp=5)),
+        Instruction("vstore", TensorMemType(mreg=4, rs1=6, imm=96)),
+    ]

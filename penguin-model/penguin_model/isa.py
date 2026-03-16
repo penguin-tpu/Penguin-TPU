@@ -6,19 +6,31 @@ from collections.abc import Callable
 
 from .arch_state import ArchState, StopReason
 from .instructions import (
+    TENSOR_INSTRUCTION_SPECS,
     BType,
     DMAType,
     EmptyType,
     IType,
     JType,
+    MXUMatmulAccType,
+    MXUMatmulType,
     RType,
     SType,
+    TensorMemType,
     UType,
+    WeightMemType,
     instruction,
+)
+from .memory import DMA_CHANNEL_COUNT
+from .tensor import (
+    MATMUL_LATENCY_CYCLES,
+    MXU_PUSH_LATENCY_CYCLES,
+    VLOAD_LATENCY_CYCLES,
+    VSTORE_LATENCY_CYCLES,
+    compute_bf16_matmul,
 )
 
 MASK32 = 0xFFFF_FFFF
-DMA_CHANNEL_COUNT = 8
 
 
 def _u32(value: int) -> int:
@@ -45,8 +57,8 @@ def _branch_if(
 
 def _dma_operands(state: ArchState, params: DMAType) -> tuple[int, int, int]:
     return (
-        _u32(state.read_xreg(params.dram_rs)),
-        _u32(state.read_xreg(params.vmem_rs)),
+        state.extend_address(_u32(state.read_xreg(params.dram_rs))),
+        state.extend_address(_u32(state.read_xreg(params.vmem_rs))),
         _u32(state.read_xreg(params.size_rs)),
     )
 
@@ -245,37 +257,280 @@ def sebreak(state: ArchState, params: EmptyType) -> None:
     state.stop(StopReason.EBREAK)
 
 
-def _register_dma_instructions() -> None:
-    for channel in range(DMA_CHANNEL_COUNT):
-        load_mnemonic = f"dma.load.ch{channel}"
-        store_mnemonic = f"dma.store.ch{channel}"
-        wait_mnemonic = f"dma.wait.ch{channel}"
-
-        @instruction(mnemonic=load_mnemonic, params_type=DMAType, latency=1)
-        def dma_load(state: ArchState, params: DMAType, *, _channel: int = channel) -> None:
-            dram_address, vmem_address, size = _dma_operands(state, params)
-            state.issue_dma_load(_channel, dram_address, vmem_address, size)
-
-        @instruction(mnemonic=store_mnemonic, params_type=DMAType, latency=1)
-        def dma_store(
-            state: ArchState, params: DMAType, *, _channel: int = channel
-        ) -> None:
-            dram_address, vmem_address, size = _dma_operands(state, params)
-            state.issue_dma_store(_channel, dram_address, vmem_address, size)
-
-        @instruction(mnemonic=wait_mnemonic, params_type=EmptyType, latency=1)
-        def dma_wait(
-            state: ArchState, params: EmptyType, *, _channel: int = channel
-        ) -> None:
-            del params
-            state.wait_dma_channel(_channel)
-
-        globals()[f"dma_load_ch{channel}"] = dma_load
-        globals()[f"dma_store_ch{channel}"] = dma_store
-        globals()[f"dma_wait_ch{channel}"] = dma_wait
+@instruction(
+    mnemonic="vload",
+    params_type=TensorMemType,
+    latency=VLOAD_LATENCY_CYCLES,
+    registry=TENSOR_INSTRUCTION_SPECS,
+)
+def vload(state: ArchState, params: TensorMemType) -> None:
+    address = state.resolve_indirect_address(params.rs1, params.imm)
+    state.vload(params.mreg, address)
 
 
-_register_dma_instructions()
+@instruction(
+    mnemonic="vstore",
+    params_type=TensorMemType,
+    latency=VSTORE_LATENCY_CYCLES,
+    registry=TENSOR_INSTRUCTION_SPECS,
+)
+def vstore(state: ArchState, params: TensorMemType) -> None:
+    address = state.resolve_indirect_address(params.rs1, params.imm)
+    state.vstore(params.mreg, address)
+
+
+@instruction(
+    mnemonic="mxu.push.mxu0",
+    params_type=WeightMemType,
+    latency=MXU_PUSH_LATENCY_CYCLES,
+    registry=TENSOR_INSTRUCTION_SPECS,
+)
+def mxu_push_mxu0(state: ArchState, params: WeightMemType) -> None:
+    address = state.resolve_indirect_address(params.rs1, params.imm)
+    state.push_weight_slot(0, params.slot, address)
+
+
+@instruction(
+    mnemonic="mxu.push.mxu1",
+    params_type=WeightMemType,
+    latency=MXU_PUSH_LATENCY_CYCLES,
+    registry=TENSOR_INSTRUCTION_SPECS,
+)
+def mxu_push_mxu1(state: ArchState, params: WeightMemType) -> None:
+    address = state.resolve_indirect_address(params.rs1, params.imm)
+    state.push_weight_slot(1, params.slot, address)
+
+
+def _matmul_result(
+    state: ArchState,
+    *,
+    mxu: int,
+    dest: int,
+    src: int,
+    slot: int,
+    partial: int | None = None,
+) -> None:
+    activation = state.load_mreg(src)
+    weights = state.load_weight_slot(mxu, slot)
+    partial_raw = None if partial is None else state.load_mreg(partial)
+    state.instruction_extra_cycles = (
+        state.config.matmul_latency_cycles - MATMUL_LATENCY_CYCLES
+    )
+    state.store_mreg(
+        dest,
+        compute_bf16_matmul(
+            activation,
+            weights,
+            partial_raw,
+            config=state.config,
+        ),
+    )
+
+
+@instruction(
+    mnemonic="matmul.mxu0",
+    params_type=MXUMatmulType,
+    latency=MATMUL_LATENCY_CYCLES,
+    registry=TENSOR_INSTRUCTION_SPECS,
+)
+def matmul_mxu0(state: ArchState, params: MXUMatmulType) -> None:
+    _matmul_result(state, mxu=0, dest=params.md, src=params.ms, slot=params.ws)
+
+
+@instruction(
+    mnemonic="matmul.mxu1",
+    params_type=MXUMatmulType,
+    latency=MATMUL_LATENCY_CYCLES,
+    registry=TENSOR_INSTRUCTION_SPECS,
+)
+def matmul_mxu1(state: ArchState, params: MXUMatmulType) -> None:
+    _matmul_result(state, mxu=1, dest=params.md, src=params.ms, slot=params.ws)
+
+
+@instruction(
+    mnemonic="matmul.add.mxu0",
+    params_type=MXUMatmulAccType,
+    latency=MATMUL_LATENCY_CYCLES,
+    registry=TENSOR_INSTRUCTION_SPECS,
+)
+def matmul_add_mxu0(state: ArchState, params: MXUMatmulAccType) -> None:
+    _matmul_result(
+        state,
+        mxu=0,
+        dest=params.md,
+        src=params.ms,
+        slot=params.ws,
+        partial=params.mp,
+    )
+
+
+@instruction(
+    mnemonic="matmul.add.mxu1",
+    params_type=MXUMatmulAccType,
+    latency=MATMUL_LATENCY_CYCLES,
+    registry=TENSOR_INSTRUCTION_SPECS,
+)
+def matmul_add_mxu1(state: ArchState, params: MXUMatmulAccType) -> None:
+    _matmul_result(
+        state,
+        mxu=1,
+        dest=params.md,
+        src=params.ms,
+        slot=params.ws,
+        partial=params.mp,
+    )
+
+
+# DMA channel 0
+@instruction(mnemonic="dma.load.ch0", params_type=DMAType, latency=1)
+def dma_load_ch0(state: ArchState, params: DMAType) -> None:
+    dram_address, vmem_address, size = _dma_operands(state, params)
+    state.issue_dma_load(0, dram_address, vmem_address, size)
+
+
+@instruction(mnemonic="dma.store.ch0", params_type=DMAType, latency=1)
+def dma_store_ch0(state: ArchState, params: DMAType) -> None:
+    dram_address, vmem_address, size = _dma_operands(state, params)
+    state.issue_dma_store(0, dram_address, vmem_address, size)
+
+
+@instruction(mnemonic="dma.wait.ch0", params_type=EmptyType, latency=1)
+def dma_wait_ch0(state: ArchState, params: EmptyType) -> None:
+    del params
+    state.wait_dma_channel(0)
+
+
+# DMA channel 1
+@instruction(mnemonic="dma.load.ch1", params_type=DMAType, latency=1)
+def dma_load_ch1(state: ArchState, params: DMAType) -> None:
+    dram_address, vmem_address, size = _dma_operands(state, params)
+    state.issue_dma_load(1, dram_address, vmem_address, size)
+
+
+@instruction(mnemonic="dma.store.ch1", params_type=DMAType, latency=1)
+def dma_store_ch1(state: ArchState, params: DMAType) -> None:
+    dram_address, vmem_address, size = _dma_operands(state, params)
+    state.issue_dma_store(1, dram_address, vmem_address, size)
+
+
+@instruction(mnemonic="dma.wait.ch1", params_type=EmptyType, latency=1)
+def dma_wait_ch1(state: ArchState, params: EmptyType) -> None:
+    del params
+    state.wait_dma_channel(1)
+
+
+# DMA channel 2
+@instruction(mnemonic="dma.load.ch2", params_type=DMAType, latency=1)
+def dma_load_ch2(state: ArchState, params: DMAType) -> None:
+    dram_address, vmem_address, size = _dma_operands(state, params)
+    state.issue_dma_load(2, dram_address, vmem_address, size)
+
+
+@instruction(mnemonic="dma.store.ch2", params_type=DMAType, latency=1)
+def dma_store_ch2(state: ArchState, params: DMAType) -> None:
+    dram_address, vmem_address, size = _dma_operands(state, params)
+    state.issue_dma_store(2, dram_address, vmem_address, size)
+
+
+@instruction(mnemonic="dma.wait.ch2", params_type=EmptyType, latency=1)
+def dma_wait_ch2(state: ArchState, params: EmptyType) -> None:
+    del params
+    state.wait_dma_channel(2)
+
+
+# DMA channel 3
+@instruction(mnemonic="dma.load.ch3", params_type=DMAType, latency=1)
+def dma_load_ch3(state: ArchState, params: DMAType) -> None:
+    dram_address, vmem_address, size = _dma_operands(state, params)
+    state.issue_dma_load(3, dram_address, vmem_address, size)
+
+
+@instruction(mnemonic="dma.store.ch3", params_type=DMAType, latency=1)
+def dma_store_ch3(state: ArchState, params: DMAType) -> None:
+    dram_address, vmem_address, size = _dma_operands(state, params)
+    state.issue_dma_store(3, dram_address, vmem_address, size)
+
+
+@instruction(mnemonic="dma.wait.ch3", params_type=EmptyType, latency=1)
+def dma_wait_ch3(state: ArchState, params: EmptyType) -> None:
+    del params
+    state.wait_dma_channel(3)
+
+
+# DMA channel 4
+@instruction(mnemonic="dma.load.ch4", params_type=DMAType, latency=1)
+def dma_load_ch4(state: ArchState, params: DMAType) -> None:
+    dram_address, vmem_address, size = _dma_operands(state, params)
+    state.issue_dma_load(4, dram_address, vmem_address, size)
+
+
+@instruction(mnemonic="dma.store.ch4", params_type=DMAType, latency=1)
+def dma_store_ch4(state: ArchState, params: DMAType) -> None:
+    dram_address, vmem_address, size = _dma_operands(state, params)
+    state.issue_dma_store(4, dram_address, vmem_address, size)
+
+
+@instruction(mnemonic="dma.wait.ch4", params_type=EmptyType, latency=1)
+def dma_wait_ch4(state: ArchState, params: EmptyType) -> None:
+    del params
+    state.wait_dma_channel(4)
+
+
+# DMA channel 5
+@instruction(mnemonic="dma.load.ch5", params_type=DMAType, latency=1)
+def dma_load_ch5(state: ArchState, params: DMAType) -> None:
+    dram_address, vmem_address, size = _dma_operands(state, params)
+    state.issue_dma_load(5, dram_address, vmem_address, size)
+
+
+@instruction(mnemonic="dma.store.ch5", params_type=DMAType, latency=1)
+def dma_store_ch5(state: ArchState, params: DMAType) -> None:
+    dram_address, vmem_address, size = _dma_operands(state, params)
+    state.issue_dma_store(5, dram_address, vmem_address, size)
+
+
+@instruction(mnemonic="dma.wait.ch5", params_type=EmptyType, latency=1)
+def dma_wait_ch5(state: ArchState, params: EmptyType) -> None:
+    del params
+    state.wait_dma_channel(5)
+
+
+# DMA channel 6
+@instruction(mnemonic="dma.load.ch6", params_type=DMAType, latency=1)
+def dma_load_ch6(state: ArchState, params: DMAType) -> None:
+    dram_address, vmem_address, size = _dma_operands(state, params)
+    state.issue_dma_load(6, dram_address, vmem_address, size)
+
+
+@instruction(mnemonic="dma.store.ch6", params_type=DMAType, latency=1)
+def dma_store_ch6(state: ArchState, params: DMAType) -> None:
+    dram_address, vmem_address, size = _dma_operands(state, params)
+    state.issue_dma_store(6, dram_address, vmem_address, size)
+
+
+@instruction(mnemonic="dma.wait.ch6", params_type=EmptyType, latency=1)
+def dma_wait_ch6(state: ArchState, params: EmptyType) -> None:
+    del params
+    state.wait_dma_channel(6)
+
+
+# DMA channel 7
+@instruction(mnemonic="dma.load.ch7", params_type=DMAType, latency=1)
+def dma_load_ch7(state: ArchState, params: DMAType) -> None:
+    dram_address, vmem_address, size = _dma_operands(state, params)
+    state.issue_dma_load(7, dram_address, vmem_address, size)
+
+
+@instruction(mnemonic="dma.store.ch7", params_type=DMAType, latency=1)
+def dma_store_ch7(state: ArchState, params: DMAType) -> None:
+    dram_address, vmem_address, size = _dma_operands(state, params)
+    state.issue_dma_store(7, dram_address, vmem_address, size)
+
+
+@instruction(mnemonic="dma.wait.ch7", params_type=EmptyType, latency=1)
+def dma_wait_ch7(state: ArchState, params: EmptyType) -> None:
+    del params
+    state.wait_dma_channel(7)
 
 
 __all__ = [
@@ -298,6 +553,12 @@ __all__ = [
     "sjalr",
     "sld",
     "slui",
+    "matmul_add_mxu0",
+    "matmul_add_mxu1",
+    "matmul_mxu0",
+    "matmul_mxu1",
+    "mxu_push_mxu0",
+    "mxu_push_mxu1",
     "sor",
     "sori",
     "ssll",
@@ -314,4 +575,6 @@ __all__ = [
     "ssltiu",
     "sxor",
     "sxori",
+    "vload",
+    "vstore",
 ]
