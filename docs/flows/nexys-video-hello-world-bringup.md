@@ -24,11 +24,14 @@ Observed environment details during the successful run:
 
 Observed scalar-core implementation caveat:
 
-- `penguin_scalar_uart_hello_top` currently routes and programs successfully,
-  but does not meet timing on the Nexys Video target in Vivado 2024.2
-  (`WNS=-5.322 ns`, `TNS=-9779.392 ns` in the routed timing summary)
-- despite the timing violation, the programmed board still emitted the expected
-  repeating UART string during the March 16, 2026 validation run
+- the current checked-in scalar-core top uses a temporary fabric divide-by-2
+  clock path, deriving a 50 MHz internal core/UART/counter clock from the 100
+  MHz board clock
+- this is a bring-up measure only; the intended follow-up is to replace it with
+  a proper PLL/MMCM-generated clock
+- with that divide-by-2 path in place, `penguin_scalar_uart_hello_top` now meets
+  timing on the Nexys Video target in Vivado 2024.2
+  (`WNS=8.365 ns`, `TNS=0.000 ns` in the routed timing summary)
 
 Note: the requested serial device `/dev/ttyUSB2` was not present during this
 run. Only `/dev/ttyUSB0` existed, and that port produced the expected UART
@@ -171,9 +174,9 @@ hello, this is penguin
 - `scalar_core` continuously emits `hello, this is penguin` with no separator.
 - the current scalar-core FPGA image implements an MMIO cycle counter at
   `0x00000108` and uses that counter in software to hold the message cadence to
-  roughly 1 second between messages on the 100 MHz board clock
+  roughly 1 second between messages on the temporary 50 MHz internal clock
 - observed March 16, 2026 scalar-core hardware intervals between successive
-  detected messages were `1.006618 s` and `0.990736 s`
+  detected messages after the divider change were `0.989834 s` and `1.006263 s`
 
 ## Generated Artifacts
 

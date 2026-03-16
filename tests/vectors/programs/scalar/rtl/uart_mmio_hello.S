@@ -5,14 +5,15 @@
 #   0x00000104 : UART TX data, low byte transmitted on store
 #   0x00000108 : free-running 32-bit cycle counter
 #
-# The Nexys Video scalar-core top runs at 100 MHz, so a 1 Hz message cadence
-# corresponds to 100,000,000 core cycles between message starts.
+# The current Nexys Video scalar-core top divides the 100 MHz board clock by 2,
+# so a 1 Hz message cadence corresponds to 50,000,000 core cycles between
+# message starts.
 
     li x1, 0x00000100
     li x2, 0x00000104
     li x5, 0x00000108
-    slui x6, 0x05F5E
-    saddi x6, x6, 256
+    slui x6, 0x02FAF
+    saddi x6, x6, 128
 
 message_start:
     sld x7, 0(x5)
@@ -191,6 +192,14 @@ wait_21:
     nop
     nop
     li x4, 110
+    sst x4, 0(x2)
+
+wait_22:
+    sld x3, 0(x1)
+    sbeq x3, x0, wait_22
+    nop
+    nop
+    li x4, 10
     sst x4, 0(x2)
 
 delay_wait:

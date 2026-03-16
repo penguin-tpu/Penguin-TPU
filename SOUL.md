@@ -596,12 +596,21 @@ Open follow-up for the next FPGA step:
   - stricter repeated-message validation measured host-side inter-message
     intervals of `1.006618 s` and `0.990736 s`, which is consistent with the
     intended 1 Hz cadence
+- temporarily changed the scalar-core FPGA top to derive a fabric divide-by-2
+  internal clock from the 100 MHz board clock:
+  - scalar core, UART, and MMIO cycle counter now run on the derived 50 MHz
+    clock
+  - the UART-MMIO hello program was updated to target a 50,000,000-cycle
+    1-second delay and now emits a newline after each message
+  - cocotb regressions were updated to follow the divided internal clock rather
+    than the raw board clock
+  - the Nexys Video board run still passes, with repeated-message intervals of
+    `0.989834 s` and `1.006263 s`
 - current scalar-core FPGA caveat:
-  - Vivado 2024.2 still reports negative routed timing on
-    `penguin_scalar_uart_hello_top`
+  - the temporary divide-by-2 path is a stopgap for bring-up; it should be
+    replaced by a proper PLL/MMCM-generated clock later
   - routed timing summary from the most recent successful board-tested build:
-    - `WNS=-5.322 ns`
-    - `TNS=-9779.392 ns`
-  - functional board validation passed despite the timing violation, so timing
-    closure remains the next hardware-quality issue rather than basic
-    functionality
+    - `WNS=8.365 ns`
+    - `TNS=0.000 ns`
+  - functional board validation and timing signoff now both pass with the
+    divided clock

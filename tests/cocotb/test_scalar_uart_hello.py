@@ -30,9 +30,9 @@ def test_scalar_uart_hello_cocotb() -> None:
     ]
 
     parameters = {
-        "CLK_FREQ_HZ": 2_000,
+        "CLK_FREQ_HZ": 4_000,
         "BAUD_RATE": 200,
-        "CYCLE_COUNTER_INCREMENT": 50_000,
+        "CYCLE_COUNTER_INCREMENT": 25_000,
     }
 
     sim_build = ROOT / ".pytest_sim_build" / "scalar_uart_hello_verilator"

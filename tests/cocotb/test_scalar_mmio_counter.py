@@ -30,7 +30,7 @@ def test_scalar_mmio_cycle_counter_cocotb() -> None:
     ]
 
     parameters = {
-        "CLK_FREQ_HZ": 2_000,
+        "CLK_FREQ_HZ": 4_000,
         "BAUD_RATE": 200,
         "CYCLE_COUNTER_INCREMENT": 7,
     }

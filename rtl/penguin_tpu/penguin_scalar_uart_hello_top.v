@@ -16,13 +16,15 @@ module penguin_scalar_uart_hello_top #
 );
 
     localparam integer IMEM_WORDS = 256;
+    localparam integer CORE_CLK_FREQ_HZ = CLK_FREQ_HZ / 2;
     localparam [31:0] UART_STATUS_ADDR = 32'h0000_0100;
     localparam [31:0] UART_TX_ADDR = 32'h0000_0104;
     localparam [31:0] CYCLE_COUNTER_ADDR = 32'h0000_0108;
-    localparam [31:0] UART_PRESCALE_CALC = (CLK_FREQ_HZ + (BAUD_RATE * 4)) / (BAUD_RATE * 8);
+    localparam [31:0] UART_PRESCALE_CALC = (CORE_CLK_FREQ_HZ + (BAUD_RATE * 4)) / (BAUD_RATE * 8);
     localparam [15:0] UART_PRESCALE = UART_PRESCALE_CALC[15:0];
 
-    wire clock = sys_clk_i;
+    reg  clock_div2_reg;
+    wire clock = clock_div2_reg;
     wire reset = !cpu_resetn;
 
     reg [31:0] imem [0:IMEM_WORDS-1];
@@ -50,6 +52,14 @@ module penguin_scalar_uart_hello_top #
     wire       uart_rx_busy_unused;
     wire       uart_rx_overrun_unused;
     wire       uart_rx_frame_unused;
+
+    always @(posedge sys_clk_i or posedge reset) begin
+        if (reset) begin
+            clock_div2_reg <= 1'b0;
+        end else begin
+            clock_div2_reg <= ~clock_div2_reg;
+        end
+    end
 
     initial begin
         for (imem_index = 0; imem_index < IMEM_WORDS; imem_index = imem_index + 1) begin

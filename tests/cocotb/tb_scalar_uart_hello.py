@@ -12,23 +12,24 @@ CLK_FREQ_HZ = int(os.environ["PARAM_CLK_FREQ_HZ"])
 BAUD_RATE = int(os.environ["PARAM_BAUD_RATE"])
 CYCLE_COUNTER_INCREMENT = int(os.environ["PARAM_CYCLE_COUNTER_INCREMENT"])
 CLOCK_PERIOD_NS = 10
-UART_PRESCALE = (CLK_FREQ_HZ + (BAUD_RATE * 4)) // (BAUD_RATE * 8)
+CORE_CLK_FREQ_HZ = CLK_FREQ_HZ // 2
+UART_PRESCALE = (CORE_CLK_FREQ_HZ + (BAUD_RATE * 4)) // (BAUD_RATE * 8)
 UART_BIT_CYCLES = UART_PRESCALE * 8
-MESSAGE = b"hello, this is penguin"
-MESSAGE_PERIOD_COUNTER_TICKS = 100_000_000
+MESSAGE = b"hello, this is penguin\n"
+MESSAGE_PERIOD_COUNTER_TICKS = 50_000_000
 MESSAGE_PERIOD_CYCLES = MESSAGE_PERIOD_COUNTER_TICKS // CYCLE_COUNTER_INCREMENT
 assert MESSAGE_PERIOD_COUNTER_TICKS % CYCLE_COUNTER_INCREMENT == 0
 
 
 async def read_uart_byte(dut) -> tuple[int, int]:
     await FallingEdge(dut.uart_rx_out)
-    start_cycle = int(get_sim_time("ns")) // CLOCK_PERIOD_NS
-    await ClockCycles(dut.sys_clk_i, UART_BIT_CYCLES + (UART_BIT_CYCLES // 2))
+    start_cycle = int(get_sim_time("ns")) // (CLOCK_PERIOD_NS * 2)
+    await ClockCycles(dut.clock, UART_BIT_CYCLES + (UART_BIT_CYCLES // 2))
 
     value = 0
     for bit_index in range(8):
         value |= int(dut.uart_rx_out.value) << bit_index
-        await ClockCycles(dut.sys_clk_i, UART_BIT_CYCLES)
+        await ClockCycles(dut.clock, UART_BIT_CYCLES)
 
     assert int(dut.uart_rx_out.value) == 1
     return value, start_cycle

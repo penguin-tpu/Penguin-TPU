@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import cocotb
 from cocotb.clock import Clock
-from cocotb.triggers import ClockCycles
+from cocotb.triggers import ClockCycles, RisingEdge
 
 
 CLOCK_PERIOD_NS = 10
@@ -18,11 +18,11 @@ async def mmio_cycle_counter_resets_and_increments(dut) -> None:
     assert int(dut.cycle_counter_reg.value) == 0
 
     dut.cpu_resetn.value = 1
-    await ClockCycles(dut.sys_clk_i, 1)
+    await RisingEdge(dut.clock)
     assert int(dut.cycle_counter_reg.value) == 7
-    await ClockCycles(dut.sys_clk_i, 1)
+    await RisingEdge(dut.clock)
     assert int(dut.cycle_counter_reg.value) == 14
-    await ClockCycles(dut.sys_clk_i, 3)
+    await ClockCycles(dut.clock, 3)
     assert int(dut.cycle_counter_reg.value) == 35
 
     dut.cpu_resetn.value = 0
@@ -38,10 +38,10 @@ async def mmio_cycle_counter_wraps_modulo_32_bits(dut) -> None:
     dut.uart_tx_in.value = 1
     await ClockCycles(dut.sys_clk_i, 2)
     dut.cpu_resetn.value = 1
-    await ClockCycles(dut.sys_clk_i, 1)
+    await RisingEdge(dut.clock)
 
     dut.cycle_counter_reg.value = 0xFFFF_FFFC
-    await ClockCycles(dut.sys_clk_i, 1)
+    await RisingEdge(dut.clock)
     assert int(dut.cycle_counter_reg.value) == 3
-    await ClockCycles(dut.sys_clk_i, 1)
+    await RisingEdge(dut.clock)
     assert int(dut.cycle_counter_reg.value) == 10
