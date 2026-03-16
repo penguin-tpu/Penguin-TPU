@@ -24,6 +24,7 @@ from penguin_model import (
     EmptyType,
     IType,
     Instruction,
+    InitializationConfig,
     Memory,
     MREG_BYTES,
     PenguinCore,
@@ -145,6 +146,37 @@ def test_default_memory_layout_matches_spec() -> None:
     assert state.config == DEFAULT_PENGUIN_CORE_CONFIG
 
 
+def test_power_on_state_uses_deterministic_pseudo_random_contents() -> None:
+    state_a = _fresh_state()
+    state_b = _fresh_state()
+
+    assert state_a.read_xreg(0) == 0
+    assert state_b.read_xreg(0) == 0
+    assert state_a.read_xreg(1) == state_b.read_xreg(1)
+    assert state_a.vmem.load_u32(VMEM_BASE + 0x00) == state_b.vmem.load_u32(VMEM_BASE + 0x00)
+    assert state_a.dram.load_u32(DRAM_BASE + 0x00) == state_b.dram.load_u32(DRAM_BASE + 0x00)
+    assert bool(state_a.load_mreg(0).any().item())
+
+
+def test_power_on_randomization_can_be_disabled_in_config() -> None:
+    config = PenguinCoreConfig(
+        initialization=InitializationConfig(
+            seed=DEFAULT_PENGUIN_CORE_CONFIG.initialization.seed,
+            randomize_dram=False,
+            randomize_vmem=False,
+            randomize_scalar_registers=False,
+            randomize_tensor_registers=False,
+            randomize_weight_slots=False,
+        )
+    )
+    state = ArchState.from_config(config)
+
+    assert state.read_xreg(1) == 0
+    assert state.vmem.load_u32(VMEM_BASE + 0x00) == 0
+    assert state.dram.load_u32(DRAM_BASE + 0x00) == 0
+    assert not bool(state.load_mreg(0).any().item())
+
+
 def test_instruction_semantics_are_stateless_functions_over_state_and_params() -> None:
     state = _fresh_state()
     state.vmem.store_u32(VMEM_BASE + 0x08, 0xABCD_EF01)
@@ -251,13 +283,14 @@ def test_branch_semantics_set_next_pc_only_when_taken(
 
 def test_core_executes_sjal_with_two_delay_slots_and_link_register() -> None:
     core = PenguinCore(state=_fresh_state(), config=TEST_CORE_CONFIG)
+    initial_x3 = core.state.read_xreg(3)
 
     perf = core.execute(_program("core_sjal_delay_slots"))
 
     assert core.state.read_xreg(1) == 11
     assert core.state.read_xreg(2) == 22
-    assert core.state.read_xreg(3) == 0
-    assert core.state.read_xreg(4) == 4
+    assert core.state.read_xreg(3) == initial_x3
+    assert core.state.read_xreg(4) == IMEM_BASE + 4
     assert core.state.read_xreg(5) == 55
     assert core.state.stop_reason == StopReason.PROGRAM_END
     assert perf.instructions == 4
@@ -266,13 +299,14 @@ def test_core_executes_sjal_with_two_delay_slots_and_link_register() -> None:
 
 def test_core_executes_sjalr_with_two_delay_slots_and_clears_lsb() -> None:
     core = PenguinCore(state=_fresh_state(), config=TEST_CORE_CONFIG)
+    initial_x4 = core.state.read_xreg(4)
 
     perf = core.execute(_program("core_sjalr_delay_slots"))
 
     assert core.state.read_xreg(2) == 2
     assert core.state.read_xreg(3) == 3
-    assert core.state.read_xreg(4) == 0
-    assert core.state.read_xreg(5) == 8
+    assert core.state.read_xreg(4) == initial_x4
+    assert core.state.read_xreg(5) == IMEM_BASE + 8
     assert core.state.read_xreg(8) == 8
     assert core.state.stop_reason == StopReason.PROGRAM_END
     assert perf.instructions == 5
@@ -281,16 +315,19 @@ def test_core_executes_sjalr_with_two_delay_slots_and_clears_lsb() -> None:
 
 def test_younger_control_transfer_in_delay_slot_replaces_older_redirect() -> None:
     core = PenguinCore(state=_fresh_state(), config=TEST_CORE_CONFIG)
+    initial_x5 = core.state.read_xreg(5)
+    initial_x6 = core.state.read_xreg(6)
+    initial_x7 = core.state.read_xreg(7)
 
     perf = core.execute(_program("younger_control_transfer"))
 
-    assert core.state.read_xreg(1) == 4
-    assert core.state.read_xreg(2) == 8
+    assert core.state.read_xreg(1) == IMEM_BASE + 4
+    assert core.state.read_xreg(2) == IMEM_BASE + 8
     assert core.state.read_xreg(3) == 3
     assert core.state.read_xreg(4) == 4
-    assert core.state.read_xreg(5) == 0
-    assert core.state.read_xreg(6) == 0
-    assert core.state.read_xreg(7) == 0
+    assert core.state.read_xreg(5) == initial_x5
+    assert core.state.read_xreg(6) == initial_x6
+    assert core.state.read_xreg(7) == initial_x7
     assert core.state.read_xreg(8) == 8
     assert core.state.stop_reason == StopReason.PROGRAM_END
     assert perf.instructions == 5
@@ -327,11 +364,12 @@ def test_scalar_load_store_and_branch_loop_program_uses_vmem_only() -> None:
         state.vmem.store_u32(VMEM_BASE + 0x40 + index * 4, value)
         state.dram.store_u32(DRAM_BASE + 0x40 + index * 4, 0xDEAD_0000 + index)
 
+    initial_dram_word = state.dram.load_u32(DRAM_BASE + 0x80)
     core = PenguinCore(state=state, config=state.config)
     perf = core.execute(_program("vmem_sum_loop"))
 
     assert state.vmem.load_u32(VMEM_BASE + 0x80) == 26
-    assert state.dram.load_u32(DRAM_BASE + 0x80) == 0
+    assert state.dram.load_u32(DRAM_BASE + 0x80) == initial_dram_word
     assert core.state.read_xreg(3) == 26
     assert core.state.stop_reason == StopReason.PROGRAM_END
     assert perf.instructions == 32
@@ -374,11 +412,12 @@ def test_dma_store_wait_moves_bytes_from_vmem_to_dram() -> None:
 def test_dma_load_requires_wait_before_vmem_sees_data() -> None:
     state = _fresh_state()
     state.dram.store_u32(DRAM_BASE + 0x100, 0xDEAD_BEEF)
+    initial_vmem_word = state.vmem.load_u32(VMEM_BASE + 0x20)
 
     core = PenguinCore(state=state, config=state.config)
     perf = core.execute(_program("dma_requires_wait"))
 
-    assert core.state.read_xreg(4) == 0
+    assert core.state.read_xreg(4) == initial_vmem_word
     assert core.state.read_xreg(5) == 0xDEAD_BEEF
     assert perf.instructions == 7
     assert perf.cycles == 24
@@ -614,12 +653,14 @@ def test_misaligned_jump_target_stops_execution() -> None:
 
 def test_taken_branch_with_misaligned_target_stops_before_delay_slots_execute() -> None:
     core = PenguinCore(state=_fresh_state(), config=TEST_CORE_CONFIG)
+    initial_x2 = core.state.read_xreg(2)
+    initial_x3 = core.state.read_xreg(3)
 
     perf = core.execute(_program("misaligned_branch_target"))
 
     assert core.state.stop_reason == StopReason.INSTRUCTION_ADDRESS_MISALIGNED
-    assert core.state.read_xreg(2) == 0
-    assert core.state.read_xreg(3) == 0
+    assert core.state.read_xreg(2) == initial_x2
+    assert core.state.read_xreg(3) == initial_x3
     assert perf.instructions == 2
 
 
@@ -635,12 +676,14 @@ def test_reset_clears_architectural_state_and_dma_but_preserves_memory() -> None
     assert core.state.dma_channels[0].busy is True
 
     core.reset()
+    reference_state = _fresh_state()
 
     assert core.state.pc == 0
     assert core.state.perf.instructions == 0
     assert core.state.perf.cycles == 0
     assert core.state.stop_reason is None
-    assert core.state.read_xreg(1) == 0
+    assert core.state.read_xreg(0) == 0
+    assert core.state.read_xreg(1) == reference_state.read_xreg(1)
     assert all(channel.busy is False for channel in core.state.dma_channels)
     assert core.state.vmem.load_u32(VMEM_BASE + 0x20) == 0x1234_5678
     assert core.state.dram.load_u32(DRAM_BASE + 0x100) == 0xCAFE_BABE

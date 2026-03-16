@@ -33,6 +33,8 @@ class Memory:
         verbose: bool = False,
         paged: bool = False,
         page_size: int = DEFAULT_PAGE_SIZE,
+        randomize_contents: bool = False,
+        init_seed: int = 0,
     ) -> None:
         self.name = name
         self.base = base
@@ -40,12 +42,17 @@ class Memory:
         self.verbose = verbose
         self.paged = paged
         self.page_size = page_size
+        self.randomize_contents = randomize_contents
+        self.init_seed = init_seed
         self.mem: torch.Tensor | None = None
         self.pages: dict[int, torch.Tensor] = {}
         if self.paged:
             assert self.page_size > 0, "page_size must be positive"
         else:
-            self.mem = torch.zeros(self.size, dtype=torch.uint8)
+            if self.randomize_contents:
+                self.mem = _random_u8_tensor(self.size, seed=self.init_seed)
+            else:
+                self.mem = torch.zeros(self.size, dtype=torch.uint8)
 
     def _offset(self, address: int, size: int) -> int:
         offset = address - self.base
@@ -59,8 +66,14 @@ class Memory:
 
     def _page(self, page_index: int, *, create: bool) -> torch.Tensor | None:
         page = self.pages.get(page_index)
-        if page is None and create:
-            page = torch.zeros(self.page_size, dtype=torch.uint8)
+        if page is None and (create or self.randomize_contents):
+            if self.randomize_contents:
+                page = _random_u8_tensor(
+                    self.page_size,
+                    seed=_mix_seed(self.init_seed, page_index),
+                )
+            else:
+                page = torch.zeros(self.page_size, dtype=torch.uint8)
             self.pages[page_index] = page
         return page
 
@@ -169,6 +182,23 @@ class DMAChannel:
         return self.pending is not None
 
 
+def _mix_seed(seed: int, *components: int) -> int:
+    mixed = seed & 0xFFFF_FFFF_FFFF_FFFF
+    for component in components:
+        mixed ^= int(component) & 0xFFFF_FFFF_FFFF_FFFF
+        mixed = (mixed * 0x9E37_79B9_7F4A_7C15) & 0xFFFF_FFFF_FFFF_FFFF
+        mixed ^= mixed >> 33
+    return mixed & 0x7FFF_FFFF_FFFF_FFFF
+
+
+def _random_u8_tensor(numel: int, *, seed: int) -> torch.Tensor:
+    generator = torch.Generator()
+    generator.manual_seed(int(seed) & 0x7FFF_FFFF_FFFF_FFFF)
+    return torch.randint(0, 256, (numel,), dtype=torch.int64, generator=generator).to(
+        torch.uint8
+    )
+
+
 __all__ = [
     "DMA_ALIGNMENT_BYTES",
     "DMA_CHANNEL_COUNT",
@@ -182,4 +212,6 @@ __all__ = [
     "Memory",
     "VMEM_BASE",
     "VMEM_SIZE",
+    "_mix_seed",
+    "_random_u8_tensor",
 ]

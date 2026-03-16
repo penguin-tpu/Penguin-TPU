@@ -13,6 +13,8 @@ from .memory import (
     DMAChannel,
     DMATransfer,
     Memory,
+    _mix_seed,
+    _random_u8_tensor,
 )
 from .tensor import (
     make_tensor_register_file_for_config,
@@ -70,7 +72,7 @@ class ArchState:
     config: PenguinCoreConfig = field(default_factory=lambda: DEFAULT_PENGUIN_CORE_CONFIG)
     mreg: torch.Tensor | None = None
     mxu_weight: torch.Tensor | None = None
-    xreg: list[int] = field(default_factory=lambda: [0] * 32)
+    xreg: list[int] | None = None
     pc: int = 0
     mem_base: int = 0
     perf: PerformanceCounters = field(default_factory=PerformanceCounters)
@@ -84,10 +86,35 @@ class ArchState:
     control_transfer_set: bool = False
 
     def __post_init__(self) -> None:
+        if self.xreg is None:
+            self.xreg = self._initial_xreg_file()
+        elif len(self.xreg) != self.config.scalar.xreg_count:
+            raise ValueError(
+                f"xreg file expects {self.config.scalar.xreg_count} entries, got {len(self.xreg)}"
+            )
+        self.xreg[0] = 0
         if self.mreg is None:
             self.mreg = make_tensor_register_file_for_config(self.config)
         if self.mxu_weight is None:
             self.mxu_weight = make_weight_slot_file_for_config(self.config)
+
+    def _initial_xreg_file(self) -> list[int]:
+        if not self.config.initialization.randomize_scalar_registers:
+            return [0] * self.config.scalar.xreg_count
+        raw = _random_u8_tensor(
+            self.config.scalar.xreg_count * 4,
+            seed=_mix_seed(self.config.initialization.seed, 0x5852_4547),
+        )
+        xreg = [
+            int.from_bytes(
+                bytes(raw[index * 4 : (index + 1) * 4].tolist()),
+                byteorder="little",
+                signed=False,
+            )
+            for index in range(self.config.scalar.xreg_count)
+        ]
+        xreg[0] = 0
+        return xreg
 
     @classmethod
     def from_config(
@@ -101,16 +128,22 @@ class ArchState:
                 base=config.memory_map.dram.base,
                 paged=config.memory_backend.dram_paged,
                 page_size=config.memory_backend.dram_page_size_bytes,
+                randomize_contents=config.initialization.randomize_dram,
+                init_seed=_mix_seed(config.initialization.seed, 0x4452_414D),
             ),
             vmem=Memory(
                 name="vmem",
                 size=config.memory_map.vmem.size,
                 base=config.memory_map.vmem.base,
+                randomize_contents=config.initialization.randomize_vmem,
+                init_seed=_mix_seed(config.initialization.seed, 0x564D_454D),
             ),
             imem=Memory(
                 name="imem",
                 size=config.memory_map.imem.size,
                 base=config.memory_map.imem.base,
+                randomize_contents=False,
+                init_seed=_mix_seed(config.initialization.seed, 0x494D_454D),
             ),
             dma_channels=[DMAChannel() for _ in range(config.dma.channel_count)],
             config=config,

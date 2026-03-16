@@ -1,0 +1,35 @@
+{
+  "symbols": {
+    "activation": {
+      "kind": "input",
+      "region": "vmem",
+      "address": 0x08000000,
+      "size_bytes": 4096,
+    },
+    "bias": {
+      "kind": "input",
+      "region": "vmem",
+      "address": 0x08001800,
+      "size_bytes": 4096,
+    },
+    "output": {
+      "kind": "output",
+      "region": "vmem",
+      "address": 0x08003000,
+      "size_bytes": 8192,
+    },
+    "program": {
+      "kind": "program",
+      "region": "imem",
+      "address": 0x00100000,
+      "size_bytes": 236,
+      "file": "linear.S",
+    },
+    "weights": {
+      "kind": "input",
+      "region": "vmem",
+      "address": 0x08001000,
+      "size_bytes": 1024,
+    },
+  },
+}

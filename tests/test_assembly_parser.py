@@ -7,11 +7,15 @@ import pytest
 from penguin_model import (
     AssemblySyntaxError,
     BType,
+    EmptyType,
+    IMEM_BASE,
     IType,
     Instruction,
     JType,
     MXUMatmulAccType,
     TensorMemType,
+    VPUBinaryType,
+    VPUUnaryType,
     VMEM_BASE,
     WeightMemType,
     assemble_text,
@@ -73,4 +77,62 @@ def test_assembler_parses_tensor_memory_and_mxu_operands() -> None:
         Instruction("mxu.push.mxu1", WeightMemType(slot=0, rs1=2, imm=64)),
         Instruction("matmul.add.mxu1", MXUMatmulAccType(md=4, ms=3, ws=0, mp=5)),
         Instruction("vstore", TensorMemType(mreg=4, rs1=6, imm=96)),
+    ]
+
+
+def test_assembler_parses_vpu_operands() -> None:
+    program = assemble_text(
+        """
+    vadd m7, m8, m9
+    vrelu m10, m11
+    vmov m12, m13
+"""
+    )
+
+    assert list(program) == [
+        Instruction("vadd", VPUBinaryType(md=7, ms1=8, ms2=9)),
+        Instruction("vrelu", VPUUnaryType(md=10, ms=11)),
+        Instruction("vmov", VPUUnaryType(md=12, ms=13)),
+    ]
+
+
+def test_assembler_parses_memory_operand_expressions_with_symbols_and_labels() -> None:
+    program = assemble_text(
+        """
+start:
+    vload m1, VMEM_BASE + 64(x2)
+    vstore m1, target - start + 32(x3)
+target:
+    sebreak
+"""
+    )
+
+    assert list(program) == [
+        Instruction("vload", TensorMemType(mreg=1, rs1=2, imm=VMEM_BASE + 64)),
+        Instruction("vstore", TensorMemType(mreg=1, rs1=3, imm=40)),
+        Instruction("sebreak", EmptyType()),
+    ]
+
+
+def test_assembler_applies_nonzero_program_base_to_labels() -> None:
+    program = assemble_text(
+        """
+start:
+    li x1, target
+    sjal x0, target
+target:
+    sebreak
+""",
+        base_address=IMEM_BASE,
+    )
+
+    assert program.base_address == IMEM_BASE
+    assert program.labels == {
+        "start": IMEM_BASE,
+        "target": IMEM_BASE + 8,
+    }
+    assert list(program) == [
+        Instruction("saddi", IType(rd=1, rs1=0, imm=IMEM_BASE + 8)),
+        Instruction("sjal", JType(rd=0, imm=4)),
+        Instruction("sebreak", EmptyType()),
     ]

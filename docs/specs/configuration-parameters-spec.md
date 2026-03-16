@@ -38,6 +38,8 @@ The following parameters are part of the current Penguin baseline.
 | `WEIGHT_SLOT_BYTES` | 512 | bytes | Bytes per MXU weight slot |
 | `DMA_CHANNELS` | 8 | - | Number of architected DMA channels |
 | `DMA_ALIGN` | 32 | bytes | Required DMA source/destination alignment |
+| `VPU_SIMPLE_OP_LATENCY_CYCLES` | 2 | core cycles | Latency class for pipelineable VPU elementwise operations |
+| `VPU_NON_PIPELINEABLE_OP_LATENCY_CYCLES` | 8 | core cycles | Latency class for non-pipelineable VPU operations such as division |
 | `OFFCHIP_LINK_WIDTH_BITS` | 32 | bits | Serialized DRAM link width |
 | `OFFCHIP_LINK_CORE_CYCLES_PER_BEAT` | 2 | core cycles | Time for one off-chip serialized beat |
 | `DMA_OFFCHIP_COMMAND_WORDS` | 2 | 32-bit words | DMA off-chip command overhead: op type + DRAM address |
@@ -50,6 +52,12 @@ The following parameters are part of the current Penguin baseline.
 | `IMEM_SIZE` | `32 KiB` | bytes | IMEM capacity |
 | `VMEM_BASE` | `0x0800_0000` | byte address | VMEM base address |
 | `VMEM_SIZE` | `1 MiB` | bytes | VMEM capacity |
+| `INIT_SEED` | `0x50E11234` | - | Base seed for deterministic pseudo-random power-on contents in the Python model |
+| `RANDOMIZE_DRAM` | `true` | bool | Whether DRAM powers up with pseudo-random data in the Python model |
+| `RANDOMIZE_VMEM` | `true` | bool | Whether VMEM powers up with pseudo-random data in the Python model |
+| `RANDOMIZE_SCALAR_REGISTERS` | `true` | bool | Whether scalar registers other than `x0` power up pseudo-random in the Python model |
+| `RANDOMIZE_TENSOR_REGISTERS` | `true` | bool | Whether tensor registers power up pseudo-random in the Python model |
+| `RANDOMIZE_WEIGHT_SLOTS` | `true` | bool | Whether MXU weight-slot state powers up pseudo-random in the Python model |
 
 ## 3. Tensor Register Views
 
@@ -75,8 +83,10 @@ Required structure:
 - `scalar`: scalar architectural quantities such as register count and delay-slot count
 - `memory_map`: DRAM, IMEM, and VMEM base addresses and capacities
 - `memory_backend`: Python-model backing-store choices such as paged DRAM
+- `initialization`: deterministic pseudo-random power-on-state controls
 - `dma`: DMA channel count, alignment, and off-chip command-overhead parameters
 - `tensor`: tensor-register geometry, weight-slot geometry, and MXU latency parameters
+- `vpu`: VPU latency-class parameters
 - `bandwidth`: off-chip-link and VMEM/system-bus width and beat-timing parameters
 - `trace`: trace timestamp granularity for the performance model
 
@@ -86,6 +96,7 @@ Required derived quantities:
 - `WEIGHT_SLOT_BYTES`
 - `vload` / `vstore` latency from VMEM bandwidth
 - `mxu.push.*` latency from VMEM bandwidth
+- VPU simple-op latency from the `vpu` fragment
 - DMA completion time from the slower of:
   - off-chip serialized-link time
   - VMEM/system-bus time
@@ -97,6 +108,14 @@ Compatibility rule:
 - the active runtime behavior of a concrete model instance must flow from the
   `PenguinCoreConfig` bound to that instance, not from unrelated global state
 
+Initialization rule for the Python model:
+
+- architecturally unspecified power-on state is instantiated as deterministic
+  pseudo-random data derived from `initialization.seed`
+- changing the seed changes the concrete initial contents without changing the
+  architecture-visible contract that the contents are undefined until software writes
+  them
+
 ## 5. Rationale For What Is Frozen
 
 The baseline freezes quantities that shape program layout, register interpretation, or
@@ -106,6 +125,9 @@ memory images:
 - tensor-register geometry affects compiler tiling, VMEM layout, and RTL storage
 - weight-slot geometry affects MXU program shape and test-vector packing
 - DMA channel count and alignment affect synchronization semantics and memory images
+- VPU latency classes affect compiler scheduling and performance expectations
+- initialization-seed and randomization controls affect deterministic bring-up behavior in
+  the Python model and test collateral
 - off-chip link width and serialized beat timing affect DMA completion time
 - VMEM bus width affects DMA drain/fill time and blocking VMEM-facing tensor transfers
 - VMEM tensor-operation alignment affects instruction legality and blob layout
@@ -140,3 +162,5 @@ For the current baseline values:
 - each 128-bit VMEM beat costs 1 core cycle
 - `vload` / `vstore` of one 2048-byte tensor register take 128 cycles
 - `mxu.push.*` of one 512-byte weight tile takes 32 cycles
+- initial pipelineable VPU elementwise operations take 2 cycles
+- future non-pipelineable VPU operations such as division use an 8-cycle latency class

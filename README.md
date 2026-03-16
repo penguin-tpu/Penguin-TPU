@@ -46,6 +46,54 @@ Typical workflow:
 Scope rules, package responsibilities, verification strategy, and PPA tracking are
 documented in `AGENTS.md`. Running project state is tracked in `SOUL.md`.
 
+## Current Status
+
+The repository is no longer just a scaffold. The current software baseline includes:
+
+- a working scalar functional/performance model with 2-delay-slot control flow
+- async channelized DMA between DRAM and VMEM
+- whole-register tensor staging with `vload`, `vstore`, and `mxu.push.*`
+- MXU matmul and BF16 VPU elementwise execution in `penguin-model`
+- executable-bundle support with `program.S`, `program.symbols.json5`,
+  `manifest.json5`, and `constants.bin`
+- a real `penguin-compile bundle ...` CLI for packaging assembly into runnable bundles
+- a real `penguin-model` CLI for running either mapped `.S` programs or bundle
+  directories, with optional JSON trace dumping
+- checked-in scalar and tensor example programs under `tests/vectors/programs/`
+
+Still deferred for a later milestone:
+
+- direct PyTorch-to-Penguin model lowering
+- manifest-level mapping of `constants.bin` into runtime DRAM/VMEM addresses
+
+## Executable Bundle Shape
+
+The shared software/hardware artifact is a small directory bundle:
+
+```text
+program.S              Assembly source
+program.symbols.json5  IMEM mapping plus input/output/scratch symbols
+manifest.json5         Bundle metadata and entry symbol
+constants.bin          Packed constant payload
+```
+
+Sidecar symbol tables are also checked in next to the test/example `.S` sources in
+`tests/vectors/programs/`. The model loaders use those sidecars to assemble programs at
+their mapped IMEM addresses.
+
+## Useful Commands
+
+Common verification and example commands from the repo root:
+
+- `uv sync`
+- `uv run pytest`
+- `uv run penguin-compile bundle --program tests/vectors/programs/scalar/examples/scalar_matmul.S --output-dir /tmp/penguin-bundle`
+- `uv run penguin-model --program tests/vectors/programs/scalar/examples/scalar_matmul.S`
+- `uv run python examples/matmul.py`
+- `uv run python examples/matmul_large.py --trace examples/out/matmul_large_trace.json`
+- `uv run python examples/linear_large.py --trace examples/out/linear_large_trace.json`
+- `uv run python scripts/generate_program_symbol_tables.py`
+
 ## Design References
 
 This project draws on several public resources for architectural context, but implements

@@ -6,6 +6,8 @@ readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
   "numpy>=2.1",
+  "json5>=0.13.0",
+  "penguin-model",
 ]
 
 [project.optional-dependencies]
@@ -19,4 +21,3 @@ penguin-compile = "penguin_compiler.cli:main"
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
-

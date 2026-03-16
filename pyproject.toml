@@ -6,8 +6,10 @@ requires-python = ">=3.11"
 dependencies = [
     "numpy>=2.4.3",
     "torch>=2.10.0",
+    "penguin-compiler",
     "penguin-model",
     "slackbot",
+    "json5>=0.13.0",
 ]
 
 [dependency-groups]
@@ -23,6 +25,7 @@ members = [
 ]
 
 [tool.uv.sources]
+penguin-compiler = { workspace = true }
 penguin-model = { workspace = true }
 slackbot = { git = "https://github.com/penguin-tpu/SlackBot.git" }
 

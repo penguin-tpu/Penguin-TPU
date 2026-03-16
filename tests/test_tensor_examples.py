@@ -22,7 +22,8 @@ def test_matmul_example_matches_pytorch_and_emits_trace(tmp_path) -> None:
     assert result.trace_path.exists()
     assert tuple(result.output.shape) == (64, 16)
     assert torch.equal(result.output, result.golden)
-    assert result.perf.instructions == 7
+    assert result.perf.instructions == 38
+    assert result.perf.cycles == 386
 
 
 def test_linear_example_matches_pytorch_and_emits_trace(tmp_path) -> None:
@@ -34,7 +35,8 @@ def test_linear_example_matches_pytorch_and_emits_trace(tmp_path) -> None:
     assert result.trace_path.exists()
     assert tuple(result.output.shape) == (128, 32)
     assert torch.equal(result.output, result.golden)
-    assert result.perf.instructions == 20
+    assert result.perf.instructions == 59
+    assert result.perf.cycles == 1_393
 
 
 def test_large_matmul_example_matches_pytorch_and_emits_trace(tmp_path) -> None:
@@ -46,8 +48,8 @@ def test_large_matmul_example_matches_pytorch_and_emits_trace(tmp_path) -> None:
     assert result.trace_path.exists()
     assert tuple(result.output.shape) == (128, 32)
     assert torch.equal(result.output, result.golden)
-    assert result.perf.instructions == 192
-    assert result.perf.cycles == 14_764
+    assert result.perf.instructions == 223
+    assert result.perf.cycles == 14_795
     assert result.perf.bytes_read == 49_152
     assert result.perf.bytes_written == 36_864
     assert result.perf.instructions_by_opcode["sbeq"] > 0
@@ -64,10 +66,11 @@ def test_large_linear_example_matches_pytorch_and_emits_trace(tmp_path) -> None:
     assert result.trace_path.exists()
     assert tuple(result.output.shape) == (192, 48)
     assert torch.equal(result.output, result.golden)
-    assert result.perf.instructions == 406
-    assert result.perf.cycles == 33_193
-    assert result.perf.bytes_read == 110_592
+    assert result.perf.instructions == 468
+    assert result.perf.cycles == 34_407
+    assert result.perf.bytes_read == 129_024
     assert result.perf.bytes_written == 82_944
     assert result.perf.instructions_by_opcode["sbeq"] > 0
     assert result.perf.instructions_by_opcode["sbne"] > 0
     assert result.perf.instructions_by_opcode["sjal"] > 0
+    assert result.perf.instructions_by_opcode["vadd"] > 0

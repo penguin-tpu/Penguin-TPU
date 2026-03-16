@@ -84,6 +84,9 @@ redirects to its resolved target.
 - instruction fetch conceptually reads IMEM
 - scalar `sld` and `sst` access VMEM only
 - DMA is the architected path between DRAM and VMEM
+- DRAM and VMEM contents are architecturally undefined until software initializes them
+- scalar registers other than `x0` are architecturally undefined at program start unless
+  software clears or writes them first
 
 Scalar loads and stores always transfer exactly one 32-bit word and require
 `address % 4 == 0`.
@@ -149,6 +152,30 @@ DMA uses channelized mnemonics:
 - `dma.wait.chN`
 
 The first baseline exposes 8 symmetric DMA channels, `ch0` through `ch7`.
+
+## Binary Encoding Baseline
+
+The scalar subset now assumes an RV32I-compatible binary encoding baseline.
+
+Requirements:
+
+- scalar instructions use standard 32-bit RV32I field layouts:
+  - R-type
+  - I-type
+  - S-type
+  - B-type
+  - U-type
+  - J-type
+- the binary mapping for the scalar integer subset reuses the corresponding RV32I
+  opcode, `funct3`, and `funct7` assignments
+- `sld` reuses the standard `lw` encoding shape
+- `sst` reuses the standard `sw` encoding shape
+- `sfence` reuses the standard `fence` encoding shape
+- `secall` and `sebreak` reuse the standard `ecall` and `ebreak` system encodings
+
+This document still treats the Penguin mnemonics and semantics as the primary
+architecture-visible contract. The binary baseline is fixed so that software, the
+functional model, and RTL can share one scalar instruction format.
 
 ## Instruction Semantics
 
@@ -429,8 +456,8 @@ behavior:
 - explicit misaligned-load and misaligned-store failures for `sld` and `sst`
 - explicit termination status for `secall` and `sebreak`
 
-This document does not define a binary encoding. The current contract is the
-assembly-level mnemonic and operand behavior.
+This document defines the scalar mnemonic and semantic contract together with an
+RV32I-compatible scalar binary baseline.
 
 ## Non-Normative Functional Model Implementation Plan
 

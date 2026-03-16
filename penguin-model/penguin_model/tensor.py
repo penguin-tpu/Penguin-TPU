@@ -5,6 +5,7 @@ from __future__ import annotations
 import torch
 
 from .core_config import DEFAULT_PENGUIN_CORE_CONFIG, PenguinCoreConfig
+from .memory import _mix_seed, _random_u8_tensor
 
 NUM_MREG = DEFAULT_PENGUIN_CORE_CONFIG.tensor.num_mreg
 MREG_ROWS = DEFAULT_PENGUIN_CORE_CONFIG.tensor.mreg_rows
@@ -23,6 +24,10 @@ VLOAD_LATENCY_CYCLES = DEFAULT_PENGUIN_CORE_CONFIG.vload_latency_cycles
 VSTORE_LATENCY_CYCLES = DEFAULT_PENGUIN_CORE_CONFIG.vstore_latency_cycles
 MXU_PUSH_LATENCY_CYCLES = DEFAULT_PENGUIN_CORE_CONFIG.mxu_push_latency_cycles
 MATMUL_LATENCY_CYCLES = DEFAULT_PENGUIN_CORE_CONFIG.matmul_latency_cycles
+VPU_SIMPLE_OP_LATENCY_CYCLES = DEFAULT_PENGUIN_CORE_CONFIG.vpu_simple_op_latency_cycles
+VPU_NON_PIPELINEABLE_OP_LATENCY_CYCLES = (
+    DEFAULT_PENGUIN_CORE_CONFIG.vpu_non_pipelineable_op_latency_cycles
+)
 
 FP8_DTYPE = torch.float8_e4m3fn
 BF16_DTYPE = torch.bfloat16
@@ -37,7 +42,12 @@ def make_tensor_register_file() -> torch.Tensor:
 def make_tensor_register_file_for_config(config: PenguinCoreConfig) -> torch.Tensor:
     """Allocate the tensor register file for a specific core configuration."""
 
-    return torch.zeros((config.tensor.num_mreg, config.mreg_bytes), dtype=torch.uint8)
+    if not config.initialization.randomize_tensor_registers:
+        return torch.zeros((config.tensor.num_mreg, config.mreg_bytes), dtype=torch.uint8)
+    return _random_u8_tensor(
+        config.tensor.num_mreg * config.mreg_bytes,
+        seed=_mix_seed(config.initialization.seed, 0x4D52_4547),
+    ).reshape(config.tensor.num_mreg, config.mreg_bytes)
 
 
 def make_weight_slot_file() -> torch.Tensor:
@@ -49,14 +59,22 @@ def make_weight_slot_file() -> torch.Tensor:
 def make_weight_slot_file_for_config(config: PenguinCoreConfig) -> torch.Tensor:
     """Allocate MXU weight slots for a specific core configuration."""
 
-    return torch.zeros(
-        (
-            config.tensor.mxu_count,
-            config.tensor.weight_slots_per_mxu,
-            config.weight_slot_bytes,
-        ),
-        dtype=torch.uint8,
+    shape = (
+        config.tensor.mxu_count,
+        config.tensor.weight_slots_per_mxu,
+        config.weight_slot_bytes,
     )
+    if not config.initialization.randomize_weight_slots:
+        return torch.zeros(shape, dtype=torch.uint8)
+    return torch.zeros(
+        shape,
+        dtype=torch.uint8,
+    ) + _random_u8_tensor(
+        config.tensor.mxu_count
+        * config.tensor.weight_slots_per_mxu
+        * config.weight_slot_bytes,
+        seed=_mix_seed(config.initialization.seed, 0x5745_4947),
+    ).reshape(shape)
 
 
 def fp8_tile_from_bytes(
@@ -172,6 +190,83 @@ def compute_bf16_matmul(
     return bf16_tile_to_bytes(acc, config=config)
 
 
+def _binary_bf16_tile_op(
+    lhs_raw: torch.Tensor,
+    rhs_raw: torch.Tensor,
+    op,
+    *,
+    config: PenguinCoreConfig = DEFAULT_PENGUIN_CORE_CONFIG,
+) -> torch.Tensor:
+    lhs = bf16_tile_from_bytes(lhs_raw, config=config).to(torch.float32)
+    rhs = bf16_tile_from_bytes(rhs_raw, config=config).to(torch.float32)
+    return bf16_tile_to_bytes(op(lhs, rhs).to(BF16_DTYPE), config=config)
+
+
+def compute_bf16_vadd(
+    lhs_raw: torch.Tensor,
+    rhs_raw: torch.Tensor,
+    *,
+    config: PenguinCoreConfig = DEFAULT_PENGUIN_CORE_CONFIG,
+) -> torch.Tensor:
+    """Compute one BF16 whole-register elementwise addition."""
+
+    return _binary_bf16_tile_op(lhs_raw, rhs_raw, torch.add, config=config)
+
+
+def compute_bf16_vmul(
+    lhs_raw: torch.Tensor,
+    rhs_raw: torch.Tensor,
+    *,
+    config: PenguinCoreConfig = DEFAULT_PENGUIN_CORE_CONFIG,
+) -> torch.Tensor:
+    """Compute one BF16 whole-register elementwise multiply."""
+
+    return _binary_bf16_tile_op(lhs_raw, rhs_raw, torch.mul, config=config)
+
+
+def compute_bf16_vmax(
+    lhs_raw: torch.Tensor,
+    rhs_raw: torch.Tensor,
+    *,
+    config: PenguinCoreConfig = DEFAULT_PENGUIN_CORE_CONFIG,
+) -> torch.Tensor:
+    """Compute one BF16 whole-register elementwise maximum."""
+
+    return _binary_bf16_tile_op(lhs_raw, rhs_raw, torch.maximum, config=config)
+
+
+def compute_bf16_vmin(
+    lhs_raw: torch.Tensor,
+    rhs_raw: torch.Tensor,
+    *,
+    config: PenguinCoreConfig = DEFAULT_PENGUIN_CORE_CONFIG,
+) -> torch.Tensor:
+    """Compute one BF16 whole-register elementwise minimum."""
+
+    return _binary_bf16_tile_op(lhs_raw, rhs_raw, torch.minimum, config=config)
+
+
+def compute_bf16_vrelu(
+    src_raw: torch.Tensor,
+    *,
+    config: PenguinCoreConfig = DEFAULT_PENGUIN_CORE_CONFIG,
+) -> torch.Tensor:
+    """Compute one BF16 whole-register elementwise ReLU."""
+
+    src = bf16_tile_from_bytes(src_raw, config=config).to(torch.float32)
+    return bf16_tile_to_bytes(torch.clamp_min(src, 0.0).to(BF16_DTYPE), config=config)
+
+
+def compute_bf16_vmov(
+    src_raw: torch.Tensor,
+    *,
+    config: PenguinCoreConfig = DEFAULT_PENGUIN_CORE_CONFIG,
+) -> torch.Tensor:
+    """Copy one BF16 whole-register tile without modification."""
+
+    return bf16_tile_to_bytes(bf16_tile_from_bytes(src_raw, config=config).clone(), config=config)
+
+
 __all__ = [
     "BF16_DTYPE",
     "FP8_DTYPE",
@@ -184,6 +279,8 @@ __all__ = [
     "NUM_MREG",
     "VMEM_TENSOR_ALIGN",
     "VLOAD_LATENCY_CYCLES",
+    "VPU_NON_PIPELINEABLE_OP_LATENCY_CYCLES",
+    "VPU_SIMPLE_OP_LATENCY_CYCLES",
     "VSTORE_LATENCY_CYCLES",
     "WEIGHT_SLOT_BYTES",
     "WEIGHT_SLOTS_PER_MXU",
@@ -192,6 +289,12 @@ __all__ = [
     "bf16_tile_from_bytes",
     "bf16_tile_to_bytes",
     "compute_bf16_matmul",
+    "compute_bf16_vadd",
+    "compute_bf16_vmax",
+    "compute_bf16_vmin",
+    "compute_bf16_vmov",
+    "compute_bf16_vmul",
+    "compute_bf16_vrelu",
     "fp8_tile_from_bytes",
     "fp8_tile_to_bytes",
     "make_tensor_register_file",

@@ -7,7 +7,7 @@ from typing import Any
 import pytest
 
 from penguin_model import StopReason
-from penguin_model.testbench import run_scalar_program
+from penguin_model.testbench import fresh_arch_state, run_scalar_program
 
 FAIL_REG = 31
 
@@ -39,8 +39,9 @@ def _assert_program_passed(
     expected_bytes_written: int = 0,
 ) -> str:
     context = _directed_test_context(name, core, perf)
+    power_on_fail_reg = fresh_arch_state().read_xreg(FAIL_REG)
     assert core.state.stop_reason == StopReason.PROGRAM_END, context
-    assert core.state.read_xreg(FAIL_REG) == 0, context
+    assert core.state.read_xreg(FAIL_REG) in {0, power_on_fail_reg}, context
     assert perf.instructions == expected_instructions, context
     assert perf.cycles == expected_cycles, context
     assert perf.bytes_read == expected_bytes_read, context

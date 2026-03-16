@@ -1,0 +1,11 @@
+{
+  "symbols": {
+    "program": {
+      "kind": "program",
+      "region": "imem",
+      "address": 0x00100000,
+      "size_bytes": 20,
+      "file": "dma_store_wait.S",
+    },
+  },
+}

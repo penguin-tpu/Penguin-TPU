@@ -24,6 +24,8 @@ from .instructions import (
     SType,
     TensorMemType,
     UType,
+    VPUBinaryType,
+    VPUUnaryType,
     WeightMemType,
 )
 from .memory import DRAM_BASE, IMEM_BASE, VMEM_BASE
@@ -51,6 +53,7 @@ class AssemblyProgram(Sequence[Instruction]):
 
     instructions: tuple[Instruction, ...]
     labels: Mapping[str, int]
+    base_address: int = 0
     source_name: str | None = None
 
     def __getitem__(self, index: int) -> Instruction:
@@ -68,15 +71,24 @@ class _SourceInstruction:
     raw_line: str
 
 
-def assemble_file(path: str | Path) -> AssemblyProgram:
+def assemble_file(path: str | Path, *, base_address: int = 0) -> AssemblyProgram:
     source_path = Path(path)
-    return assemble_text(source_path.read_text(), source_name=str(source_path))
+    return assemble_text(
+        source_path.read_text(),
+        source_name=str(source_path),
+        base_address=base_address,
+    )
 
 
-def assemble_text(source: str, *, source_name: str = "<memory>") -> AssemblyProgram:
+def assemble_text(
+    source: str,
+    *,
+    source_name: str = "<memory>",
+    base_address: int = 0,
+) -> AssemblyProgram:
     labels: dict[str, int] = {}
     source_instructions: list[_SourceInstruction] = []
-    pc = 0
+    pc = base_address
 
     for line_number, raw_line in enumerate(source.splitlines(), start=1):
         code = raw_line.split("#", 1)[0].strip()
@@ -114,7 +126,7 @@ def assemble_text(source: str, *, source_name: str = "<memory>") -> AssemblyProg
     instructions = tuple(
         _assemble_instruction(
             line,
-            pc=index * 4,
+            pc=base_address + index * 4,
             labels=labels,
             source_name=source_name,
         )
@@ -123,6 +135,7 @@ def assemble_text(source: str, *, source_name: str = "<memory>") -> AssemblyProg
     return AssemblyProgram(
         instructions=instructions,
         labels=dict(labels),
+        base_address=base_address,
         source_name=source_name,
     )
 
@@ -513,6 +526,49 @@ def _assemble_instruction(
                 ),
                 mp=_parse_mregister(
                     operands[3], source_name=source_name, line_number=line.line_number
+                ),
+            ),
+        )
+
+    if spec.params_type is VPUBinaryType:
+        _expect_operand_count(
+            mnemonic,
+            operands,
+            expected=3,
+            source_name=source_name,
+            line_number=line.line_number,
+        )
+        return Instruction(
+            mnemonic,
+            VPUBinaryType(
+                md=_parse_mregister(
+                    operands[0], source_name=source_name, line_number=line.line_number
+                ),
+                ms1=_parse_mregister(
+                    operands[1], source_name=source_name, line_number=line.line_number
+                ),
+                ms2=_parse_mregister(
+                    operands[2], source_name=source_name, line_number=line.line_number
+                ),
+            ),
+        )
+
+    if spec.params_type is VPUUnaryType:
+        _expect_operand_count(
+            mnemonic,
+            operands,
+            expected=2,
+            source_name=source_name,
+            line_number=line.line_number,
+        )
+        return Instruction(
+            mnemonic,
+            VPUUnaryType(
+                md=_parse_mregister(
+                    operands[0], source_name=source_name, line_number=line.line_number
+                ),
+                ms=_parse_mregister(
+                    operands[1], source_name=source_name, line_number=line.line_number
                 ),
             ),
         )

@@ -1,4 +1,4 @@
-"""Run the tiled MXU linear example and emit a Perfetto trace."""
+"""Run the MXU linear examples and emit a Perfetto trace."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from pathlib import Path
 
 import torch
 
-from penguin_model import PenguinCoreConfig, run_linear_example
+from penguin_model import PenguinCoreConfig, run_large_linear_example, run_linear_example
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -18,15 +18,25 @@ def _build_parser() -> argparse.ArgumentParser:
         default=Path("examples/out/linear_trace.json"),
         help="Path to the Perfetto-compatible JSON trace output.",
     )
+    parser.add_argument(
+        "--large",
+        action="store_true",
+        help="Run the DMA-backed large linear example instead of the small tiled one.",
+    )
     return parser
 
 
 def main() -> int:
     args = _build_parser().parse_args()
     config = PenguinCoreConfig()
-    result = run_linear_example(trace_path=args.trace, config=config)
+    if args.large:
+        result = run_large_linear_example(trace_path=args.trace, config=config)
+        title = "Large linear example"
+    else:
+        result = run_linear_example(trace_path=args.trace, config=config)
+        title = "Linear example"
 
-    print("Linear example completed.")
+    print(f"{title} completed.")
     print(f"  output shape: {tuple(result.output.shape)}")
     print(f"  exact match with PyTorch golden: {torch.equal(result.output, result.golden)}")
     print(f"  instructions: {result.perf.instructions}")

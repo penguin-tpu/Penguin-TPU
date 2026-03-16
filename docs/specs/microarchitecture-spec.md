@@ -194,6 +194,65 @@ This phase model is not meant to force a specific RTL partitioning, but it does 
 the timing intuition behind the 2-delay-slot branch model and the one-instruction-per-
 cycle issue rule.
 
+### 4.4 Scalar decode baseline
+
+The scalar frontend should now be treated as decoding an RV32I-compatible 32-bit binary
+instruction stream for the scalar subset.
+
+Microarchitectural expectations:
+
+- one 32-bit instruction word is fetched from IMEM at a time
+- decode extracts standard RV32I scalar fields:
+  - `opcode`
+  - `rd`
+  - `rs1`
+  - `rs2`
+  - `funct3`
+  - `funct7`
+- immediate generation follows standard RV32I bit reassembly and sign-extension rules
+  for R/I/S/B/U/J formats
+- scalar decode must distinguish at least:
+  - ALU register-register operations
+  - ALU register-immediate operations
+  - scalar load/store operations
+  - branches
+  - jumps
+  - upper-immediate operations
+  - system/misc-memory forms
+- `sld` / `sst` reuse the standard `lw` / `sw` encoding shapes but route to Penguin VMEM
+  semantics rather than a flat general memory space
+- `sfence`, `secall`, and `sebreak` reuse the standard `fence` / `ecall` / `ebreak`
+  encoding shapes
+
+The scalar decoder should also classify the RISC-V custom major opcodes separately from
+fully illegal encodings:
+
+- `custom-0`
+- `custom-1`
+- `custom-2`
+- `custom-3`
+
+The first scalar-only core may still treat those as unsupported, but it should preserve
+that classification boundary because those opcode families are reserved for future
+Penguin accelerator instructions.
+
+### 4.5 First scalar RTL slice
+
+The intended first scalar RTL slice should be organized around a small set of clearly
+separated blocks:
+
+- scalar decoder
+- scalar register file
+- scalar ALU / compare datapath
+- branch and jump target unit
+- VMEM-facing scalar load/store unit
+- scalar control block that owns `pc`, delay-slot sequencing, and halt status
+
+The implementation should remain single-issue and in-order.
+
+The detailed step-by-step bring-up sequence is documented in
+[scalar-core-encoding-and-rtl-plan.md](/home/tk/Desktop/Penguin-TPU/docs/plans/scalar-core-encoding-and-rtl-plan.md).
+
 ## 5. Tensor Register File
 
 The tensor register file is the key datapath structure for accelerator execution.
@@ -364,10 +423,14 @@ Microarchitectural expectations:
 - VPU operands are read directly from the tensor register file through the shared crossbar
 - VPU results are written back to the tensor register file rather than directly to memory
 - VPU operand selection is whole-register at the architectural level
+- initial floating-point VPU operations interpret tensor registers through the BF16
+  `64 x 16` view
 - deterministic latency
 - long-chime execution model
 - first implementation target is elementwise operations
 - initial intended opcode floor is `vadd`, `vmul`, `vmax`, `vmin`, `vrelu`, and `vmov`
+- simple pipelineable elementwise operations use a 2-cycle latency class
+- future non-pipelineable operations such as division use an 8-cycle latency class
 - later scope may include additional row-wise or reduction-adjacent operations
 
 The VPU exists to handle tensor work that is not best mapped onto the MXU.

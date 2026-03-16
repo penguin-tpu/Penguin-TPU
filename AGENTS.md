@@ -75,6 +75,8 @@ For Python coding style, follow the conventions used in
   questions, caveats, and state transitions there.
 - If `SOUL.md` becomes too large, compact it by summarizing stale details and removing
   information that no longer matters.
+- If an agent task lasts more than 3 minutes, then after finishing the task, invoke the
+  `slackbot` skill to send a short Slack message summarizing what was completed.
 
 ## Version Control Policy
 
@@ -314,6 +316,44 @@ Practical workflow:
 4. Save results under `tests/regressions/`.
 5. Reject changes that break correctness or exceed simple area/timing budgets.
 
+## SlackBot Tool
+
+Use the external `SlackBot` package when a task needs to send a short status update,
+checkpoint notification, or other simple message to Slack from the command line.
+
+Install it into this repo's `uv` environment from GitHub:
+
+- `uv add git+https://github.com/penguin-tpu/SlackBot.git`
+- `uv sync`
+
+Primary commands:
+
+- `uv run slackbot --help`
+- `uv run slackbot --setup`
+- `uv run slackbot --channel C01234567 --message "Penguin-TPU run finished"`
+- `uv run slackbot --channel C01234567 --message "Regression passed" --thread-ts 12345.6789`
+- `uv run slackbot --channel C01234567 --dry-run`
+
+Setup notes:
+
+- On first real use, run `uv run slackbot --setup`.
+- The tool will prompt for the Slack `Bot User OAuth Token`, which usually starts with `xoxb-`.
+- Do not use `App ID`, `Client ID`, `Client Secret`, `Signing Secret`, or `Verification Token` for message posting.
+- The Slack app needs the `chat:write` bot scope.
+- If posting to public channels without inviting the bot first, it may also need `chat:write.public`.
+
+Channel notes:
+
+- Prefer the Slack channel ID, such as `C01234567`, over a channel name.
+- A simple way to find it is from the Slack web URL: `https://app.slack.com/client/TXXXXXXX/CXXXXXXX`.
+- The `CXXXXXXX` segment is the channel ID.
+
+Recommended use in this repo:
+
+- Use SlackBot for long-running regressions, FPGA runs, or checkpoint notifications.
+- Keep messages concise and operational: what ran, whether it passed, and where logs or artifacts live.
+- Do not hardcode secrets in source files, docs, or committed config.
+
 ## High-Level Commands
 
 Run all commands from the repo root unless there is a good reason not to.
@@ -344,11 +384,14 @@ Expected future commands once implementation exists:
 
 ## Important Current Truths
 
-- The repository structure and package boundaries are mostly planned, not yet implemented.
-- The CLIs `penguin-compile` and `penguin-model` currently exist as stubs and exit with
-  “not implemented yet”.
+- The repository structure and package boundaries are now implemented enough to support
+  a working software-only vertical slice.
+- `penguin-compile` currently packages assembly plus sidecar metadata into executable
+  bundles; it is not yet a direct PyTorch model exporter.
+- `penguin-model` can execute mapped `.S` programs and executable bundle directories from
+  the CLI.
 - There is not yet a finalized ISA spec or manifest schema in `docs/specs/`.
-- There is not yet a real compiler, model executor, regression harness, or RTL test flow.
+- There is not yet a full direct-model compiler export path or RTL test flow.
 - Git checkpoints should be created intentionally when the repo reaches a meaningful
   stable state, not for every minor edit.
 

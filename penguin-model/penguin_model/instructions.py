@@ -111,6 +111,23 @@ class MXUMatmulAccType:
     mp: int
 
 
+@dataclass(frozen=True, slots=True)
+class VPUBinaryType:
+    """Whole-register binary VPU form: dest tensor, lhs tensor, rhs tensor."""
+
+    md: int
+    ms1: int
+    ms2: int
+
+
+@dataclass(frozen=True, slots=True)
+class VPUUnaryType:
+    """Whole-register unary VPU form: dest tensor, source tensor."""
+
+    md: int
+    ms: int
+
+
 InstructionParams: TypeAlias = (
     RType
     | IType
@@ -124,6 +141,8 @@ InstructionParams: TypeAlias = (
     | WeightMemType
     | MXUMatmulType
     | MXUMatmulAccType
+    | VPUBinaryType
+    | VPUUnaryType
 )
 
 InstructionFn: TypeAlias = Callable[[ArchState, InstructionParams], None]
@@ -198,6 +217,8 @@ __all__ = [
     "TENSOR_INSTRUCTION_SPECS",
     "TensorMemType",
     "UType",
+    "VPUBinaryType",
+    "VPUUnaryType",
     "WeightMemType",
     "instruction",
 ]

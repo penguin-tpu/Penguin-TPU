@@ -1,0 +1,11 @@
+{
+  "symbols": {
+    "program": {
+      "kind": "program",
+      "region": "imem",
+      "address": 0x00100000,
+      "size_bytes": 4,
+      "file": "misaligned_jump_target.S",
+    },
+  },
+}

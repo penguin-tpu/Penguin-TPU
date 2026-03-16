@@ -6,7 +6,8 @@ from os import PathLike
 from pathlib import Path
 
 from .arch_state import ArchState
-from .assembler import AssemblyProgram, assemble_file
+from .assembler import AssemblyProgram
+from .bundle import load_mapped_program
 from .core_config import DEFAULT_PENGUIN_CORE_CONFIG, PenguinCoreConfig
 from .core import PenguinCore
 
@@ -42,13 +43,13 @@ def scalar_program_path(program: str | PathLike[str]) -> Path:
 
 
 def load_scalar_program(program: str | PathLike[str]) -> AssemblyProgram:
-    return assemble_file(scalar_program_path(program))
+    return load_mapped_program(scalar_program_path(program))
 
 
 def run_scalar_program(
     program: str | PathLike[str],
     *,
-    start_pc: int = 0,
+    start_pc: int | None = None,
     max_instructions: int | None = None,
     vmem_words: dict[int, int] | None = None,
     dram_words: dict[int, int] | None = None,

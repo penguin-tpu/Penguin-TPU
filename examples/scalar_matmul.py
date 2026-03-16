@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from penguin_model import PenguinCore, PenguinCoreConfig, assemble_file
+from penguin_model import PenguinCore, PenguinCoreConfig, load_mapped_program
 
 
 def main() -> int:
@@ -26,7 +26,7 @@ def main() -> int:
         / "scalar_matmul.S"
     )
     trace_path = "scalar_trace.json"
-    perf = core.dump_json_trace(assemble_file(program_path), trace_path)
+    perf = core.dump_json_trace(load_mapped_program(program_path), trace_path)
 
     print("Input words in DRAM:")
     print([state.dram.load_u32(dram_base + 0x100 + index * 4) for index in range(4)])

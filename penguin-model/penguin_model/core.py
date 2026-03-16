@@ -22,6 +22,8 @@ from .instructions import (
     SType,
     TensorMemType,
     UType,
+    VPUBinaryType,
+    VPUUnaryType,
     WeightMemType,
 )
 from .memory import Memory
@@ -53,6 +55,7 @@ DMA_LANE = 3
 TMEM_LANE = 4
 MXU0_LANE = 5
 MXU1_LANE = 6
+VPU_LANE = 7
 
 
 def _format_instruction(instruction: Instruction) -> str:
@@ -87,6 +90,10 @@ def _format_instruction(instruction: Instruction) -> str:
         return f"{mnemonic} m{params.md}, m{params.ms}, w{params.ws}"
     if isinstance(params, MXUMatmulAccType):
         return f"{mnemonic} m{params.md}, m{params.ms}, w{params.ws}, m{params.mp}"
+    if isinstance(params, VPUBinaryType):
+        return f"{mnemonic} m{params.md}, m{params.ms1}, m{params.ms2}"
+    if isinstance(params, VPUUnaryType):
+        return f"{mnemonic} m{params.md}, m{params.ms}"
     return f"{mnemonic} {params}"
 
 
@@ -95,6 +102,8 @@ def _execute_lane_for_instruction(instruction: Instruction) -> int:
         return DMA_LANE
     if instruction.mnemonic in {"vload", "vstore"} or instruction.mnemonic.startswith("mxu.push."):
         return TMEM_LANE
+    if isinstance(instruction.params, (VPUBinaryType, VPUUnaryType)):
+        return VPU_LANE
     if instruction.mnemonic.endswith(".mxu0"):
         return MXU0_LANE
     if instruction.mnemonic.endswith(".mxu1"):
@@ -153,6 +162,7 @@ class PenguinCore:
             TMEM_LANE: 0,
             MXU0_LANE: 0,
             MXU1_LANE: 0,
+            VPU_LANE: 0,
         }
 
     @property
@@ -325,11 +335,14 @@ class PenguinCore:
         self,
         program: Iterable[Instruction],
         *,
-        start_pc: int = 0,
+        start_pc: int | None = None,
         max_instructions: int | None = None,
         trace_logger: TraceLogger | None = None,
     ) -> PerformanceCounters:
         instructions = list(program) if not isinstance(program, Sequence) else program
+        program_base = getattr(program, "base_address", 0)
+        if start_pc is None:
+            start_pc = program_base
         self.state.pc = start_pc & 0xFFFF_FFFF
         self.state.clear_stop()
         self.state.trace_logger = trace_logger
@@ -354,7 +367,7 @@ class PenguinCore:
             return self.state.perf
 
         start_count = self.state.perf.instructions
-        program_end = len(instructions) * 4
+        program_end = program_base + len(instructions) * 4
 
         while self.state.stop_reason is None:
             if max_instructions is not None:
@@ -387,6 +400,15 @@ class PenguinCore:
                     )
                 break
 
+            if self.state.pc < program_base:
+                self.state.stop(StopReason.PROGRAM_END)
+                if trace_logger is not None:
+                    trace_logger.log_stop(
+                        self.state.stop_reason.value,
+                        cycle=self.state.perf.cycles * self.state.config.trace.ticks_per_cycle,
+                    )
+                break
+
             if self.state.pc > program_end:
                 self.state.stop(StopReason.PROGRAM_END)
                 if trace_logger is not None:
@@ -396,7 +418,8 @@ class PenguinCore:
                     )
                 break
 
-            self.execute_instruction(instructions[self.state.pc // 4])
+            instruction_index = (self.state.pc - program_base) // 4
+            self.execute_instruction(instructions[instruction_index])
 
         self.state.trace_logger = None
         return self.state.perf
@@ -406,7 +429,7 @@ class PenguinCore:
         program: Iterable[Instruction],
         trace_path: str | PathLike[str],
         *,
-        start_pc: int = 0,
+        start_pc: int | None = None,
         max_instructions: int | None = None,
     ) -> PerformanceCounters:
         from .logging import TraceLogger, TraceLoggerConfig

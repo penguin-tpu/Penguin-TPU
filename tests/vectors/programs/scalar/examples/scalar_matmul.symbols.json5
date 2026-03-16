@@ -1,0 +1,29 @@
+{
+  "symbols": {
+    "dram_input": {
+      "kind": "input",
+      "region": "dram",
+      "address": 0x80000100,
+      "size_bytes": 32,
+    },
+    "program": {
+      "kind": "program",
+      "region": "imem",
+      "address": 0x00100000,
+      "size_bytes": 56,
+      "file": "scalar_matmul.S",
+    },
+    "vmem_output": {
+      "kind": "output",
+      "region": "vmem",
+      "address": 0x08000080,
+      "size_bytes": 4,
+    },
+    "vmem_stage": {
+      "kind": "scratch",
+      "region": "vmem",
+      "address": 0x08000040,
+      "size_bytes": 32,
+    },
+  },
+}

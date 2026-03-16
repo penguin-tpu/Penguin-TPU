@@ -76,6 +76,29 @@ class MemoryBackendConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class InitializationConfig:
+    """Power-on initialization behavior for architecturally visible state."""
+
+    seed: int = 0x50E1_1234
+    """The base seed used to deterministically generate pseudo-random initial contents."""
+
+    randomize_dram: bool = True
+    """Whether DRAM bytes are initialized to pseudo-random values before software writes them."""
+
+    randomize_vmem: bool = True
+    """Whether VMEM bytes are initialized to pseudo-random values before software writes them."""
+
+    randomize_scalar_registers: bool = True
+    """Whether scalar registers other than `x0` power up with pseudo-random values."""
+
+    randomize_tensor_registers: bool = True
+    """Whether tensor registers `m0..m63` power up with pseudo-random values."""
+
+    randomize_weight_slots: bool = True
+    """Whether MXU weight-slot state powers up with pseudo-random values."""
+
+
+@dataclass(frozen=True, slots=True)
 class DMAConfig:
     """DMA-engine configuration."""
 
@@ -119,6 +142,17 @@ class TensorCoreConfig:
 
     matmul_latency_cycles: int = 64
     """The modeled latency of one MXU matmul launch in core cycles."""
+
+
+@dataclass(frozen=True, slots=True)
+class VPUConfig:
+    """Vector-processing-unit timing configuration."""
+
+    simple_op_latency_cycles: int = 2
+    """The modeled latency of pipelineable VPU elementwise operations in core cycles."""
+
+    non_pipelineable_op_latency_cycles: int = 8
+    """The modeled latency of non-pipelineable VPU operations such as division in core cycles."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -184,11 +218,17 @@ class PenguinCoreConfig:
     memory_backend: MemoryBackendConfig = field(default_factory=MemoryBackendConfig)
     """The Python-model backing-store configuration."""
 
+    initialization: InitializationConfig = field(default_factory=InitializationConfig)
+    """The deterministic pseudo-random power-on initialization configuration."""
+
     dma: DMAConfig = field(default_factory=DMAConfig)
     """The DMA-engine configuration."""
 
     tensor: TensorCoreConfig = field(default_factory=TensorCoreConfig)
     """The tensor-register and MXU geometry configuration."""
+
+    vpu: VPUConfig = field(default_factory=VPUConfig)
+    """The VPU timing configuration."""
 
     bandwidth: BandwidthConfig = field(default_factory=BandwidthConfig)
     """The interconnect bandwidth and serialization configuration."""
@@ -221,6 +261,10 @@ class PenguinCoreConfig:
             raise ValueError("tensor.vmem_alignment_bytes must be positive")
         if self.tensor.matmul_latency_cycles <= 0:
             raise ValueError("tensor.matmul_latency_cycles must be positive")
+        if self.vpu.simple_op_latency_cycles <= 0:
+            raise ValueError("vpu.simple_op_latency_cycles must be positive")
+        if self.vpu.non_pipelineable_op_latency_cycles <= 0:
+            raise ValueError("vpu.non_pipelineable_op_latency_cycles must be positive")
         if self.bandwidth.offchip_link_width_bits <= 0 or self.bandwidth.offchip_link_width_bits % 8 != 0:
             raise ValueError(
                 "bandwidth.offchip_link_width_bits must be a positive multiple of 8"
@@ -248,6 +292,8 @@ class PenguinCoreConfig:
                 raise ValueError(f"memory_map.{region_name}.size must be positive")
         if self.memory_backend.dram_page_size_bytes <= 0:
             raise ValueError("memory_backend.dram_page_size_bytes must be positive")
+        if self.initialization.seed < 0:
+            raise ValueError("initialization.seed must be non-negative")
 
     @property
     def mreg_bytes(self) -> int:
@@ -284,6 +330,18 @@ class PenguinCoreConfig:
         """Modeled latency of one `matmul.*` instruction in core cycles."""
 
         return self.tensor.matmul_latency_cycles
+
+    @property
+    def vpu_simple_op_latency_cycles(self) -> int:
+        """Modeled latency of one pipelineable VPU instruction in core cycles."""
+
+        return self.vpu.simple_op_latency_cycles
+
+    @property
+    def vpu_non_pipelineable_op_latency_cycles(self) -> int:
+        """Modeled latency of one non-pipelineable VPU instruction in core cycles."""
+
+        return self.vpu.non_pipelineable_op_latency_cycles
 
     def dma_offchip_cycles(self, payload_bytes: int) -> int:
         """Compute the off-chip serialized-link time for one DMA payload."""
@@ -342,6 +400,7 @@ __all__ = [
     "BandwidthConfig",
     "DEFAULT_PENGUIN_CORE_CONFIG",
     "DMAConfig",
+    "InitializationConfig",
     "MemoryBackendConfig",
     "MemoryMapConfig",
     "MemoryRegionConfig",
@@ -349,4 +408,5 @@ __all__ = [
     "ScalarCoreConfig",
     "TensorCoreConfig",
     "TraceConfig",
+    "VPUConfig",
 ]

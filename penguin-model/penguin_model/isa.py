@@ -18,6 +18,8 @@ from .instructions import (
     SType,
     TensorMemType,
     UType,
+    VPUBinaryType,
+    VPUUnaryType,
     WeightMemType,
     instruction,
 )
@@ -26,8 +28,15 @@ from .tensor import (
     MATMUL_LATENCY_CYCLES,
     MXU_PUSH_LATENCY_CYCLES,
     VLOAD_LATENCY_CYCLES,
+    VPU_SIMPLE_OP_LATENCY_CYCLES,
     VSTORE_LATENCY_CYCLES,
     compute_bf16_matmul,
+    compute_bf16_vadd,
+    compute_bf16_vmax,
+    compute_bf16_vmin,
+    compute_bf16_vmov,
+    compute_bf16_vmul,
+    compute_bf16_vrelu,
 )
 
 MASK32 = 0xFFFF_FFFF
@@ -327,6 +336,33 @@ def _matmul_result(
     )
 
 
+def _apply_vpu_simple_latency(state: ArchState) -> None:
+    state.instruction_extra_cycles = (
+        state.config.vpu_simple_op_latency_cycles - VPU_SIMPLE_OP_LATENCY_CYCLES
+    )
+
+
+def _vpu_binary_result(
+    state: ArchState,
+    params: VPUBinaryType,
+    op: Callable[[object, object], object],
+) -> None:
+    lhs = state.load_mreg(params.ms1)
+    rhs = state.load_mreg(params.ms2)
+    _apply_vpu_simple_latency(state)
+    state.store_mreg(params.md, op(lhs, rhs))
+
+
+def _vpu_unary_result(
+    state: ArchState,
+    params: VPUUnaryType,
+    op: Callable[[object], object],
+) -> None:
+    src = state.load_mreg(params.ms)
+    _apply_vpu_simple_latency(state)
+    state.store_mreg(params.md, op(src))
+
+
 @instruction(
     mnemonic="matmul.mxu0",
     params_type=MXUMatmulType,
@@ -379,6 +415,66 @@ def matmul_add_mxu1(state: ArchState, params: MXUMatmulAccType) -> None:
         slot=params.ws,
         partial=params.mp,
     )
+
+
+@instruction(
+    mnemonic="vadd",
+    params_type=VPUBinaryType,
+    latency=VPU_SIMPLE_OP_LATENCY_CYCLES,
+    registry=TENSOR_INSTRUCTION_SPECS,
+)
+def vadd(state: ArchState, params: VPUBinaryType) -> None:
+    _vpu_binary_result(state, params, lambda lhs, rhs: compute_bf16_vadd(lhs, rhs, config=state.config))
+
+
+@instruction(
+    mnemonic="vmul",
+    params_type=VPUBinaryType,
+    latency=VPU_SIMPLE_OP_LATENCY_CYCLES,
+    registry=TENSOR_INSTRUCTION_SPECS,
+)
+def vmul(state: ArchState, params: VPUBinaryType) -> None:
+    _vpu_binary_result(state, params, lambda lhs, rhs: compute_bf16_vmul(lhs, rhs, config=state.config))
+
+
+@instruction(
+    mnemonic="vmax",
+    params_type=VPUBinaryType,
+    latency=VPU_SIMPLE_OP_LATENCY_CYCLES,
+    registry=TENSOR_INSTRUCTION_SPECS,
+)
+def vmax(state: ArchState, params: VPUBinaryType) -> None:
+    _vpu_binary_result(state, params, lambda lhs, rhs: compute_bf16_vmax(lhs, rhs, config=state.config))
+
+
+@instruction(
+    mnemonic="vmin",
+    params_type=VPUBinaryType,
+    latency=VPU_SIMPLE_OP_LATENCY_CYCLES,
+    registry=TENSOR_INSTRUCTION_SPECS,
+)
+def vmin(state: ArchState, params: VPUBinaryType) -> None:
+    _vpu_binary_result(state, params, lambda lhs, rhs: compute_bf16_vmin(lhs, rhs, config=state.config))
+
+
+@instruction(
+    mnemonic="vrelu",
+    params_type=VPUUnaryType,
+    latency=VPU_SIMPLE_OP_LATENCY_CYCLES,
+    registry=TENSOR_INSTRUCTION_SPECS,
+)
+def vrelu(state: ArchState, params: VPUUnaryType) -> None:
+    _vpu_unary_result(state, params, lambda src: compute_bf16_vrelu(src, config=state.config))
+
+
+@instruction(
+    mnemonic="vmov",
+    params_type=VPUUnaryType,
+    latency=VPU_SIMPLE_OP_LATENCY_CYCLES,
+    registry=TENSOR_INSTRUCTION_SPECS,
+)
+def vmov(state: ArchState, params: VPUUnaryType) -> None:
+    _vpu_unary_result(state, params, lambda src: compute_bf16_vmov(src, config=state.config))
 
 
 # DMA channel 0

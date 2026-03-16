@@ -279,6 +279,7 @@ def _dma_overlap_program() -> str:
     builder.li(1, DRAM_BASE + 0x100)
     builder.li(2, VMEM_BASE + 0x100)
     builder.li(3, 32)
+    builder.li(20, 0)
     builder.dma("dma.load.ch0", dram_rs=1, vmem_rs=2, size_rs=3)
     for _ in range(9):
         builder.i("saddi", rd=20, rs1=20, imm=1)
@@ -299,13 +300,14 @@ def _model_core_sjal_delay_slots() -> str:
 
 def _model_core_sjalr_delay_slots() -> str:
     builder = AssemblyBuilder()
-    builder.li(1, 28)
+    builder.li(1, "target")
     builder.i("sjalr", rd=5, rs1=1, imm=1)
     builder.li(2, 2)
     builder.li(3, 3)
     builder.li(4, 99)
     builder.li(6, 99)
     builder.li(7, 99)
+    builder.label("target")
     builder.li(8, 8)
     return builder.emit()
 

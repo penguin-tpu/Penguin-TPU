@@ -1,0 +1,53 @@
+{
+  symbols: {
+    activation_scratch: {
+      kind: "scratch",
+      region: "vmem",
+      address: 0x08000000,
+      size_bytes: 2048,
+    },
+    activation_tiles: {
+      kind: "input",
+      region: "dram",
+      address: 0x81000000,
+      size_bytes: 12288,
+    },
+    bias: {
+      kind: "input",
+      region: "vmem",
+      address: 0x08001800,
+      size_bytes: 6144,
+    },
+    output_scratch: {
+      kind: "scratch",
+      region: "vmem",
+      address: 0x08001000,
+      size_bytes: 2048,
+    },
+    output_tiles: {
+      kind: "output",
+      region: "dram",
+      address: 0x83000000,
+      size_bytes: 18432,
+    },
+    program: {
+      kind: "program",
+      region: "imem",
+      address: 0x00100000,
+      size_bytes: 372,
+      file: "linear_large.S",
+    },
+    weight_scratch: {
+      kind: "scratch",
+      region: "vmem",
+      address: 0x08000800,
+      size_bytes: 512,
+    },
+    weight_tiles: {
+      kind: "input",
+      region: "dram",
+      address: 0x82000000,
+      size_bytes: 3072,
+    },
+  },
+}

@@ -157,6 +157,8 @@ Decision:
 - VPU reads from `m` registers and writes back to `m` registers only
 - VPU has no MXU-style local operand buffers in the current contract
 - first VPU opcode floor is `vadd`, `vmul`, `vmax`, `vmin`, `vrelu`, and `vmov`
+- the initial floating-point VPU view is BF16 over the `64 x 16` interpretation of one
+  whole tensor register
 
 Rationale:
 
@@ -264,6 +266,10 @@ Architecture-visible requirements:
 - the host populates IMEM before accelerator execution begins
 - the host arranges any required DRAM and VMEM initialization before the relevant program
   phase depends on it
+- software must initialize any architecturally visible data it consumes; unread DRAM or
+  VMEM contents are undefined by the architecture
+- software must clear scalar registers at program entry before relying on register values
+  not explicitly written by host-side setup or earlier instructions
 - the accelerator begins fetching only after host-visible execution-control state enables
   execution
 - completion or error-halt outcome must be observable through host-visible status state
@@ -277,6 +283,48 @@ In the early bring-up model:
 - Penguin does not yet require a dedicated scalar CSR-manipulation ISA
 - future revisions may allow Penguin scalar code to access the same CSR region through
   MMIO-style loads and stores or direct hardware connections where appropriate
+
+### 4.1.3 Scalar binary encoding baseline
+
+The first scalar binary encoding baseline is now defined.
+
+Architecture-visible requirements:
+
+- scalar instructions remain fixed-width 32-bit words
+- scalar instructions use standard RV32I field layouts:
+  - R-type
+  - I-type
+  - S-type
+  - B-type
+  - U-type
+  - J-type
+- the first scalar binary layer reuses the corresponding RV32I opcode, `funct3`, and
+  `funct7` placements for the integer subset
+- Penguin-specific scalar mnemonics remain the software-visible assembly contract, but
+  the underlying binary layout is RV32I-compatible
+- `sld` reuses the standard `lw` binary encoding shape
+- `sst` reuses the standard `sw` binary encoding shape
+- `sfence` reuses the standard `fence` encoding shape
+- `secall` and `sebreak` reuse the standard system-encoding forms corresponding to
+  `ecall` and `ebreak`
+
+This preserves a conservative scalar binary contract while still allowing Penguin to
+define architecture-visible semantic differences such as:
+
+- VMEM-only scalar loads and stores
+- 2 architecturally visible delay slots on branches and jumps
+- halt-on-error behavior rather than a general trap-and-restart model
+
+The architecture also reserves the standard RISC-V custom major opcodes for future
+Penguin accelerator instructions rather than spending them on scalar bring-up:
+
+- `custom-0` (`0001011`)
+- `custom-1` (`0101011`)
+- `custom-2` (`1011011`)
+- `custom-3` (`1111011`)
+
+Those opcode families are intended for future DMA, tensor-memory, MXU, VPU, XLU, and
+other accelerator-specific instruction forms.
 
 ### 4.2 Tensor register file
 
@@ -421,6 +469,9 @@ Architecture-visible requirements:
 - VPU instructions operate on whole tensor registers as operands and destinations
 - sub-tile VPU operand windows are not part of the current architectural contract
 - VPU latency is deterministic for a fixed instruction form and configuration
+- initial pipelineable VPU elementwise operations use a 2-cycle latency class in the
+  performance model
+- future non-pipelineable VPU operations such as division use an 8-cycle latency class
 - VPU operations may be scheduled in parallel with scalar instructions when architectural
   hazards permit
 - VPU is intended to grow toward a broad tensor-function set, but the first architected
@@ -559,11 +610,17 @@ The baseline architecture now defines the following reset expectations:
 - DMA channels reset to idle
 - any pending control-transfer redirection state resets to empty
 - `x0` remains zero by definition
+- DRAM and VMEM contents are architecturally unspecified after reset unless software or
+  the host environment initializes them
 - other scalar registers, tensor registers, and MXU weight slots are architecturally
   unspecified after reset unless software or the host environment initializes them
 
 Software must not rely on reset-time contents of architectural data state other than
 values explicitly defined above.
+
+In the Python functional/performance model, the default instantiation of these
+architecturally unspecified contents is deterministic pseudo-random data controlled by
+`PenguinCoreConfig.initialization`.
 
 ### 5.7 Error handling model
 

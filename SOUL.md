@@ -16,6 +16,40 @@ What exists now:
   label-resolved self-checking programs inspired by `riscv-tests` `rv32ui`
 - a GitHub Actions CI workflow that installs the `uv` workspace and runs
   the full Python test suite on pushes and pull requests
+- initial VPU elementwise functional/performance modeling for `vadd`, `vmul`, `vmax`,
+  `vmin`, `vrelu`, and `vmov`
+- executable-package manifest/symbol-table support on both sides of the software
+  boundary:
+  - `penguin-compiler` can now write bundle directories with `program.S`,
+    a sidecar `program.symbols.json5`, `manifest.json5`, `constants.bin`, and
+    file-backed input/output payloads
+  - `penguin-model` can now load that manifest, resolve symbol memory mappings, and
+    execute programs from a nonzero IMEM base address
+  - `penguin-model` can also stage file-backed bundle payloads into mapped DRAM/VMEM/IMEM
+    regions before execution
+- working package CLIs now exist on both sides of the software boundary:
+  - `penguin-compile bundle ...` packages assembly plus symbol/payload metadata into a
+    runnable bundle
+  - `penguin-model --program ...` executes mapped `.S` programs
+  - `penguin-model --bundle ...` executes bundle directories and can emit JSON traces
+- checked-in programs under `tests/vectors/programs/` now also carry adjacent
+  `*.symbols.json5` sidecars, and the shared Python loaders consume those sidecars when
+  running scalar/tensor example programs from source files
+- deterministic pseudo-random power-on initialization for DRAM, VMEM, scalar registers,
+  tensor registers, and MXU weight-slot state in the Python model
+- repo-wide verification now also locks:
+  - all checked-in assembly programs under `tests/vectors/programs/` have valid
+    `*.symbols.json5` sidecars whose recorded sizes match the assembled instruction
+    streams
+  - bundle-loader error handling for non-program entry symbols and program-size mismatch
+  - assembler parsing of symbol/label expressions inside tensor-memory operands
+  - VPU in-place destination aliasing semantics against BF16/PyTorch reference behavior
+- user-facing READMEs now describe the real current software surfaces rather than the
+  original scaffold-only state:
+  - current example entry points
+  - executable bundle layout
+  - sidecar symbol-table loading flow
+  - the current CLI surfaces and their remaining deferred scope
 - formal baseline specs:
   - [scalar-functional-subset.md](/home/tk/Desktop/Penguin-TPU/docs/specs/scalar-functional-subset.md)
   - [architecture-spec.md](/home/tk/Desktop/Penguin-TPU/docs/specs/architecture-spec.md)
@@ -26,8 +60,8 @@ What exists now:
 
 What does not exist yet:
 
-- actual `penguin-compiler` export logic
-- executable package loader/writer implementation
+- direct PyTorch-to-Penguin export logic
+- manifest-level runtime mapping for `constants.bin`
 - RTL testbench flow
 - FPGA bring-up flow
 
@@ -117,6 +151,8 @@ Reasoning:
 - VPU writes only to `m` registers
 - no local operand buffers
 - whole-register operations only
+- initial floating-point elementwise view is BF16 over the `64 x 16` tensor-register
+  interpretation
 - first opcode floor:
   - `vadd`
   - `vmul`
@@ -124,6 +160,8 @@ Reasoning:
   - `vmin`
   - `vrelu`
   - `vmov`
+- pipelineable elementwise operations use a 2-cycle latency class
+- future non-pipelineable operations such as division use an 8-cycle latency class
 
 Reasoning:
 
@@ -202,6 +240,10 @@ bring-up steps.
 
 The codebase still lags the tensor specs significantly.
 
+Current regression status after the verification/documentation sweep:
+
+- `uv run pytest` passes with 235 tests
+
 Implemented today:
 
 - scalar functional model
@@ -275,7 +317,8 @@ Implemented today:
   - `uv run pytest` passes with 144 tests
 - runnable tensor examples now exist for:
   - single-tile `matmul`
-  - tiled `linear` without bias over a 128x32 input batch and 32 output features
+  - tiled `linear` with bias over a 128x32 input batch and 32 output features
+  - DMA-backed tiled `linear` with bias over a 192x64 input batch and 48 output features
 - the tensor examples load checked-in assembly from `tests/vectors/programs/tensor/examples/`,
   emit Perfetto-compatible JSON traces, and verify simulator output against a PyTorch
   BF16-accumulation golden reference
@@ -358,6 +401,7 @@ around it.
   - memory-map constants
   - DMA alignment/channel-count parameters
   - tensor register and weight-slot geometry
+  - VPU timing parameters
   - off-chip and VMEM bandwidth parameters
   - trace-timing and scalar delay-slot parameters
 - module-level constants such as `DRAM_BASE`, `MREG_BYTES`, and `DMA_CHANNEL_COUNT`
@@ -365,21 +409,30 @@ around it.
   runtime behavior now flows through `ArchState.config`
 - `PenguinCore`, `ArchState`, the example workloads, and the shared scalar testbench
   helper now instantiate through `PenguinCoreConfig`
+- the VPU model now executes BF16 whole-register elementwise operations directly from
+  and to the tensor register file
+- initial VPU latency is parameterized through `config.vpu`
+- architecturally unspecified DRAM/VMEM/register contents now default to deterministic
+  pseudo-random data in the Python model via `config.initialization`
+- checked-in startup programs that depend on clean scalar state now include an explicit
+  scalar-register scrub prologue
 
 Open question to confirm later:
 
 - whether the intended `MEM_BASE` behavior is exactly a high-bits extension
   `(mem_base << 32) | low32`, or some other shared offset encoding
+- whether the architected first VPU data view should remain BF16-only, or whether FP8
+  elementwise views are also intended in the initial ISA
 
 ## Immediate Next Steps
 
-1. Define the executable package and manifest.
+1. Start using the executable-package manifest and symbol table from actual compiler
+   export paths instead of example-only/test-only flows.
 2. Add formal tensor layout/packing spec, especially padding and tail-handling rules.
 3. Add a first binary/text assembly encoding spec for 32-bit instructions.
 4. Define the host control and CSR map for launch, halt, done, and error reporting.
-5. Refine tensor execution timing and overlap semantics for long-chime MXU work.
-6. Implement the next tensor-side functional units: XLU transpose and the initial VPU
-   op floor.
+5. Refine tensor execution timing and overlap semantics for long-chime MXU/VPU work.
+6. Implement the next tensor-side functional unit: XLU transpose.
 
 ## Remaining Open Items
 
@@ -426,3 +479,20 @@ Open follow-up for the next FPGA step:
 
 - board-specific reset polarity, clock frequency, pin constraints, and Vivado
   project flow still need to be supplied before bitstream generation
+
+## Scalar RTL Planning
+
+- added `docs/plans/scalar-core-encoding-and-rtl-plan.md` to capture the
+  proposed scalar binary encoding baseline plus a step-by-step RTL bring-up plan
+- current planning direction is:
+  - keep scalar binary encodings RV32I-compatible for the first RTL slice
+  - keep Penguin-specific `s*` mnemonics at the assembly/spec layer
+  - reserve RISC-V custom major opcodes for future DMA/tensor instruction
+    families instead of spending them on scalar bring-up
+- the formal spec set now reflects that same direction:
+  - `architecture-spec.md` defines the scalar binary baseline and reserved
+    custom-opcode space
+  - `microarchitecture-spec.md` defines the scalar decode baseline and first
+    scalar RTL slice structure
+  - `scalar-functional-subset.md` no longer treats the scalar binary layer as
+    undefined

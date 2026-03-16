@@ -3,6 +3,7 @@
     li x1, 0x80000100
     li x2, 0x08000100
     li x3, 0x00000020
+    li x20, 0x00000000
     dma.load.ch0 x1, x2, x3
     saddi x20, x20, 0x00000001
     saddi x20, x20, 0x00000001

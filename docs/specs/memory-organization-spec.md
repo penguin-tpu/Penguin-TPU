@@ -353,6 +353,8 @@ memory hazards across DMA and on-chip tensor transfers.
 
 Mandatory rules:
 
+- a program must not consume DRAM or VMEM bytes that software has not explicitly
+  initialized for that program phase
 - a program must not issue `vload`, `vstore`, or `mxu.push.*` against VMEM bytes whose
   correctness depends on an outstanding DMA transfer until the matching `dma.wait.chN`
   has completed
@@ -363,6 +365,8 @@ Mandatory rules:
   without an explicit ordering point
 - a program must not schedule concurrent tensor instructions that access the same
   architectural tensor register
+- software must clear scalar registers at program entry before depending on any register
+  other than `x0` or a register written earlier in the same startup sequence
 
 If software violates these rules, behavior is architecturally undefined in this revision.
 

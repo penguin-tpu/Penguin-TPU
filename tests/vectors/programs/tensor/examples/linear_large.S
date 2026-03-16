@@ -1,4 +1,37 @@
-# DMA-backed stripmined linear layer: 192x64 input @ 64x48 weights -> 192x48 BF16 output.
+# DMA-backed stripmined linear layer: 192x64 input @ 64x48 weights + 48 bias -> 192x48 BF16 output.
+
+    # Startup scalar-register scrub: software must not assume power-on register contents.
+    saddi x1, x0, 0
+    saddi x2, x0, 0
+    saddi x3, x0, 0
+    saddi x4, x0, 0
+    saddi x5, x0, 0
+    saddi x6, x0, 0
+    saddi x7, x0, 0
+    saddi x8, x0, 0
+    saddi x9, x0, 0
+    saddi x10, x0, 0
+    saddi x11, x0, 0
+    saddi x12, x0, 0
+    saddi x13, x0, 0
+    saddi x14, x0, 0
+    saddi x15, x0, 0
+    saddi x16, x0, 0
+    saddi x17, x0, 0
+    saddi x18, x0, 0
+    saddi x19, x0, 0
+    saddi x20, x0, 0
+    saddi x21, x0, 0
+    saddi x22, x0, 0
+    saddi x23, x0, 0
+    saddi x24, x0, 0
+    saddi x25, x0, 0
+    saddi x26, x0, 0
+    saddi x27, x0, 0
+    saddi x28, x0, 0
+    saddi x29, x0, 0
+    saddi x30, x0, 0
+    saddi x31, x0, 0
 
     li x1, DRAM_BASE + 0x01000000
     li x2, DRAM_BASE + 0x02000000
@@ -10,9 +43,11 @@
     li x12, 0x00000800
     li x13, 0x00000200
     li x14, 0x00000600
+    li x15, VMEM_BASE + 0x1800
 
 m_loop:
     li x8, 0x00000003
+    saddi x17, x15, 0x00000000
     saddi x18, x2, 0x00000000
     saddi x19, x3, 0x00000000
 n_loop:
@@ -48,9 +83,12 @@ k_loop:
     nop
     nop
 k_done:
+    vload m3, 0(x17)
+    vadd m2, m2, m3
     vstore m2, 0(x6)
     dma.store.ch2 x19, x6, x12
     dma.wait.ch2
+    saddi x17, x17, 0x00000800
     saddi x18, x18, 0x00000200
     saddi x19, x19, 0x00000800
     saddi x8, x8, -1

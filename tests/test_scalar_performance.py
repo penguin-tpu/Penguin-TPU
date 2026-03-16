@@ -40,7 +40,7 @@ def test_scalar_benchmark_dma_overlap_hides_transfer_latency() -> None:
         range(1, 9)
     )
     assert core.state.read_xreg(20) == 9
-    assert perf.instructions == 14
-    assert perf.cycles == 23
+    assert perf.instructions == 15
+    assert perf.cycles == 24
     assert perf.bytes_read == 32
     assert perf.bytes_written == 32

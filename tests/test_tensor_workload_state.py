@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import torch
 
-from penguin_model import ArchState, PenguinCore, StopReason, assemble_file
+from penguin_model import ArchState, PenguinCore, StopReason, load_mapped_program
 from penguin_model.tensor import (
     BF16_DTYPE,
     FP8_DTYPE,
@@ -89,14 +89,14 @@ def _preload_large_matmul_state() -> tuple[PenguinCore, torch.Tensor, torch.Tens
 
 def test_large_matmul_first_partial_tile_matches_reference_and_updates_scalar_state() -> None:
     core, activation, weights = _preload_large_matmul_state()
-    program = assemble_file(f"{_PROGRAM_ROOT}/matmul_large.S")
+    program = load_mapped_program(f"{_PROGRAM_ROOT}/matmul_large.S")
 
-    perf = core.execute(program, max_instructions=23)
+    perf = core.execute(program, max_instructions=54)
 
     expected = _bf16_reference_matmul(activation[:64, :32], weights[:32, :16])
     actual = bf16_tile_from_bytes(core.state.load_mreg(2))
 
-    assert perf.instructions == 23
+    assert perf.instructions == 54
     assert core.state.stop_reason == StopReason.STEP_LIMIT
     assert torch.equal(actual, expected)
     assert core.state.read_xreg(9) == 2
@@ -106,15 +106,15 @@ def test_large_matmul_first_partial_tile_matches_reference_and_updates_scalar_st
 
 def test_large_matmul_first_output_tile_is_correct_in_tensor_and_dram_state() -> None:
     core, activation, weights = _preload_large_matmul_state()
-    program = assemble_file(f"{_PROGRAM_ROOT}/matmul_large.S")
+    program = load_mapped_program(f"{_PROGRAM_ROOT}/matmul_large.S")
 
-    perf = core.execute(program, max_instructions=48)
+    perf = core.execute(program, max_instructions=79)
 
     expected = _bf16_reference_matmul(activation[:64, :64], weights[:64, :16])
     tensor_tile = bf16_tile_from_bytes(core.state.load_mreg(2))
     dram_tile = bf16_tile_from_bytes(core.state.dram.read(_output_tile_address(0, 0, n_tiles=2), MREG_BYTES))
 
-    assert perf.instructions == 48
+    assert perf.instructions == 79
     assert core.state.stop_reason == StopReason.STEP_LIMIT
     assert torch.equal(tensor_tile, expected)
     assert torch.equal(dram_tile, expected)

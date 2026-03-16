@@ -6,14 +6,15 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import torch
-from .assembler import assemble_file
 from .arch_state import ArchState, PerformanceCounters, StopReason
+from .bundle import load_mapped_program
 from .core_config import DEFAULT_PENGUIN_CORE_CONFIG, PenguinCoreConfig
 from .core import PenguinCore
 from .tensor import (
     BF16_DTYPE,
     FP8_DTYPE,
     bf16_tile_from_bytes,
+    bf16_tile_to_bytes,
     fp8_tile_to_bytes,
     weight_tile_to_bytes,
 )
@@ -27,6 +28,9 @@ class _ExampleAddresses:
     activation1: int
     weight0: int
     weight1: int
+    bias0: int
+    bias1: int
+    bias2: int
     output00: int
     output01: int
     output10: int
@@ -64,7 +68,7 @@ def run_matmul_example(
     state.vmem.write(addresses.weight0, weight_tile_to_bytes(weights, config=config))
 
     resolved_trace_path = _resolve_trace_path(trace_path, "matmul_trace.json")
-    perf = core.dump_json_trace(assemble_file(_PROGRAM_ROOT / "matmul.S"), resolved_trace_path)
+    perf = core.dump_json_trace(load_mapped_program(_PROGRAM_ROOT / "matmul.S"), resolved_trace_path)
     _require_program_end(core)
 
     output = _read_bf16_tile(state, addresses.output00, config=config)
@@ -89,8 +93,8 @@ def run_linear_example(
         cols=config.tensor.weight_tile_cols_fp8 * 2,
         config=config,
     )
-
-    golden = _bf16_reference_matmul(inputs, weight_matrix)
+    bias = _deterministic_bias(cols=config.tensor.weight_tile_cols_fp8 * 2)
+    golden = _bf16_reference_linear(inputs, weight_matrix, bias)
 
     core = PenguinCore(config=config)
     state = core.state
@@ -106,9 +110,15 @@ def run_linear_example(
         addresses.weight1,
         weight_tile_to_bytes(weight_matrix[:, cols:], config=config),
     )
+    _write_bias_tiles_to_vmem(
+        state,
+        bias,
+        addresses=(addresses.bias0, addresses.bias1),
+        config=config,
+    )
 
     resolved_trace_path = _resolve_trace_path(trace_path, "linear_trace.json")
-    perf = core.dump_json_trace(assemble_file(_PROGRAM_ROOT / "linear.S"), resolved_trace_path)
+    perf = core.dump_json_trace(load_mapped_program(_PROGRAM_ROOT / "linear.S"), resolved_trace_path)
     _require_program_end(core)
 
     top = torch.cat(
@@ -167,6 +177,7 @@ def run_large_linear_example(
         m_tiles=3,
         n_tiles=3,
         k_tiles=2,
+        bias=_deterministic_bias(cols=config.tensor.weight_tile_cols_fp8 * 3),
     )
 
 
@@ -187,10 +198,13 @@ def _example_addresses(config: PenguinCoreConfig) -> _ExampleAddresses:
         activation1=vmem_base + 0x0800,
         weight0=vmem_base + 0x1000,
         weight1=vmem_base + 0x1200,
-        output00=vmem_base + 0x2000,
-        output01=vmem_base + 0x2800,
-        output10=vmem_base + 0x3000,
-        output11=vmem_base + 0x3800,
+        bias0=vmem_base + 0x1800,
+        bias1=vmem_base + 0x2000,
+        bias2=vmem_base + 0x2800,
+        output00=vmem_base + 0x3000,
+        output01=vmem_base + 0x3800,
+        output10=vmem_base + 0x4000,
+        output11=vmem_base + 0x4800,
         dma_act_scratch=vmem_base + 0x0000,
         dma_weight_scratch=vmem_base + 0x0800,
         dma_output_scratch=vmem_base + 0x1000,
@@ -224,6 +238,11 @@ def _deterministic_weight(
     return (((indices * 3) % 19) - 9) / 7
 
 
+def _deterministic_bias(*, cols: int) -> torch.Tensor:
+    indices = torch.arange(cols, dtype=torch.float32)
+    return ((indices % 13) - 6) / 11
+
+
 def _quantize_fp8(values: torch.Tensor) -> torch.Tensor:
     return values.to(dtype=FP8_DTYPE).to(dtype=torch.float32)
 
@@ -236,6 +255,16 @@ def _bf16_reference_matmul(activation: torch.Tensor, weights: torch.Tensor) -> t
         product = activation_fp8[:, inner].unsqueeze(1) * weight_fp8[inner, :].unsqueeze(0)
         acc = (acc.to(torch.float32) + product).to(BF16_DTYPE)
     return acc
+
+
+def _bf16_reference_linear(
+    activation: torch.Tensor,
+    weights: torch.Tensor,
+    bias: torch.Tensor,
+) -> torch.Tensor:
+    matmul = _bf16_reference_matmul(activation, weights)
+    bias_bf16 = bias.to(BF16_DTYPE).reshape(1, -1).expand(matmul.shape[0], -1)
+    return (matmul.to(torch.float32) + bias_bf16.to(torch.float32)).to(BF16_DTYPE)
 
 
 def _read_bf16_tile(
@@ -256,6 +285,23 @@ def _read_bf16_tile_from_memory(
 ) -> torch.Tensor:
     raw = memory.read(address, config.mreg_bytes).clone()
     return bf16_tile_from_bytes(raw, config=config).clone()
+
+
+def _write_bias_tiles_to_vmem(
+    state: ArchState,
+    bias: torch.Tensor,
+    *,
+    addresses: tuple[int, ...],
+    config: PenguinCoreConfig,
+) -> None:
+    cols = config.tensor.weight_tile_cols_fp8
+    for tile_index, address in enumerate(addresses):
+        start = tile_index * cols
+        if start >= bias.numel():
+            break
+        bias_slice = bias[start : start + cols].to(BF16_DTYPE).reshape(1, cols)
+        bias_tile = bias_slice.expand(config.tensor.mreg_rows, cols).clone()
+        state.vmem.write(address, bf16_tile_to_bytes(bias_tile, config=config))
 
 
 def _activation_tile_address(
@@ -388,6 +434,7 @@ def _run_dma_stripmined_example(
     m_tiles: int,
     n_tiles: int,
     k_tiles: int,
+    bias: torch.Tensor | None = None,
 ) -> ExampleRunResult:
     addresses = _example_addresses(config)
     rows = m_tiles * config.tensor.mreg_rows
@@ -396,7 +443,11 @@ def _run_dma_stripmined_example(
 
     activation = _deterministic_activation(rows=rows, cols=inner, config=config)
     weights = _deterministic_weight(rows=inner, cols=cols, config=config)
-    golden = _bf16_reference_matmul(activation, weights)
+    golden = (
+        _bf16_reference_matmul(activation, weights)
+        if bias is None
+        else _bf16_reference_linear(activation, weights, bias)
+    )
 
     core = PenguinCore(config=config)
     state = core.state
@@ -410,10 +461,17 @@ def _run_dma_stripmined_example(
         n_tiles=n_tiles,
         k_tiles=k_tiles,
     )
+    if bias is not None:
+        _write_bias_tiles_to_vmem(
+            state,
+            bias,
+            addresses=(addresses.bias0, addresses.bias1, addresses.bias2),
+            config=config,
+        )
 
     resolved_trace_path = _resolve_trace_path(trace_path, trace_filename)
     perf = core.dump_json_trace(
-        assemble_file(_PROGRAM_ROOT / program_name),
+        load_mapped_program(_PROGRAM_ROOT / program_name),
         resolved_trace_path,
     )
     _require_program_end(core)
