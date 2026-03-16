@@ -34,9 +34,9 @@ def test_scalar_decoder_cocotb() -> None:
         {
             "SIM": "verilator",
             "TOPLEVEL_LANG": "verilog",
-            "TOPLEVEL": "penguin_scalar_decoder",
+            "TOPLEVEL": "PenguinScalarDecoder",
             "MODULE": "tb_scalar_decoder",
-            "VERILOG_SOURCES": str(RTL_DIR / "penguin_scalar_decoder.v"),
+            "VERILOG_SOURCES": str(RTL_DIR / "PenguinScalarDecoder.v"),
             "COMPILE_ARGS": f"-I{RTL_DIR}",
             "SIM_BUILD": str(sim_build),
             "COCOTB_RESULTS_FILE": str(sim_build / "results.xml"),

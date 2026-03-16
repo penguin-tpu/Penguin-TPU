@@ -9,38 +9,53 @@ if {$target_name eq "sclar_core"} {
 }
 
 if {$target_name eq "uart_hello"} {
-    set top_name "penguin_uart_hello_top"
+    set top_name "PenguinUartHelloTop"
 } elseif {$target_name eq "scalar_core"} {
-    set top_name "penguin_scalar_uart_hello_top"
+    set top_name "PenguinScalarUartHelloTop"
 } else {
     error "unsupported PENGUIN_VIVADO_TARGET '${target_name}'"
 }
 
 open_project /home/tk/Desktop/Penguin-TPU/VivadoProject/VivadoProject.xpr
 
+set sources_fs [get_filesets sources_1]
+set constrs_fs [get_filesets constrs_1]
+set sim_fs [get_filesets sim_1]
+
+set existing_source_files [get_files -quiet -of_objects $sources_fs]
+if {[llength $existing_source_files] > 0} {
+    remove_files -fileset $sources_fs $existing_source_files
+}
+
+set existing_constraint_files [get_files -quiet -of_objects $constrs_fs]
+if {[llength $existing_constraint_files] > 0} {
+    remove_files -fileset $constrs_fs $existing_constraint_files
+}
+
 # constraint file
-add_files -fileset constrs_1 -norecurse /home/tk/Desktop/Penguin-TPU/rtl/constraints/NexysVideo_Master.xdc
+add_files -fileset $constrs_fs -norecurse /home/tk/Desktop/Penguin-TPU/rtl/constraints/NexysVideo_Master.xdc
 
 # design sources
-add_files { \
-  /home/tk/Desktop/Penguin-TPU/rtl/penguin_tpu/uart.v \
-  /home/tk/Desktop/Penguin-TPU/rtl/penguin_tpu/uart_rx.v \
-  /home/tk/Desktop/Penguin-TPU/rtl/penguin_tpu/uart_tx.v \
-  /home/tk/Desktop/Penguin-TPU/rtl/penguin_tpu/penguin_uart_hello_top.v \
-  /home/tk/Desktop/Penguin-TPU/rtl/penguin_tpu/penguin_scalar_uart_hello_top.v \
-  /home/tk/Desktop/Penguin-TPU/rtl/penguin_tpu/scalar/penguin_scalar_decoder.v \
-  /home/tk/Desktop/Penguin-TPU/rtl/penguin_tpu/scalar/penguin_scalar_regfile.v \
-  /home/tk/Desktop/Penguin-TPU/rtl/penguin_tpu/scalar/penguin_scalar_alu.v \
-  /home/tk/Desktop/Penguin-TPU/rtl/penguin_tpu/scalar/penguin_scalar_branch_unit.v \
-  /home/tk/Desktop/Penguin-TPU/rtl/penguin_tpu/scalar/penguin_scalar_lsu.v \
-  /home/tk/Desktop/Penguin-TPU/rtl/penguin_tpu/scalar/penguin_scalar_controller.v \
-  /home/tk/Desktop/Penguin-TPU/rtl/penguin_tpu/scalar/penguin_scalar_core.v \
+add_files -fileset $sources_fs { \
+  /home/tk/Desktop/Penguin-TPU/rtl/penguin_tpu/Uart.v \
+  /home/tk/Desktop/Penguin-TPU/rtl/penguin_tpu/UartRx.v \
+  /home/tk/Desktop/Penguin-TPU/rtl/penguin_tpu/UartTx.v \
+  /home/tk/Desktop/Penguin-TPU/rtl/penguin_tpu/PenguinUartHelloTop.v \
+  /home/tk/Desktop/Penguin-TPU/rtl/penguin_tpu/PenguinScalarUartHelloTop.v \
+  /home/tk/Desktop/Penguin-TPU/rtl/penguin_tpu/scalar/PenguinScalarDecoder.v \
+  /home/tk/Desktop/Penguin-TPU/rtl/penguin_tpu/scalar/PenguinScalarRegfile.v \
+  /home/tk/Desktop/Penguin-TPU/rtl/penguin_tpu/scalar/PenguinScalarAlu.v \
+  /home/tk/Desktop/Penguin-TPU/rtl/penguin_tpu/scalar/PenguinScalarBranchUnit.v \
+  /home/tk/Desktop/Penguin-TPU/rtl/penguin_tpu/scalar/PenguinScalarLsu.v \
+  /home/tk/Desktop/Penguin-TPU/rtl/penguin_tpu/scalar/PenguinScalarController.v \
+  /home/tk/Desktop/Penguin-TPU/rtl/penguin_tpu/scalar/PenguinScalarCore.v \
   /home/tk/Desktop/Penguin-TPU/rtl/penguin_tpu/scalar/penguin_scalar_uart_hello_program_init.vh \
   /home/tk/Desktop/Penguin-TPU/rtl/penguin_tpu/scalar/penguin_scalar_defs.vh \
 }
 
 # active synthesis top
-set_property top $top_name [current_fileset]
+set_property top $top_name $sources_fs
+set_property top $top_name $sim_fs
 
 # simulation sources
 

@@ -30,13 +30,13 @@ def test_scalar_core_cocotb() -> None:
         pythonpath = pythonpath + os.pathsep + existing_pythonpath
 
     verilog_sources = [
-        RTL_DIR / "penguin_scalar_decoder.v",
-        RTL_DIR / "penguin_scalar_regfile.v",
-        RTL_DIR / "penguin_scalar_alu.v",
-        RTL_DIR / "penguin_scalar_branch_unit.v",
-        RTL_DIR / "penguin_scalar_lsu.v",
-        RTL_DIR / "penguin_scalar_controller.v",
-        RTL_DIR / "penguin_scalar_core.v",
+        RTL_DIR / "PenguinScalarDecoder.v",
+        RTL_DIR / "PenguinScalarRegfile.v",
+        RTL_DIR / "PenguinScalarAlu.v",
+        RTL_DIR / "PenguinScalarBranchUnit.v",
+        RTL_DIR / "PenguinScalarLsu.v",
+        RTL_DIR / "PenguinScalarController.v",
+        RTL_DIR / "PenguinScalarCore.v",
     ]
 
     env = os.environ.copy()
@@ -44,7 +44,7 @@ def test_scalar_core_cocotb() -> None:
         {
             "SIM": "verilator",
             "TOPLEVEL_LANG": "verilog",
-            "TOPLEVEL": "penguin_scalar_core",
+            "TOPLEVEL": "PenguinScalarCore",
             "MODULE": "tb_scalar_core",
             "VERILOG_SOURCES": " ".join(str(path) for path in verilog_sources),
             "COMPILE_ARGS": f"-I{RTL_DIR}",

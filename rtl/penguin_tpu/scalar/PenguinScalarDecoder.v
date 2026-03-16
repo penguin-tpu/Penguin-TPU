@@ -2,7 +2,7 @@
 
 `include "penguin_scalar_defs.vh"
 
-module penguin_scalar_decoder (
+module PenguinScalarDecoder (
     input  wire [31:0] instruction_word,
     output reg         valid,
     output reg         illegal,

@@ -14,10 +14,10 @@ RTL_DIR = ROOT / "rtl" / "penguin_tpu"
 @pytest.mark.skipif(shutil.which("verilator") is None, reason="verilator not installed")
 def test_uart_hello_world_cocotb() -> None:
     verilog_sources = [
-        RTL_DIR / "uart_tx.v",
-        RTL_DIR / "uart_rx.v",
-        RTL_DIR / "uart.v",
-        RTL_DIR / "penguin_uart_hello_top.v",
+        RTL_DIR / "UartTx.v",
+        RTL_DIR / "UartRx.v",
+        RTL_DIR / "Uart.v",
+        RTL_DIR / "PenguinUartHelloTop.v",
     ]
 
     parameters = {
@@ -45,7 +45,7 @@ def test_uart_hello_world_cocotb() -> None:
         {
             "SIM": "verilator",
             "TOPLEVEL_LANG": "verilog",
-            "TOPLEVEL": "penguin_uart_hello_top",
+            "TOPLEVEL": "PenguinUartHelloTop",
             "MODULE": "tb_uart_hello",
             "VERILOG_SOURCES": " ".join(str(path) for path in verilog_sources),
             "SIM_BUILD": str(sim_build),

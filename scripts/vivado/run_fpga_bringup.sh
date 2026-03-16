@@ -78,10 +78,11 @@ export PENGUIN_VIVADO_TARGET="${TARGET}"
 
 vivado -mode batch -source "${REPO_ROOT}/scripts/vivado/1_create_project.tcl"
 vivado -mode batch -source "${REPO_ROOT}/scripts/vivado/2_add_files.tcl"
-vivado -mode batch -source "${REPO_ROOT}/scripts/vivado/3_generate_bitstream.tcl"
+vivado -mode batch -source "${REPO_ROOT}/scripts/vivado/3_generate_vivado_ip.tcl"
+vivado -mode batch -source "${REPO_ROOT}/scripts/vivado/4_generate_bitstream.tcl"
 
 for ((attempt = 1; attempt <= PROGRAM_RETRIES; attempt += 1)); do
-    if vivado -mode batch -source "${REPO_ROOT}/scripts/vivado/4_program_device.tcl"; then
+    if vivado -mode batch -source "${REPO_ROOT}/scripts/vivado/5_program_device.tcl"; then
         break
     fi
 

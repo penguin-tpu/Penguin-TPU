@@ -8,9 +8,9 @@ from cocotb.triggers import ClockCycles, FallingEdge
 from cocotb.utils import get_sim_time
 
 
-CLK_FREQ_HZ = int(os.environ["PARAM_CLK_FREQ_HZ"])
-BAUD_RATE = int(os.environ["PARAM_BAUD_RATE"])
-CYCLE_COUNTER_INCREMENT = int(os.environ["PARAM_CYCLE_COUNTER_INCREMENT"])
+CLK_FREQ_HZ = int(os.environ["PARAM_clk_freq_hz"])
+BAUD_RATE = int(os.environ["PARAM_baud_rate"])
+CYCLE_COUNTER_INCREMENT = int(os.environ["PARAM_cycle_counter_increment"])
 CLOCK_PERIOD_NS = 10
 CORE_CLK_FREQ_HZ = CLK_FREQ_HZ // 2
 UART_PRESCALE = (CORE_CLK_FREQ_HZ + (BAUD_RATE * 4)) // (BAUD_RATE * 8)

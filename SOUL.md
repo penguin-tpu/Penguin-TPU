@@ -35,6 +35,23 @@ What exists now:
 - checked-in programs under `tests/vectors/programs/` now also carry adjacent
   `*.symbols.json5` sidecars, and the shared Python loaders consume those sidecars when
   running scalar/tensor example programs from source files
+- fixed-shape Gemma-inspired examples now exist under `examples/` and run as staged
+  executable-package flows over checked-in tensor assembly:
+  - `examples/gemma_attention.py`
+  - `examples/gemma_mlp.py`
+  - `examples/gemma_decoder.py`
+  - each example emits real bundle directories for each stage, runs those bundles through
+    `penguin-model`, and compares the final output against a matching PyTorch reference
+  - the stage programs live under `tests/vectors/programs/tensor/examples/` and cover:
+    projection matmuls, attention score matmul, attention context matmul, BF16 gating,
+    BF16 residual add, and BF16 transpose
+  - important current limitation: these examples are still a staged hardware-visible
+    subset, not a full direct Gemma lowering in one Penguin program; RoPE, RMSNorm, and
+    softmax remain host-side between stage bundles, and the staged references reflect
+    those same boundaries
+- runtime outputs are now split at the repo root under `outputs/`:
+  - `outputs/examples/` for example traces and bundle artifacts
+  - `outputs/tests/` for pytest program-execution traces
 - deterministic pseudo-random power-on initialization for DRAM, VMEM, scalar registers,
   tensor registers, and MXU weight-slot state in the Python model
 - initial XLU transpose functional/performance modeling for `transpose.xlu`
@@ -467,9 +484,9 @@ specification.
 ## RTL Bring-Up Start
 
 - `rtl/penguin_tpu/` now includes a minimal FPGA hello-world path:
-  - vendored `uart.v`, `uart_tx.v`, and `uart_rx.v` from the referenced
+  - vendored `Uart.v`, `UartTx.v`, and `UartRx.v` from the referenced
     `alexforencich/verilog-uart` project under the upstream MIT license
-  - a new `penguin_uart_hello_top.v` top level that sends `Hello World\r\n`
+  - a new `PenguinUartHelloTop.v` top level that sends `Hello World\r\n`
     once per second over UART
   - that top level now matches the checked-in Nexys Video constraint naming:
     `sys_clk_i`, `cpu_resetn`, `uart_tx_in`, and `uart_rx_out`
@@ -488,7 +505,7 @@ specification.
 - GitHub Actions CI now runs RTL regressions in a dedicated `rtl-tests` job that
   installs Verilator on `ubuntu-latest` and executes `pytest tests/cocotb`
 - on March 15, 2026, the checked-in Vivado TCL flow successfully built
-  `penguin_uart_hello_top.bit`, programmed the connected Nexys Video board, and
+  `PenguinUartHelloTop.bit`, programmed the connected Nexys Video board, and
   produced `Hello World` over the enumerated USB UART device `/dev/ttyUSB0`
 - added `scripts/vivado/read_uart_hello.py` plus
   `docs/flows/nexys-video-hello-world-bringup.md` to make FPGA build, program,
@@ -526,13 +543,13 @@ Open follow-up for the next FPGA step:
 
 - implemented the first scalar RTL subtree under `rtl/penguin_tpu/scalar/`:
   - `penguin_scalar_defs.vh`
-  - `penguin_scalar_decoder.v`
-  - `penguin_scalar_regfile.v`
-  - `penguin_scalar_alu.v`
-  - `penguin_scalar_branch_unit.v`
-  - `penguin_scalar_lsu.v`
-  - `penguin_scalar_controller.v`
-  - `penguin_scalar_core.v`
+  - `PenguinScalarDecoder.v`
+  - `PenguinScalarRegfile.v`
+  - `PenguinScalarAlu.v`
+  - `PenguinScalarBranchUnit.v`
+  - `PenguinScalarLsu.v`
+  - `PenguinScalarController.v`
+  - `PenguinScalarCore.v`
 - added `penguin_model.scalar_encoding.encode_scalar_instruction()` so the
   software side can produce RV32I-compatible scalar machine words for RTL tests
 - validated the implementation incrementally:
@@ -543,7 +560,7 @@ Open follow-up for the next FPGA step:
     load/store, 2-delay-slot jumps, younger control-transfer override, and
     misaligned-load halt behavior
 - added a first scalar-core UART-MMIO top level:
-  - `rtl/penguin_tpu/penguin_scalar_uart_hello_top.v`
+  - `rtl/penguin_tpu/PenguinScalarUartHelloTop.v`
   - this instantiates the scalar core, embeds a checked-in program ROM, exposes
     a tiny UART MMIO block, and prints `hello, this is penguin`
 - added the corresponding checked-in assembly source:
@@ -596,24 +613,43 @@ Open follow-up for the next FPGA step:
   - stricter repeated-message validation measured host-side inter-message
     intervals of `1.006618 s` and `0.990736 s`, which is consistent with the
     intended 1 Hz cadence
-- temporarily changed the scalar-core FPGA top to derive a fabric divide-by-2
-  internal clock from the 100 MHz board clock:
-  - scalar core, UART, and MMIO cycle counter now run on the derived 50 MHz
-    clock
-  - the UART-MMIO hello program was updated to target a 50,000,000-cycle
-    1-second delay and now emits a newline after each message
-  - cocotb regressions were updated to follow the divided internal clock rather
-    than the raw board clock
-  - the Nexys Video board run still passes, with repeated-message intervals of
-    `0.989834 s` and `1.006263 s`
-- current scalar-core FPGA caveat:
-  - the temporary divide-by-2 path is a stopgap for bring-up; it should be
-    replaced by a proper PLL/MMCM-generated clock later
-  - routed timing summary from the most recent successful board-tested build:
-    - `WNS=8.365 ns`
-    - `TNS=0.000 ns`
-  - functional board validation and timing signoff now both pass with the
-    divided clock
+- switched the scalar-core FPGA top from the temporary fabric divide-by-2 path
+  to a Vivado Clocking Wizard-generated 50 MHz internal clock:
+  - scalar core, UART, and MMIO cycle counter still run at 50 MHz, but now from
+    generated clocking IP rather than fabric logic
+  - `scripts/vivado/run_fpga_bringup.sh` now inserts
+    `3_generate_vivado_ip.tcl` before bitstream generation and uses the renamed
+    downstream script numbers
+  - `scripts/vivado/3_generate_vivado_ip.tcl` is now the checked-in project
+    step that creates/configures the `ClockingWizard` IP
+  - cocotb regressions now compile a local `ClockingWizard` stub so the
+    synthesizable top always instantiates ClockWiz without a compatibility path
+- renamed the scalar UART/MMIO FPGA top module to `PenguinScalarUartHelloTop`
+  and reformatted the file to follow the current RTL style guide:
+  - dropped the `USE_CLOCK_WIZ` parameter and the alternate non-ClockWiz path
+  - normalized parameter naming to `lower_snake_case`
+  - added banner-style sections for declarations and core logic
+- renamed the remaining checked-in handwritten Verilog files/modules to
+  `UpperCamelCase` so file names now match primary module names across the RTL
+  tree:
+  - `PenguinUartHelloTop`, `Uart`, `UartTx`, `UartRx`
+  - `PenguinScalarDecoder`, `PenguinScalarRegfile`, `PenguinScalarAlu`,
+    `PenguinScalarBranchUnit`, `PenguinScalarLsu`,
+    `PenguinScalarController`, and `PenguinScalarCore`
+  - cocotb harnesses and Vivado source lists were updated to use the renamed
+    files/modules
+- hardened the Vivado project flow after the repo-wide RTL rename:
+  - `1_create_project.tcl` now forces manual source management
+  - `2_add_files.tcl` now clears and rebuilds `sources_1` / `constrs_1`
+    explicitly before adding the renamed RTL set
+  - `4_generate_bitstream.tcl` now reasserts the target top before launching
+    synthesis/implementation
+  - reran the scalar-core FPGA bring-up successfully on March 16, 2026 after
+    these fixes; the rebuilt image programmed and again printed
+    `hello, this is penguin` on `/dev/ttyUSB0`
+- current scalar-core FPGA status:
+  - the Clocking Wizard-based scalar-core image has now been revalidated on
+    hardware after the file/module rename and Vivado flow fixes
 - moved scalar RTL ROM-init generation into `penguin-compiler`:
   - added `write_verilog_rom_init(...)` / `render_verilog_rom_init(...)`
   - added `penguin-compile rtl-rom --program ... --output ...`

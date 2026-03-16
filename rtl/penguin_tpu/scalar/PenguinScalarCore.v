@@ -2,7 +2,7 @@
 
 `include "penguin_scalar_defs.vh"
 
-module penguin_scalar_core #
+module PenguinScalarCore #
 (
     parameter [31:0] RESET_PC = 32'd0
 )
@@ -82,7 +82,7 @@ module penguin_scalar_core #
     reg [31:0] writeback_data;
     reg writeback_enable;
 
-    penguin_scalar_decoder decoder_inst (
+    PenguinScalarDecoder decoder_inst (
         .instruction_word(imem_rdata),
         .valid(decode_valid),
         .illegal(decode_illegal),
@@ -106,7 +106,7 @@ module penguin_scalar_core #
         .is_reserved_custom(is_reserved_custom)
     );
 
-    penguin_scalar_regfile regfile_inst (
+    PenguinScalarRegfile regfile_inst (
         .clock(clock),
         .reset(reset),
         .rs1_addr(decode_rs1),
@@ -120,7 +120,7 @@ module penguin_scalar_core #
         .write_data(writeback_data)
     );
 
-    penguin_scalar_alu alu_inst (
+    PenguinScalarAlu alu_inst (
         .alu_fn(alu_fn_selected),
         .lhs(alu_lhs),
         .rhs(alu_rhs),
@@ -128,7 +128,7 @@ module penguin_scalar_core #
         .compare_true(alu_compare_true)
     );
 
-    penguin_scalar_branch_unit branch_unit_inst (
+    PenguinScalarBranchUnit branch_unit_inst (
         .pc(current_pc),
         .rs1_value(rs1_data),
         .imm32(decode_imm32),
@@ -141,7 +141,7 @@ module penguin_scalar_core #
         .target_misaligned(branch_target_misaligned)
     );
 
-    penguin_scalar_lsu lsu_inst (
+    PenguinScalarLsu lsu_inst (
         .base_addr(rs1_data),
         .store_data(rs2_data),
         .imm32(decode_imm32),
@@ -157,7 +157,7 @@ module penguin_scalar_core #
         .store_misaligned(store_misaligned)
     );
 
-    penguin_scalar_controller #(
+    PenguinScalarController #(
         .RESET_PC(RESET_PC)
     ) controller_inst (
         .clock(clock),

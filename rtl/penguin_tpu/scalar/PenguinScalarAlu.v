@@ -2,7 +2,7 @@
 
 `include "penguin_scalar_defs.vh"
 
-module penguin_scalar_alu (
+module PenguinScalarAlu (
     input  wire [4:0]  alu_fn,
     input  wire [31:0] lhs,
     input  wire [31:0] rhs,

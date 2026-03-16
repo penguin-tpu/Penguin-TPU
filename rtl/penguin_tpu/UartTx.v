@@ -32,7 +32,7 @@ THE SOFTWARE.
  * Vendored from the referenced alexforencich/verilog-uart project so the FPGA
  * bring-up path can start from a known-good, standalone UART block.
  */
-module uart_tx #
+module UartTx #
 (
     parameter DATA_WIDTH = 8
 )

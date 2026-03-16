@@ -6,7 +6,7 @@
  * Sends "Hello World\r\n" over UART once per second. The UART core itself uses
  * the alexforencich/verilog-uart AXI-stream wrapper vendored into this tree.
  */
-module penguin_uart_hello_top #
+module PenguinUartHelloTop #
 (
     parameter integer CLK_FREQ_HZ = 100_000_000,
     parameter integer BAUD_RATE = 115200
@@ -62,7 +62,7 @@ module penguin_uart_hello_top #
         end
     endfunction
 
-    uart uart_inst (
+    Uart uart_inst (
         .clock(clock),
         .reset(reset),
         .s_axis_tdata(uart_tx_data_reg),

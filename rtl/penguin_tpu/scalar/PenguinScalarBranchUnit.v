@@ -1,6 +1,6 @@
 `timescale 1ns / 1ps
 
-module penguin_scalar_branch_unit (
+module PenguinScalarBranchUnit (
     input  wire [31:0] pc,
     input  wire [31:0] rs1_value,
     input  wire [31:0] imm32,

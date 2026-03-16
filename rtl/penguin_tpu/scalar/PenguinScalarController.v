@@ -2,7 +2,7 @@
 
 `include "penguin_scalar_defs.vh"
 
-module penguin_scalar_controller #
+module PenguinScalarController #
 (
     parameter [31:0] RESET_PC = 32'd0
 )

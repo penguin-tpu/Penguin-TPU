@@ -32,7 +32,7 @@ THE SOFTWARE.
  * Vendored alongside the transmitter so the combined UART wrapper matches the
  * referenced upstream block.
  */
-module uart_rx #
+module UartRx #
 (
     parameter DATA_WIDTH = 8
 )

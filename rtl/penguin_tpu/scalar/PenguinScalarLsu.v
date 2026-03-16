@@ -1,6 +1,6 @@
 `timescale 1ns / 1ps
 
-module penguin_scalar_lsu (
+module PenguinScalarLsu (
     input  wire [31:0] base_addr,
     input  wire [31:0] store_data,
     input  wire [31:0] imm32,

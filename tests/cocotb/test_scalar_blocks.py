@@ -56,18 +56,18 @@ def _run_cocotb(top_level: str, module: str, verilog_sources: list[Path], *, com
 @pytest.mark.skipif(shutil.which("verilator") is None, reason="verilator not installed")
 def test_scalar_regfile_cocotb() -> None:
     _run_cocotb(
-        "penguin_scalar_regfile",
+        "PenguinScalarRegfile",
         "tb_scalar_regfile",
-        [RTL_DIR / "penguin_scalar_regfile.v"],
+        [RTL_DIR / "PenguinScalarRegfile.v"],
     )
 
 
 @pytest.mark.skipif(shutil.which("verilator") is None, reason="verilator not installed")
 def test_scalar_alu_cocotb() -> None:
     _run_cocotb(
-        "penguin_scalar_alu",
+        "PenguinScalarAlu",
         "tb_scalar_alu",
-        [RTL_DIR / "penguin_scalar_alu.v"],
+        [RTL_DIR / "PenguinScalarAlu.v"],
         compile_args=f"-I{RTL_DIR}",
     )
 
@@ -75,16 +75,16 @@ def test_scalar_alu_cocotb() -> None:
 @pytest.mark.skipif(shutil.which("verilator") is None, reason="verilator not installed")
 def test_scalar_branch_unit_cocotb() -> None:
     _run_cocotb(
-        "penguin_scalar_branch_unit",
+        "PenguinScalarBranchUnit",
         "tb_scalar_branch_unit",
-        [RTL_DIR / "penguin_scalar_branch_unit.v"],
+        [RTL_DIR / "PenguinScalarBranchUnit.v"],
     )
 
 
 @pytest.mark.skipif(shutil.which("verilator") is None, reason="verilator not installed")
 def test_scalar_lsu_cocotb() -> None:
     _run_cocotb(
-        "penguin_scalar_lsu",
+        "PenguinScalarLsu",
         "tb_scalar_lsu",
-        [RTL_DIR / "penguin_scalar_lsu.v"],
+        [RTL_DIR / "PenguinScalarLsu.v"],
     )

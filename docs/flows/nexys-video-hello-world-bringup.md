@@ -9,10 +9,10 @@ As of March 16, 2026, the flow supports multiple bitstream targets and has been
 validated on the connected board for:
 
 - `uart_hello`
-  - top: `penguin_uart_hello_top`
+  - top: `PenguinUartHelloTop`
   - UART output: `Hello World`
 - `scalar_core`
-  - top: `penguin_scalar_uart_hello_top`
+  - top: `PenguinScalarUartHelloTop`
   - UART output: `hello, this is penguin`
 
 Observed environment details during the successful run:
@@ -22,16 +22,13 @@ Observed environment details during the successful run:
 - programmed device: `xc7a200t_0`
 - enumerated USB UART device: `/dev/ttyUSB0`
 
-Observed scalar-core implementation caveat:
+Observed scalar-core implementation note:
 
-- the current checked-in scalar-core top uses a temporary fabric divide-by-2
-  clock path, deriving a 50 MHz internal core/UART/counter clock from the 100
+- the current checked-in scalar-core top now uses a Vivado Clocking Wizard IP
+  instance to derive the 50 MHz internal core/UART/counter clock from the 100
   MHz board clock
-- this is a bring-up measure only; the intended follow-up is to replace it with
-  a proper PLL/MMCM-generated clock
-- with that divide-by-2 path in place, `penguin_scalar_uart_hello_top` now meets
-  timing on the Nexys Video target in Vivado 2024.2
-  (`WNS=8.365 ns`, `TNS=0.000 ns` in the routed timing summary)
+- cocotb/verilator tests compile a local `ClockingWizard` stub so the
+  synthesizable top always follows the same ClockWiz path used by FPGA bring-up
 
 Note: the requested serial device `/dev/ttyUSB2` was not present during this
 run. Only `/dev/ttyUSB0` existed, and that port produced the expected UART
@@ -42,8 +39,9 @@ output.
 - Vivado TCL flow:
   - `scripts/vivado/1_create_project.tcl`
   - `scripts/vivado/2_add_files.tcl`
-  - `scripts/vivado/3_generate_bitstream.tcl`
-  - `scripts/vivado/4_program_device.tcl`
+  - `scripts/vivado/3_generate_vivado_ip.tcl`
+  - `scripts/vivado/4_generate_bitstream.tcl`
+  - `scripts/vivado/5_program_device.tcl`
 - wrapper script:
   - `scripts/vivado/run_fpga_bringup.sh`
   - `scripts/vivado/run_hello_world_bringup.sh` (compatibility wrapper for `uart_hello`)
@@ -76,7 +74,7 @@ The wrapper script:
 - removes the previous `VivadoProject/` by default
 - runs the checked-in Vivado TCL flow in order
 - selects the active top-level from `--target`
-- retries device programming if `4_program_device.tcl` fails intermittently
+- retries device programming if `5_program_device.tcl` fails intermittently
 - validates the UART output with `uv run python`
 - for `uart_hello`, requires two `Hello World` observations with an acceptable
   period window around 1 second
@@ -110,22 +108,28 @@ vivado -mode batch -source scripts/vivado/1_create_project.tcl
 vivado -mode batch -source scripts/vivado/2_add_files.tcl
 ```
 
-3. Generate the bitstream:
+3. Generate the Clocking Wizard IP:
 
 ```bash
-vivado -mode batch -source scripts/vivado/3_generate_bitstream.tcl
+vivado -mode batch -source scripts/vivado/3_generate_vivado_ip.tcl
 ```
 
-4. Program the board:
+4. Generate the bitstream:
 
 ```bash
-vivado -mode batch -source scripts/vivado/4_program_device.tcl
+vivado -mode batch -source scripts/vivado/4_generate_bitstream.tcl
 ```
 
-If step 4 fails intermittently, rerun the same command. The current hardware
+5. Program the board:
+
+```bash
+vivado -mode batch -source scripts/vivado/5_program_device.tcl
+```
+
+If step 5 fails intermittently, rerun the same command. The current hardware
 programming path can be flaky, but a retry is often sufficient.
 
-5. Check the UART output:
+6. Check the UART output:
 
 For `uart_hello`:
 
@@ -179,16 +183,17 @@ hello, this is penguin
 - `scalar_core` continuously emits `hello, this is penguin` with no separator.
 - the current scalar-core FPGA image implements an MMIO cycle counter at
   `0x00000108` and uses that counter in software to hold the message cadence to
-  roughly 1 second between messages on the temporary 50 MHz internal clock
+  roughly 1 second between messages on the generated 50 MHz internal clock
 - observed March 16, 2026 scalar-core hardware intervals between successive
-  detected messages after the divider change were `0.989834 s` and `1.006263 s`
+  detected messages on the 50 MHz internal clock were `0.989834 s` and
+  `1.006263 s`
 
 ## Generated Artifacts
 
 The bitstream is produced at one of:
 
-- `VivadoProject/VivadoProject.runs/impl_1/penguin_uart_hello_top.bit`
-- `VivadoProject/VivadoProject.runs/impl_1/penguin_scalar_uart_hello_top.bit`
+- `VivadoProject/VivadoProject.runs/impl_1/PenguinUartHelloTop.bit`
+- `VivadoProject/VivadoProject.runs/impl_1/PenguinScalarUartHelloTop.bit`
 
 Useful implementation reports are also written under:
 
@@ -196,12 +201,12 @@ Useful implementation reports are also written under:
 
 Key reports include:
 
-- `penguin_uart_hello_top_timing_summary_routed.rpt`
-- `penguin_uart_hello_top_utilization_placed.rpt`
-- `penguin_uart_hello_top_drc_routed.rpt`
-- `penguin_scalar_uart_hello_top_timing_summary_routed.rpt`
-- `penguin_scalar_uart_hello_top_utilization_placed.rpt`
-- `penguin_scalar_uart_hello_top_drc_routed.rpt`
+- `PenguinUartHelloTop_timing_summary_routed.rpt`
+- `PenguinUartHelloTop_utilization_placed.rpt`
+- `PenguinUartHelloTop_drc_routed.rpt`
+- `PenguinScalarUartHelloTop_timing_summary_routed.rpt`
+- `PenguinScalarUartHelloTop_utilization_placed.rpt`
+- `PenguinScalarUartHelloTop_drc_routed.rpt`
 
 ## Notes
 

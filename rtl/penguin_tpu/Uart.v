@@ -31,7 +31,7 @@ THE SOFTWARE.
  *
  * Vendored from the referenced alexforencich/verilog-uart repository.
  */
-module uart #
+module Uart #
 (
     parameter DATA_WIDTH = 8
 )
@@ -74,7 +74,7 @@ module uart #
 
 );
 
-uart_tx #(
+UartTx #(
     .DATA_WIDTH(DATA_WIDTH)
 )
 uart_tx_inst (
@@ -88,7 +88,7 @@ uart_tx_inst (
     .prescale(prescale)
 );
 
-uart_rx #(
+UartRx #(
     .DATA_WIDTH(DATA_WIDTH)
 )
 uart_rx_inst (

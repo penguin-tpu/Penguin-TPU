@@ -1,6 +1,6 @@
 `timescale 1ns / 1ps
 
-module penguin_scalar_regfile (
+module PenguinScalarRegfile (
     input  wire        clock,
     input  wire        reset,
     input  wire [4:0]  rs1_addr,

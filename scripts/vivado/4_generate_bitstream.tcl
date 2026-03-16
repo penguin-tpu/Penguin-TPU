@@ -1,4 +1,23 @@
+if {[info exists ::env(PENGUIN_VIVADO_TARGET)]} {
+    set target_name $::env(PENGUIN_VIVADO_TARGET)
+} else {
+    set target_name "uart_hello"
+}
+
+if {$target_name eq "sclar_core"} {
+    set target_name "scalar_core"
+}
+
+if {$target_name eq "uart_hello"} {
+    set top_name "PenguinUartHelloTop"
+} elseif {$target_name eq "scalar_core"} {
+    set top_name "PenguinScalarUartHelloTop"
+} else {
+    error "unsupported PENGUIN_VIVADO_TARGET '${target_name}'"
+}
+
 open_project /home/tk/Desktop/Penguin-TPU/VivadoProject/VivadoProject.xpr
+set_property top $top_name [get_filesets sources_1]
 
 # Reset synthesis and implementation runs so target/top changes are applied
 set synth_run [get_runs synth_1]

@@ -299,42 +299,42 @@ Suggested first scalar RTL subtree:
 ```text
 rtl/penguin_tpu/scalar/
   penguin_scalar_defs.vh
-  penguin_scalar_decoder.v
-  penguin_scalar_regfile.v
-  penguin_scalar_alu.v
-  penguin_scalar_branch_unit.v
-  penguin_scalar_lsu.v
-  penguin_scalar_controller.v
-  penguin_scalar_core.v
+  PenguinScalarDecoder.v
+  PenguinScalarRegfile.v
+  PenguinScalarAlu.v
+  PenguinScalarBranchUnit.v
+  PenguinScalarLsu.v
+  PenguinScalarController.v
+  PenguinScalarCore.v
 ```
 
 Recommended responsibilities:
 
 - `penguin_scalar_defs.vh`
   - opcode, funct3, funct7, halt-reason, and internal ALU-function constants
-- `penguin_scalar_decoder.v`
+- `PenguinScalarDecoder.v`
   - binary field extraction
   - immediate generation
   - illegal-instruction detection
   - control-record generation
-- `penguin_scalar_regfile.v`
+- `PenguinScalarRegfile.v`
   - 32 x 32-bit scalar register file
   - hardwired `x0`
-- `penguin_scalar_alu.v`
+- `PenguinScalarAlu.v`
   - integer ALU and compare datapath
-- `penguin_scalar_branch_unit.v`
+- `PenguinScalarBranchUnit.v`
   - branch condition evaluation
   - branch/jump target generation
   - alignment checks
-- `penguin_scalar_lsu.v`
+- `PenguinScalarLsu.v`
   - VMEM word load/store interface
   - 4-byte alignment checks
-- `penguin_scalar_controller.v`
+- `PenguinScalarController.v`
   - `pc` sequencing
   - issue/retire sequencing
   - 2-delay-slot redirect bookkeeping
   - halt-status generation
-- `penguin_scalar_core.v`
+- `PenguinScalarCore.v`
   - top-level integration of fetch, decode, execute, and memory interfaces
 
 ## 7. Step-By-Step Implementation Plan
@@ -383,7 +383,7 @@ Exit criteria:
 
 Actions:
 
-- implement `penguin_scalar_decoder.v`
+- implement `PenguinScalarDecoder.v`
 - extract `opcode`, `rd`, `rs1`, `rs2`, `funct3`, `funct7`
 - build sign-extended immediates for I/S/B/U/J formats
 - generate one decoded control record
@@ -404,7 +404,7 @@ Exit criteria:
 
 Actions:
 
-- implement `penguin_scalar_regfile.v`
+- implement `PenguinScalarRegfile.v`
 - provide two read ports and one write port
 - hardwire `x0` to zero
 - ignore writes to `x0`
@@ -421,7 +421,7 @@ Exit criteria:
 
 Actions:
 
-- implement `penguin_scalar_alu.v`
+- implement `PenguinScalarAlu.v`
 - support add/sub, logical ops, shifts, signed and unsigned comparisons
 - support branch compare outputs in a reusable way
 
@@ -437,7 +437,7 @@ Exit criteria:
 
 Actions:
 
-- implement `penguin_scalar_branch_unit.v`
+- implement `PenguinScalarBranchUnit.v`
 - compute:
   - branch-taken result
   - `pc + imm` target
@@ -457,7 +457,7 @@ Exit criteria:
 
 Actions:
 
-- implement redirect-pending state in `penguin_scalar_controller.v`
+- implement redirect-pending state in `PenguinScalarController.v`
 - track:
   - pending redirect valid
   - pending redirect target
@@ -481,7 +481,7 @@ Exit criteria:
 
 Actions:
 
-- implement `penguin_scalar_lsu.v`
+- implement `PenguinScalarLsu.v`
 - support aligned 32-bit word load/store only
 - raise halt status on misaligned load/store
 - initially use a simple blocking memory interface
@@ -515,7 +515,7 @@ Exit criteria:
 
 Actions:
 
-- implement `penguin_scalar_core.v`
+- implement `PenguinScalarCore.v`
 - integrate:
   - IMEM fetch
   - decoder
