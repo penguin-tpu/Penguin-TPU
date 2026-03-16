@@ -12,10 +12,10 @@ module penguin_uart_hello_top #
     parameter integer BAUD_RATE = 115200
 )
 (
-    input  wire clk,
-    input  wire rst,
-    input  wire uart_rxd,
-    output wire uart_txd
+    input  wire sys_clk_i,
+    input  wire cpu_resetn,
+    input  wire uart_tx_in,
+    output wire uart_rx_out
 );
 
     localparam integer HELLO_LEN = 13;
@@ -37,6 +37,8 @@ module penguin_uart_hello_top #
     wire       uart_rx_busy_unused;
     wire       uart_rx_overrun_unused;
     wire       uart_rx_frame_unused;
+    wire       clock = sys_clk_i;
+    wire       reset = !cpu_resetn;
 
     function [7:0] hello_byte;
         input [3:0] index;
@@ -61,16 +63,16 @@ module penguin_uart_hello_top #
     endfunction
 
     uart uart_inst (
-        .clk(clk),
-        .rst(rst),
+        .clock(clock),
+        .reset(reset),
         .s_axis_tdata(uart_tx_data_reg),
         .s_axis_tvalid(uart_tx_valid_reg),
         .s_axis_tready(uart_tx_ready),
         .m_axis_tdata(uart_rx_data_unused),
         .m_axis_tvalid(uart_rx_valid_unused),
         .m_axis_tready(1'b1),
-        .rxd(uart_rxd),
-        .txd(uart_txd),
+        .rxd(uart_tx_in),
+        .txd(uart_rx_out),
         .tx_busy(uart_tx_busy),
         .rx_busy(uart_rx_busy_unused),
         .rx_overrun_error(uart_rx_overrun_unused),
@@ -78,8 +80,8 @@ module penguin_uart_hello_top #
         .prescale(UART_PRESCALE)
     );
 
-    always @(posedge clk) begin
-        if (rst) begin
+    always @(posedge clock) begin
+        if (reset) begin
             second_counter_reg <= 0;
             message_active_reg <= 0;
             message_index_reg <= 0;

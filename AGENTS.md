@@ -75,6 +75,9 @@ For Python coding style, follow the conventions used in
   questions, caveats, and state transitions there.
 - If `SOUL.md` becomes too large, compact it by summarizing stale details and removing
   information that no longer matters.
+- Run Python commands through `uv`, such as `uv run python ...`, `uv run pytest`, or a
+  `uv run` CLI entry point. Do not use bare `python` or `pytest` in this repo unless
+  there is a specific reason not to.
 - If an agent task lasts more than 3 minutes, then after finishing the task, invoke the
   `slackbot` skill to send a short Slack message summarizing what was completed.
 
@@ -164,6 +167,13 @@ penguin-model/
 
 Owns the hardware side. The FPGA flow should reuse the RTL directly. Avoid creating a
 separate hardware architecture layer unless the design grows enough to require it.
+
+RTL naming convention:
+
+- internal module clock ports should be named `clock`
+- internal module reset ports should be named `reset`
+- board- or tool-facing top-level IO may keep platform-specific names when required by
+  FPGA constraints or external integration
 
 Current intended substructure:
 

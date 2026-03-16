@@ -16,17 +16,17 @@ MESSAGE = b"Hello World\r\n"
 
 
 async def read_uart_byte(dut) -> tuple[int, int]:
-    await FallingEdge(dut.uart_txd)
+    await FallingEdge(dut.uart_rx_out)
     start_time_ns = int(get_sim_time("ns"))
 
-    await ClockCycles(dut.clk, UART_BIT_CYCLES + (UART_BIT_CYCLES // 2))
+    await ClockCycles(dut.sys_clk_i, UART_BIT_CYCLES + (UART_BIT_CYCLES // 2))
 
     value = 0
     for bit_index in range(8):
-        value |= int(dut.uart_txd.value) << bit_index
-        await ClockCycles(dut.clk, UART_BIT_CYCLES)
+        value |= int(dut.uart_rx_out.value) << bit_index
+        await ClockCycles(dut.sys_clk_i, UART_BIT_CYCLES)
 
-    stop_bit = int(dut.uart_txd.value)
+    stop_bit = int(dut.uart_rx_out.value)
     assert stop_bit == 1, "UART stop bit must be high"
 
     return start_time_ns, value
@@ -34,13 +34,13 @@ async def read_uart_byte(dut) -> tuple[int, int]:
 
 @cocotb.test()
 async def hello_world_repeats_at_one_hz(dut) -> None:
-    cocotb.start_soon(Clock(dut.clk, CLOCK_PERIOD_NS, units="ns").start())
+    cocotb.start_soon(Clock(dut.sys_clk_i, CLOCK_PERIOD_NS, units="ns").start())
 
-    dut.rst.value = 1
-    dut.uart_rxd.value = 1
+    dut.cpu_resetn.value = 0
+    dut.uart_tx_in.value = 1
 
-    await ClockCycles(dut.clk, 5)
-    dut.rst.value = 0
+    await ClockCycles(dut.sys_clk_i, 5)
+    dut.cpu_resetn.value = 1
 
     first_start_time_ns = None
     decoded = bytearray()

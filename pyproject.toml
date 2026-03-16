@@ -10,6 +10,7 @@ dependencies = [
     "penguin-model",
     "slackbot",
     "json5>=0.13.0",
+    "pyserial>=3.5",
 ]
 
 [dependency-groups]

@@ -462,6 +462,10 @@ specification.
     `alexforencich/verilog-uart` project under the upstream MIT license
   - a new `penguin_uart_hello_top.v` top level that sends `Hello World\r\n`
     once per second over UART
+  - that top level now matches the checked-in Nexys Video constraint naming:
+    `sys_clk_i`, `cpu_resetn`, `uart_tx_in`, and `uart_rx_out`
+  - internal RTL module interfaces now use the repository clock/reset naming
+    convention: `clock` and `reset`
 - the top-level UART path is intentionally simple and parameterized only by
   `CLK_FREQ_HZ` and `BAUD_RATE`; it is meant for first-board bring-up before
   any Penguin core integration
@@ -474,6 +478,18 @@ specification.
   version expected by newer cocotb Verilator integrations
 - GitHub Actions CI now runs RTL regressions in a dedicated `rtl-tests` job that
   installs Verilator on `ubuntu-latest` and executes `pytest tests/cocotb`
+- on March 15, 2026, the checked-in Vivado TCL flow successfully built
+  `penguin_uart_hello_top.bit`, programmed the connected Nexys Video board, and
+  produced `Hello World` over the enumerated USB UART device `/dev/ttyUSB0`
+- added `scripts/vivado/read_uart_hello.py` plus
+  `docs/flows/nexys-video-hello-world-bringup.md` to make FPGA build, program,
+  and UART validation repeatable
+- refined the board bring-up path with
+  `scripts/vivado/run_hello_world_bringup.sh`, which cleans the Vivado project,
+  runs the TCL flow in order, retries FPGA programming, and validates UART
+  output through `uv run python`
+- reran the full wrapper flow successfully on March 15, 2026; clean build,
+  program, and UART validation all passed
 
 Open follow-up for the next FPGA step:
 

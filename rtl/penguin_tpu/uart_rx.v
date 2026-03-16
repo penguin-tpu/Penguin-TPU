@@ -37,8 +37,8 @@ module uart_rx #
     parameter DATA_WIDTH = 8
 )
 (
-    input  wire                   clk,
-    input  wire                   rst,
+    input  wire                   clock,
+    input  wire                   reset,
 
     /*
      * AXI output
@@ -87,8 +87,8 @@ assign busy = busy_reg;
 assign overrun_error = overrun_error_reg;
 assign frame_error = frame_error_reg;
 
-always @(posedge clk) begin
-    if (rst) begin
+always @(posedge clock) begin
+    if (reset) begin
         m_axis_tdata_reg <= 0;
         m_axis_tvalid_reg <= 0;
         rxd_reg <= 1;

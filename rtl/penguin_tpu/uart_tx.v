@@ -37,8 +37,8 @@ module uart_tx #
     parameter DATA_WIDTH = 8
 )
 (
-    input  wire                   clk,
-    input  wire                   rst,
+    input  wire                   clock,
+    input  wire                   reset,
 
     /*
      * AXI input
@@ -80,8 +80,8 @@ assign txd = txd_reg;
 
 assign busy = busy_reg;
 
-always @(posedge clk) begin
-    if (rst) begin
+always @(posedge clock) begin
+    if (reset) begin
         s_axis_tready_reg <= 0;
         txd_reg <= 1;
         prescale_reg <= 0;
