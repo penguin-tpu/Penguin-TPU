@@ -240,13 +240,8 @@ Required binary compatibility points:
 - `sfence` reuses the `fence` encoding shape
 - `secall` and `sebreak` reuse the standard system encodings
 
-The standard RISC-V custom major opcodes remain reserved for future Penguin
-accelerator-specific encodings:
-
-- `custom-0`
-- `custom-1`
-- `custom-2`
-- `custom-3`
+Penguin accelerator instructions shall use the standard RISC-V custom major opcodes.
+Their allocation is defined in Section 8.
 
 ### 7.3 Scalar instruction set
 
@@ -343,53 +338,153 @@ The tensor register file shall support the following architecturally visible vie
 | `FP8_e4m3` | `32` | `64 x 32` |
 | `BF16` | `16` | `64 x 16` |
 
-### 8.2 DMA instructions
+### 8.2 Accelerator binary encoding overview
 
-The DMA instruction family is:
+All accelerator instructions shall use fixed-width `32`-bit words and one of the four
+standard RISC-V custom major opcodes.
 
-- `dma.load.chN rs_dram, rs_vmem, rs_size`
-- `dma.store.chN rs_dram, rs_vmem, rs_size`
-- `dma.wait.chN`
+| Major opcode | Bits `[6:0]` | Family | Baseline instruction families |
+|---|---|---|---|
+| `custom-0` | `0001011` | Memory movement | `dma.*`, `vload`, `vstore`, `mxu.push.*` |
+| `custom-1` | `0101011` | MXU launch | `matmul.*` |
+| `custom-2` | `1011011` | VPU whole-register ops | `vadd`, `vsub`, `vmul`, `vmax`, `vmin`, `vrelu`, `vmov`, `vexp`, `vrecip` |
+| `custom-3` | `1111011` | XLU whole-register ops | `transpose.xlu`, `reduce.max.xlu`, `reduce.sum.xlu` |
+
+### 8.3 Common accelerator field conventions
+
+The accelerator encodings shall follow these common rules:
+
+- scalar `x` registers remain encoded in standard `5`-bit RISC-V register positions
+- tensor `m` registers are architecturally `6` bits wide and therefore use one dedicated
+  high-bit field plus one standard `5`-bit low field
+- reserved bits shall be written as zero by software and shall be treated as illegal if
+  observed nonzero by a conforming implementation
+
+Tensor-register reconstruction rules:
+
+- `m = {m_hi, m_lo}`
+- `m_hi` is the most-significant tensor-register index bit
+- `m_lo` occupies the standard `rd`, `rs1`, or `rs2` field position used by the format
+
+Scaled-immediate rule for VMEM-facing tensor transfers:
+
+- `imm11_32` is a signed `11`-bit immediate encoded in units of `32` bytes
+- the effective byte offset is `sign_extend(imm11_32) << 5`
+- the representable byte-offset range is `[-32768, 32736]`
+- software shall use scalar address-generation instructions when a larger offset is
+  required
+
+Weight-selector rule:
+
+- the baseline architecture has `2` weight slots per MXU
+- `w0` encodes as `0`
+- `w1` encodes as `1`
+
+### 8.4 `custom-0`: DMA and VMEM-facing transfer encodings
+
+`custom-0` is split into two formats:
+
+- `TMEM-I` for `vload`, `vstore`, and `mxu.push.*`
+- `TDMA-R` for `dma.*`
+
+#### 8.4.1 `TMEM-I` format
+
+| Bits | Field | Meaning |
+|---|---|---|
+| `[31]` | `t_hi` | High bit of tensor register index for `vload` / `vstore`; reserved for `mxu.push.*` |
+| `[30:20]` | `imm11_32` | Signed `11`-bit VMEM offset in units of `32` bytes |
+| `[19:15]` | `rs1` | Scalar base register |
+| `[14:12]` | `funct3` | Transfer sub-opcode |
+| `[11:7]` | `t_lo` | Low bits of tensor register index or encoded weight-slot selector |
+| `[6:0]` | `opcode` | `custom-0` = `0001011` |
+
+`TMEM-I` `funct3` assignments:
+
+| `funct3` | Mnemonic family | Operand interpretation |
+|---|---|---|
+| `000` | `vload` | `m = {t_hi, t_lo}` |
+| `001` | `vstore` | `m = {t_hi, t_lo}` |
+| `010` | `mxu.push.mxu0` | `wslot = t_lo[0]`; `t_hi = 0`; `t_lo[4:1] = 0` |
+| `011` | `mxu.push.mxu1` | `wslot = t_lo[0]`; `t_hi = 0`; `t_lo[4:1] = 0` |
+| `100` to `111` | Reserved | Illegal in the baseline |
+
+Architectural rules:
+
+- `vload m<dest>, imm(x<rs1>)` transfers one whole tensor register between `VMEM` and
+  `m<dest>`
+- `vstore m<src>, imm(x<rs1>)` transfers one whole tensor register between `m<src>` and
+  `VMEM`
+- `mxu.push.* w<slot>, imm(x<rs1>)` transfers one whole weight tile from `VMEM` into the
+  selected MXU weight slot
+- the effective address is `x[rs1] + (sign_extend(imm11_32) << 5)`
+- these instructions are blocking
+- the effective VMEM address shall satisfy the `32`-byte alignment rule
+
+#### 8.4.2 `TDMA-R` format
+
+| Bits | Field | Meaning |
+|---|---|---|
+| `[31:29]` | `ch` | DMA channel index |
+| `[28:27]` | `dma_op` | DMA sub-opcode |
+| `[26:25]` | `0` | Reserved, shall be zero |
+| `[24:20]` | `rs_size` | Scalar register holding transfer size in bytes |
+| `[19:15]` | `rs_vmem` | Scalar register holding VMEM byte address |
+| `[14:12]` | `funct3` | `100` for `TDMA-R` |
+| `[11:7]` | `rs_dram` | Scalar register holding DRAM byte address |
+| `[6:0]` | `opcode` | `custom-0` = `0001011` |
+
+`TDMA-R` `dma_op` assignments:
+
+| `dma_op` | Mnemonic family | Operand interpretation |
+|---|---|---|
+| `00` | `dma.load.chN` | `N = ch`; DRAM to VMEM |
+| `01` | `dma.store.chN` | `N = ch`; VMEM to DRAM |
+| `10` | `dma.wait.chN` | `N = ch`; `rs_dram = rs_vmem = rs_size = 0` |
+| `11` | Reserved | Illegal in the baseline |
 
 Architectural rules:
 
 - `N` shall be one of `0` through `7`
+- `dma.load.chN rs_dram, rs_vmem, rs_size` launches a `DRAM -> VMEM` transfer
+- `dma.store.chN rs_dram, rs_vmem, rs_size` launches a `VMEM -> DRAM` transfer
+- `dma.wait.chN` waits only on the selected channel
 - the channel must be idle before a new `dma.load` or `dma.store` is issued
 - DMA moves raw unit-stride bytes only
 - completion order across channels is not ordered by issue order
 - `dma.wait.chN` completes immediately if the channel is already idle
 
-### 8.3 VMEM-facing tensor transfer instructions
+### 8.5 `custom-1`: MXU launch encodings
 
-The VMEM-facing tensor transfer family is:
+`custom-1` carries the MXU launch family in one `TMXU-R` format.
 
-- `vload m<dest>, imm(x<rs1>)`
-- `vstore m<src>, imm(x<rs1>)`
-- `mxu.push.mxu0 w<slot>, imm(x<rs1>)`
-- `mxu.push.mxu1 w<slot>, imm(x<rs1>)`
+#### 8.5.1 `TMXU-R` format
+
+| Bits | Field | Meaning |
+|---|---|---|
+| `[31]` | `md_hi` | High bit of destination tensor register |
+| `[30]` | `ms_hi` | High bit of activation-source tensor register |
+| `[29]` | `mp_hi` | High bit of partial-sum tensor register for accumulate form; zero otherwise |
+| `[28]` | `mxu` | MXU selector: `0` for `mxu0`, `1` for `mxu1` |
+| `[27]` | `wslot` | Weight-slot selector: `0` for `w0`, `1` for `w1` |
+| `[26:25]` | `0` | Reserved, shall be zero |
+| `[24:20]` | `mp_lo` | Low bits of partial-sum tensor register for accumulate form; zero otherwise |
+| `[19:15]` | `ms_lo` | Low bits of activation-source tensor register |
+| `[14:12]` | `funct3` | MXU sub-opcode |
+| `[11:7]` | `md_lo` | Low bits of destination tensor register |
+| `[6:0]` | `opcode` | `custom-1` = `0101011` |
+
+`TMXU-R` `funct3` assignments:
+
+| `funct3` | Meaning | Architectural mnemonic |
+|---|---|---|
+| `000` | Fresh matmul; `mp_hi = 0`, `mp_lo = 0` | `matmul.mxu<mxu> m<dest>, m<src>, w<wslot>` |
+| `001` | Matmul with explicit partial accumulation | `matmul.add.mxu<mxu> m<dest>, m<src>, w<wslot>, m<partial>` |
+| `010` to `111` | Reserved | Illegal in the baseline |
 
 Architectural rules:
 
-- `vload` transfers one whole tensor register between `VMEM` and `m<dest>`
-- `vstore` transfers one whole tensor register between `m<src>` and `VMEM`
-- `mxu.push.*` transfers one whole weight tile from `VMEM` into the selected MXU weight
-  slot
-- these instructions are blocking
-- the VMEM address must satisfy the `32`-byte alignment requirement
-
-### 8.4 MXU instructions
-
-The MXU baseline instruction floor is:
-
-- `matmul.mxu0 m<dest>, m<src>, w<src>`
-- `matmul.add.mxu0 m<dest>, m<src>, w<src>, m<partial>`
-- `matmul.mxu1 m<dest>, m<src>, w<src>`
-- `matmul.add.mxu1 m<dest>, m<src>, w<src>, m<partial>`
-
-Architectural MXU rules:
-
 - `m<src>` supplies activation operand `A`
-- `w<src>` selects weight operand `B`
+- `w<wslot>` selects weight operand `B`
 - `m<partial>` supplies the prior partial-sum tile when the accumulate form is used
 - the fresh form computes `C = A @ B`
 - the accumulate form computes `C = (A @ B) + partial`
@@ -398,41 +493,93 @@ Architectural MXU rules:
 - MXU is pure matmul/accumulate only; bias, residual, activation, and other tensor
   postprocessing are separate instructions
 
-### 8.5 VPU instructions
+### 8.6 `custom-2`: VPU whole-register encodings
 
-The initial VPU opcode floor is:
+`custom-2` carries the VPU family in one `TVEC-R` format.
 
-- `vadd`
-- `vsub`
-- `vmul`
-- `vmax`
-- `vmin`
-- `vrelu`
-- `vmov`
-- `vexp`
-- `vrecip`
+#### 8.6.1 `TVEC-R` format
 
-Architectural VPU rules:
+| Bits | Field | Meaning |
+|---|---|---|
+| `[31]` | `md_hi` | High bit of destination tensor register |
+| `[30]` | `ms1_hi` | High bit of first source tensor register |
+| `[29]` | `ms2_hi` | High bit of second source tensor register for binary form; zero otherwise |
+| `[28:25]` | `vec_op` | VPU operation selector |
+| `[24:20]` | `ms2_lo` | Low bits of second source tensor register for binary form; zero otherwise |
+| `[19:15]` | `ms1_lo` | Low bits of first source tensor register |
+| `[14:12]` | `funct3` | VPU form selector |
+| `[11:7]` | `md_lo` | Low bits of destination tensor register |
+| `[6:0]` | `opcode` | `custom-2` = `1011011` |
+
+`TVEC-R` `funct3` assignments:
+
+| `funct3` | Meaning |
+|---|---|
+| `000` | Binary whole-register VPU operation |
+| `001` | Unary whole-register VPU operation |
+| `010` to `111` | Reserved and illegal in the baseline |
+
+Binary `vec_op` assignments (`funct3 = 000`):
+
+| `vec_op` | Mnemonic |
+|---|---|
+| `0000` | `vadd` |
+| `0001` | `vsub` |
+| `0010` | `vmul` |
+| `0011` | `vmax` |
+| `0100` | `vmin` |
+| `0101` to `1111` | Reserved |
+
+Unary `vec_op` assignments (`funct3 = 001`):
+
+| `vec_op` | Mnemonic |
+|---|---|
+| `0000` | `vmov` |
+| `0001` | `vrelu` |
+| `0010` | `vexp` |
+| `0011` | `vrecip` |
+| `0100` to `1111` | Reserved |
+
+Architectural rules:
 
 - VPU reads tensor operands from `m` registers
 - VPU writes tensor results to `m` registers only
 - VPU operates on whole tensor registers only
 - the initial floating-point VPU view is BF16 over the `64 x 16` interpretation
+- unary forms shall encode `ms2_hi = 0` and `ms2_lo = 0`
 
-### 8.6 XLU instructions
+### 8.7 `custom-3`: XLU whole-register encodings
 
-The initial XLU opcode floor is:
+`custom-3` carries the XLU family in one `TXLU-R` format.
 
-- `transpose.xlu m<dest>, m<src>`
-- `reduce.max.xlu m<dest>, m<src>`
-- `reduce.sum.xlu m<dest>, m<src>`
+#### 8.7.1 `TXLU-R` format
 
-Architectural XLU rules:
+| Bits | Field | Meaning |
+|---|---|---|
+| `[31]` | `md_hi` | High bit of destination tensor register |
+| `[30]` | `ms_hi` | High bit of source tensor register |
+| `[29:25]` | `xlu_op` | XLU operation selector |
+| `[24:20]` | `0` | Reserved, shall be zero |
+| `[19:15]` | `ms_lo` | Low bits of source tensor register |
+| `[14:12]` | `funct3` | `000` in the baseline |
+| `[11:7]` | `md_lo` | Low bits of destination tensor register |
+| `[6:0]` | `opcode` | `custom-3` = `1111011` |
+
+`TXLU-R` `xlu_op` assignments:
+
+| `xlu_op` | Mnemonic |
+|---|---|
+| `00000` | `transpose.xlu` |
+| `00001` | `reduce.max.xlu` |
+| `00010` | `reduce.sum.xlu` |
+| `00011` to `11111` | Reserved |
+
+Architectural rules:
 
 - XLU reads tensor operands from `m` registers
 - XLU writes tensor results to `m` registers only
 - XLU operates on whole tensor registers only
-- the initial transpose view is BF16 over the `64 x 16` interpretation
+- the initial transpose and reduction view is BF16 over the `64 x 16` interpretation
 
 ## 9. Frozen Architectural Constants
 

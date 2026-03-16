@@ -170,6 +170,26 @@ Minimum decode outputs:
 The decode stage should classify standard RISC-V custom major opcodes distinctly from
 fully illegal encodings to preserve future accelerator-extension space.
 
+The accelerator decode path shall recognize the baseline custom-opcode allocation defined
+by the architecture specification:
+
+- `custom-0` for DMA and VMEM-facing tensor transfers
+- `custom-1` for MXU launch instructions
+- `custom-2` for VPU whole-register instructions
+- `custom-3` for XLU whole-register instructions
+
+Minimum accelerator decode outputs:
+
+- accelerator family
+- reconstructed `6`-bit tensor-register operands where present
+- reconstructed weight-slot selector where present
+- reconstructed DMA channel selector where present
+- reconstructed scaled VMEM immediate where present
+- legality classification for reserved-bit and reserved-subopcode violations
+
+The baseline decode implementation shall treat any nonzero reserved field in the
+accelerator encodings as illegal rather than silently ignored.
+
 ### 5.2 Scalar execution blocks
 
 The intended first scalar implementation slice is partitioned into:

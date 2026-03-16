@@ -38,6 +38,8 @@ What exists now:
 - the formal spec set is now consolidated into two production-style documents:
   - [architecture-spec.md](/home/tk/Desktop/Penguin-TPU/docs/specs/architecture-spec.md)
   - [microarchitecture-spec.md](/home/tk/Desktop/Penguin-TPU/docs/specs/microarchitecture-spec.md)
+  - `architecture-spec.md` now also carries a first concrete tensor/DMA custom-opcode
+    encoding draft aligned to the scalar RV32I-style field-discipline approach
 - fixed-shape Gemma-inspired examples now exist under `examples/` and run as staged
   executable-package flows over checked-in tensor assembly:
   - `examples/gemma_attention.py`
