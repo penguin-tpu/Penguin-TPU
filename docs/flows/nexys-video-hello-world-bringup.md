@@ -1,18 +1,19 @@
-# Nexys Video Hello-World Bring-Up
+# Nexys Video FPGA Bring-Up
 
-This document records the current FPGA bring-up flow for the minimal UART
-hello-world design on the Digilent Nexys Video board.
+This document records the current FPGA bring-up flow for the checked-in Nexys
+Video targets on the Digilent Nexys Video board.
 
 ## Status
 
-As of March 15, 2026, the flow completed successfully on the connected board,
-including a rerun through the wrapper script:
+As of March 16, 2026, the flow supports multiple bitstream targets and has been
+validated on the connected board for:
 
-- Vivado project creation succeeded
-- synthesis, implementation, and bitstream generation succeeded
-- FPGA programming succeeded
-- the board emitted `Hello World` over the USB UART connection at 115200 baud
-- the wrapper script `scripts/vivado/run_hello_world_bringup.sh` also passed
+- `uart_hello`
+  - top: `penguin_uart_hello_top`
+  - UART output: `Hello World`
+- `scalar_core`
+  - top: `penguin_scalar_uart_hello_top`
+  - UART output: `hello, this is penguin`
 
 Observed environment details during the successful run:
 
@@ -20,6 +21,14 @@ Observed environment details during the successful run:
 - target part: `xc7a200tsbg484-1`
 - programmed device: `xc7a200t_0`
 - enumerated USB UART device: `/dev/ttyUSB0`
+
+Observed scalar-core implementation caveat:
+
+- `penguin_scalar_uart_hello_top` currently routes and programs successfully,
+  but does not meet timing on the Nexys Video target in Vivado 2024.2
+  (`WNS=-2.787 ns`, `TNS=-2266.791 ns` in the routed timing summary)
+- despite the timing violation, the programmed board still emitted the expected
+  repeating UART string during the March 16, 2026 validation run
 
 Note: the requested serial device `/dev/ttyUSB2` was not present during this
 run. Only `/dev/ttyUSB0` existed, and that port produced the expected UART
@@ -33,8 +42,14 @@ output.
   - `scripts/vivado/3_generate_bitstream.tcl`
   - `scripts/vivado/4_program_device.tcl`
 - wrapper script:
-  - `scripts/vivado/run_hello_world_bringup.sh`
+  - `scripts/vivado/run_fpga_bringup.sh`
+  - `scripts/vivado/run_hello_world_bringup.sh` (compatibility wrapper for `uart_hello`)
+- target names:
+  - `uart_hello`
+  - `scalar_core`
+  - `sclar_core` (accepted as an alias for `scalar_core`)
 - UART validation helper:
+  - `scripts/vivado/run_fpga_bringup.sh`
   - `scripts/vivado/read_uart_hello.py`
 
 ## Run Procedure
@@ -44,18 +59,32 @@ Run all commands from the repository root.
 Preferred path:
 
 ```bash
-bash scripts/vivado/run_hello_world_bringup.sh --port /dev/ttyUSB0
+bash scripts/vivado/run_fpga_bringup.sh --target uart_hello --port /dev/ttyUSB0
+```
+
+For the scalar-core target:
+
+```bash
+bash scripts/vivado/run_fpga_bringup.sh --target scalar_core --port /dev/ttyUSB0
 ```
 
 The wrapper script:
 
 - removes the previous `VivadoProject/` by default
 - runs the checked-in Vivado TCL flow in order
+- selects the active top-level from `--target`
 - retries device programming if `4_program_device.tcl` fails intermittently
 - validates the UART output with `uv run python`
 
+The retry path is not theoretical. During the March 16, 2026 `scalar_core`
+board run, the first `open_hw_target` attempt failed with "No devices
+detected", and the second programming attempt succeeded without changing the
+bitstream or the cable setup.
+
 Optional flags:
 
+- `--target uart_hello`
+- `--target scalar_core`
 - `--skip-clean`
 - `--port /dev/ttyUSBX`
 - `--baud 115200`
@@ -93,6 +122,8 @@ programming path can be flaky, but a retry is often sufficient.
 
 5. Check the UART output:
 
+For `uart_hello`:
+
 ```bash
 uv run python scripts/vivado/read_uart_hello.py \
   --port /dev/ttyUSB0 \
@@ -101,25 +132,37 @@ uv run python scripts/vivado/read_uart_hello.py \
   --expect "Hello World"
 ```
 
+For `scalar_core`:
+
+```bash
+uv run python scripts/vivado/read_uart_hello.py \
+  --port /dev/ttyUSB0 \
+  --baud 115200 \
+  --timeout 6 \
+  --expect "hello, this is penguin"
+```
+
 If the board enumerates on a different device node, replace `/dev/ttyUSB0`
 with the correct path.
 
 ## Expected Result
 
-The serial terminal should show repeating output similar to:
+The serial terminal should show target-dependent output:
 
 ```text
 Hello World
-Hello World
+hello, this is penguin
 ```
 
-The RTL currently emits `Hello World\r\n` once per second.
+- `uart_hello` emits `Hello World\r\n` once per second.
+- `scalar_core` continuously emits `hello, this is penguin` with no separator.
 
 ## Generated Artifacts
 
-The bitstream is produced at:
+The bitstream is produced at one of:
 
-`VivadoProject/VivadoProject.runs/impl_1/penguin_uart_hello_top.bit`
+- `VivadoProject/VivadoProject.runs/impl_1/penguin_uart_hello_top.bit`
+- `VivadoProject/VivadoProject.runs/impl_1/penguin_scalar_uart_hello_top.bit`
 
 Useful implementation reports are also written under:
 
@@ -130,6 +173,9 @@ Key reports include:
 - `penguin_uart_hello_top_timing_summary_routed.rpt`
 - `penguin_uart_hello_top_utilization_placed.rpt`
 - `penguin_uart_hello_top_drc_routed.rpt`
+- `penguin_scalar_uart_hello_top_timing_summary_routed.rpt`
+- `penguin_scalar_uart_hello_top_utilization_placed.rpt`
+- `penguin_scalar_uart_hello_top_drc_routed.rpt`
 
 ## Notes
 
@@ -139,3 +185,5 @@ Key reports include:
   `clock` and `reset`.
 - Python-side UART validation in this repo should be run through `uv`, not bare
   `python`.
+- The scalar-core target is functionally working on the board, but timing
+  closure remains open and should be treated as the next hardware-quality task.

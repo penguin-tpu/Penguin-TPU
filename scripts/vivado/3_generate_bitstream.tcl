@@ -1,5 +1,12 @@
 open_project /home/tk/Desktop/Penguin-TPU/VivadoProject/VivadoProject.xpr
 
+# Reset synthesis and implementation runs so target/top changes are applied
+set synth_run [get_runs synth_1]
+set synth_status [string tolower [get_property STATUS $synth_run]]
+if { $synth_status ne "notstarted" && $synth_status ne "running" } {
+    reset_run synth_1
+}
+
 # Get the impl_1 run object and its current status
 set impl_run [get_runs impl_1]
 set impl_status [string tolower [get_property STATUS $impl_run]]

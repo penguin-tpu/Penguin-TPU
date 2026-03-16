@@ -512,3 +512,70 @@ Open follow-up for the next FPGA step:
     scalar RTL slice structure
   - `scalar-functional-subset.md` no longer treats the scalar binary layer as
     undefined
+
+## Scalar RTL First Implementation
+
+- implemented the first scalar RTL subtree under `rtl/penguin_tpu/scalar/`:
+  - `penguin_scalar_defs.vh`
+  - `penguin_scalar_decoder.v`
+  - `penguin_scalar_regfile.v`
+  - `penguin_scalar_alu.v`
+  - `penguin_scalar_branch_unit.v`
+  - `penguin_scalar_lsu.v`
+  - `penguin_scalar_controller.v`
+  - `penguin_scalar_core.v`
+- added `penguin_model.scalar_encoding.encode_scalar_instruction()` so the
+  software side can produce RV32I-compatible scalar machine words for RTL tests
+- validated the implementation incrementally:
+  - Python unit tests for scalar encoding
+  - cocotb regression for the standalone decoder
+  - cocotb regressions for regfile, ALU, branch unit, and LSU
+  - cocotb regression for the integrated scalar core covering arithmetic,
+    load/store, 2-delay-slot jumps, younger control-transfer override, and
+    misaligned-load halt behavior
+- added a first scalar-core UART-MMIO top level:
+  - `rtl/penguin_tpu/penguin_scalar_uart_hello_top.v`
+  - this instantiates the scalar core, embeds a checked-in program ROM, exposes
+    a tiny UART MMIO block, and prints `hello, this is penguin`
+- added the corresponding checked-in assembly source:
+  - `tests/vectors/programs/scalar/rtl/uart_mmio_hello.S`
+- added a generated ROM init include derived from that assembly:
+  - `rtl/penguin_tpu/scalar/penguin_scalar_uart_hello_program_init.vh`
+- end-to-end cocotb regression now proves that the scalar core can write to the
+  UART through MMIO and emit the target string
+- adjusted the checked-in UART-MMIO hello program so the scalar-core FPGA target
+  loops forever instead of printing once and halting; this makes post-program
+  serial attachment reliable during board validation
+
+## Multi-Target FPGA Bring-Up
+
+- generalized the Vivado bring-up wrapper to
+  `scripts/vivado/run_fpga_bringup.sh`
+- the wrapper now supports:
+  - `--target uart_hello`
+  - `--target scalar_core`
+  - `sclar_core` as a compatibility alias for `scalar_core`
+- `scripts/vivado/2_add_files.tcl` now selects the synthesis top from
+  `PENGUIN_VIVADO_TARGET` and includes both board targets plus the scalar-core
+  RTL source set
+- `scripts/vivado/4_program_device.tcl` now derives the bitstream path from the
+  active project top instead of assuming a single fixed design
+- `scripts/vivado/run_hello_world_bringup.sh` now acts as a compatibility
+  wrapper around the new multi-target script
+- reran the full board flow for `scalar_core` on March 16, 2026:
+  - first hardware-programming attempt failed at `open_hw_target` with Vivado's
+    intermittent "No devices detected" error
+  - the wrapper retry path succeeded on the second programming attempt without
+    changing the board setup
+  - UART validation on `/dev/ttyUSB0` succeeded and captured repeated
+    `hello, this is penguin`
+  - the routed bitstream is therefore functionally usable on the board
+- current scalar-core FPGA caveat:
+  - Vivado 2024.2 still reports negative routed timing on
+    `penguin_scalar_uart_hello_top`
+  - routed timing summary from the successful board-tested build:
+    - `WNS=-2.787 ns`
+    - `TNS=-2266.791 ns`
+  - functional board validation passed despite the timing violation, so timing
+    closure remains the next hardware-quality issue rather than basic
+    functionality
