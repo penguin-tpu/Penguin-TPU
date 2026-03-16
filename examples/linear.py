@@ -15,7 +15,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--trace",
         type=Path,
-        default=Path("examples/out/linear_trace.json"),
+        default=Path("outputs/examples/linear_trace.json"),
         help="Path to the Perfetto-compatible JSON trace output.",
     )
     parser.add_argument(

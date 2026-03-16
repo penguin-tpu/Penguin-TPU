@@ -16,7 +16,9 @@ sidecar and that the recorded program size matches the assembled instruction str
 - `tensor/` contains tensor/MXU programs used by tests and examples.
 - `directed/`, `workloads/`, `performance/`, and `model/` split the programs by test
   purpose.
-- `examples/` holds runnable example programs consumed outside the test suite.
+- `examples/` holds runnable example programs consumed outside the test suite, including
+  the fixed-shape Gemma stage programs used to assemble staged executable bundles for
+  attention, MLP, and decoder-block examples.
 
 Regenerate the scalar sources with:
 

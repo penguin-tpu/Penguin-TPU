@@ -1,11 +1,11 @@
 {
-  "symbols": {
-    "program": {
-      "kind": "program",
-      "region": "imem",
-      "address": 0x00100000,
-      "size_bytes": 28,
-      "file": "trace_dma_flow.S",
+  symbols: {
+    program: {
+      kind: "program",
+      region: "imem",
+      address: 0x00100000,
+      size_bytes: 28,
+      file: "trace_dma_flow.S",
     },
   },
 }

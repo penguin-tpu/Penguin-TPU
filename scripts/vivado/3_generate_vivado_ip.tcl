@@ -1,5 +1,9 @@
 open_project /home/tk/Desktop/Penguin-TPU/VivadoProject/VivadoProject.xpr
 
+# ==============================================================================
+# Clocking Wizard IP
+# ==============================================================================
+
 if {[llength [get_ips -quiet ClockingWizard]] == 0} {
     create_ip -name clk_wiz -vendor xilinx.com -library ip -version 6.0 -module_name ClockingWizard
 }
@@ -22,6 +26,38 @@ set clock_wiz_xci [get_files /home/tk/Desktop/Penguin-TPU/VivadoProject/VivadoPr
 
 generate_target {instantiation_template} $clock_wiz_xci
 generate_target all $clock_wiz_xci
+
+
+# ==============================================================================
+# Floating Point IP
+# ==============================================================================
+
+create_ip -name floating_point -vendor xilinx.com -library ip -version 7.1 -module_name Bf16Adder
+set_property -dict [list \
+  CONFIG.A_Precision_Type {Custom} \
+  CONFIG.Add_Sub_Value {Add} \
+  CONFIG.C_A_Exponent_Width {8} \
+  CONFIG.C_A_Fraction_Width {8} \
+  CONFIG.C_Accum_Input_Msb {7} \
+  CONFIG.C_Accum_Lsb {-9} \
+  CONFIG.C_Accum_Msb {32} \
+  CONFIG.C_Latency {8} \
+  CONFIG.C_Mult_Usage {No_Usage} \
+  CONFIG.C_Rate {1} \
+  CONFIG.C_Result_Exponent_Width {8} \
+  CONFIG.C_Result_Fraction_Width {8} \
+  CONFIG.Flow_Control {NonBlocking} \
+  CONFIG.Has_RESULT_TREADY {false} \
+  CONFIG.Maximum_Latency {false} \
+  CONFIG.Result_Precision_Type {Custom} \
+] [get_ips Bf16Adder]
+
+generate_target {instantiation_template} [get_files /home/tk/Desktop/Penguin-TPU/VivadoProject/VivadoProject.srcs/sources_1/ip/Bf16Adder/Bf16Adder.xci]
+generate_target all [get_files  /home/tk/Desktop/Penguin-TPU/VivadoProject/VivadoProject.srcs/sources_1/ip/Bf16Adder/Bf16Adder.xci]
+
+
+# Update Compile Order
+
 update_compile_order -fileset sources_1
 
 close_project

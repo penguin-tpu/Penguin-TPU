@@ -128,6 +128,14 @@ class VPUUnaryType:
     ms: int
 
 
+@dataclass(frozen=True, slots=True)
+class XLUTransposeType:
+    """Whole-register transpose form: dest tensor, source tensor."""
+
+    md: int
+    ms: int
+
+
 InstructionParams: TypeAlias = (
     RType
     | IType
@@ -143,6 +151,7 @@ InstructionParams: TypeAlias = (
     | MXUMatmulAccType
     | VPUBinaryType
     | VPUUnaryType
+    | XLUTransposeType
 )
 
 InstructionFn: TypeAlias = Callable[[ArchState, InstructionParams], None]
@@ -217,6 +226,7 @@ __all__ = [
     "TENSOR_INSTRUCTION_SPECS",
     "TensorMemType",
     "UType",
+    "XLUTransposeType",
     "VPUBinaryType",
     "VPUUnaryType",
     "WeightMemType",

@@ -18,6 +18,7 @@ from .instructions import (
     SType,
     TensorMemType,
     UType,
+    XLUTransposeType,
     VPUBinaryType,
     VPUUnaryType,
     WeightMemType,
@@ -28,13 +29,21 @@ from .tensor import (
     MATMUL_LATENCY_CYCLES,
     MXU_PUSH_LATENCY_CYCLES,
     VLOAD_LATENCY_CYCLES,
+    VPU_NON_PIPELINEABLE_OP_LATENCY_CYCLES,
     VPU_SIMPLE_OP_LATENCY_CYCLES,
     VSTORE_LATENCY_CYCLES,
+    XLU_TRANSPOSE_LATENCY_CYCLES,
+    compute_bf16_transpose,
     compute_bf16_matmul,
+    compute_bf16_row_reduce_max,
+    compute_bf16_row_reduce_sum,
     compute_bf16_vadd,
+    compute_bf16_vexp,
     compute_bf16_vmax,
     compute_bf16_vmin,
     compute_bf16_vmov,
+    compute_bf16_vrecip,
+    compute_bf16_vsub,
     compute_bf16_vmul,
     compute_bf16_vrelu,
 )
@@ -342,6 +351,13 @@ def _apply_vpu_simple_latency(state: ArchState) -> None:
     )
 
 
+def _apply_vpu_non_pipelineable_latency(state: ArchState) -> None:
+    state.instruction_extra_cycles = (
+        state.config.vpu.non_pipelineable_op_latency_cycles
+        - VPU_NON_PIPELINEABLE_OP_LATENCY_CYCLES
+    )
+
+
 def _vpu_binary_result(
     state: ArchState,
     params: VPUBinaryType,
@@ -357,10 +373,21 @@ def _vpu_unary_result(
     state: ArchState,
     params: VPUUnaryType,
     op: Callable[[object], object],
+    *,
+    non_pipelineable: bool = False,
 ) -> None:
     src = state.load_mreg(params.ms)
-    _apply_vpu_simple_latency(state)
+    if non_pipelineable:
+        _apply_vpu_non_pipelineable_latency(state)
+    else:
+        _apply_vpu_simple_latency(state)
     state.store_mreg(params.md, op(src))
+
+
+def _apply_xlu_transpose_latency(state: ArchState) -> None:
+    state.instruction_extra_cycles = (
+        state.config.xlu_transpose_latency_cycles - XLU_TRANSPOSE_LATENCY_CYCLES
+    )
 
 
 @instruction(
@@ -438,6 +465,16 @@ def vmul(state: ArchState, params: VPUBinaryType) -> None:
 
 
 @instruction(
+    mnemonic="vsub",
+    params_type=VPUBinaryType,
+    latency=VPU_SIMPLE_OP_LATENCY_CYCLES,
+    registry=TENSOR_INSTRUCTION_SPECS,
+)
+def vsub(state: ArchState, params: VPUBinaryType) -> None:
+    _vpu_binary_result(state, params, lambda lhs, rhs: compute_bf16_vsub(lhs, rhs, config=state.config))
+
+
+@instruction(
     mnemonic="vmax",
     params_type=VPUBinaryType,
     latency=VPU_SIMPLE_OP_LATENCY_CYCLES,
@@ -475,6 +512,72 @@ def vrelu(state: ArchState, params: VPUUnaryType) -> None:
 )
 def vmov(state: ArchState, params: VPUUnaryType) -> None:
     _vpu_unary_result(state, params, lambda src: compute_bf16_vmov(src, config=state.config))
+
+
+@instruction(
+    mnemonic="vexp",
+    params_type=VPUUnaryType,
+    latency=VPU_NON_PIPELINEABLE_OP_LATENCY_CYCLES,
+    registry=TENSOR_INSTRUCTION_SPECS,
+)
+def vexp(state: ArchState, params: VPUUnaryType) -> None:
+    _vpu_unary_result(
+        state,
+        params,
+        lambda src: compute_bf16_vexp(src, config=state.config),
+        non_pipelineable=True,
+    )
+
+
+@instruction(
+    mnemonic="vrecip",
+    params_type=VPUUnaryType,
+    latency=VPU_NON_PIPELINEABLE_OP_LATENCY_CYCLES,
+    registry=TENSOR_INSTRUCTION_SPECS,
+)
+def vrecip(state: ArchState, params: VPUUnaryType) -> None:
+    _vpu_unary_result(
+        state,
+        params,
+        lambda src: compute_bf16_vrecip(src, config=state.config),
+        non_pipelineable=True,
+    )
+
+
+@instruction(
+    mnemonic="transpose.xlu",
+    params_type=XLUTransposeType,
+    latency=XLU_TRANSPOSE_LATENCY_CYCLES,
+    registry=TENSOR_INSTRUCTION_SPECS,
+)
+def transpose_xlu(state: ArchState, params: XLUTransposeType) -> None:
+    src = state.load_mreg(params.ms)
+    _apply_xlu_transpose_latency(state)
+    state.store_mreg(params.md, compute_bf16_transpose(src, config=state.config))
+
+
+@instruction(
+    mnemonic="reduce.max.xlu",
+    params_type=XLUTransposeType,
+    latency=XLU_TRANSPOSE_LATENCY_CYCLES,
+    registry=TENSOR_INSTRUCTION_SPECS,
+)
+def reduce_max_xlu(state: ArchState, params: XLUTransposeType) -> None:
+    src = state.load_mreg(params.ms)
+    _apply_xlu_transpose_latency(state)
+    state.store_mreg(params.md, compute_bf16_row_reduce_max(src, config=state.config))
+
+
+@instruction(
+    mnemonic="reduce.sum.xlu",
+    params_type=XLUTransposeType,
+    latency=XLU_TRANSPOSE_LATENCY_CYCLES,
+    registry=TENSOR_INSTRUCTION_SPECS,
+)
+def reduce_sum_xlu(state: ArchState, params: XLUTransposeType) -> None:
+    src = state.load_mreg(params.ms)
+    _apply_xlu_transpose_latency(state)
+    state.store_mreg(params.md, compute_bf16_row_reduce_sum(src, config=state.config))
 
 
 # DMA channel 0

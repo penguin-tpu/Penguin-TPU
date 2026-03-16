@@ -156,6 +156,14 @@ class VPUConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class XLUConfig:
+    """Cross-lane transpose-unit timing configuration."""
+
+    transpose_latency_cycles: int = 4
+    """The modeled latency of one whole-register transpose operation in core cycles."""
+
+
+@dataclass(frozen=True, slots=True)
 class BandwidthConfig:
     """Interconnect-width and serialization timing parameters."""
 
@@ -230,6 +238,9 @@ class PenguinCoreConfig:
     vpu: VPUConfig = field(default_factory=VPUConfig)
     """The VPU timing configuration."""
 
+    xlu: XLUConfig = field(default_factory=XLUConfig)
+    """The XLU timing configuration."""
+
     bandwidth: BandwidthConfig = field(default_factory=BandwidthConfig)
     """The interconnect bandwidth and serialization configuration."""
 
@@ -265,6 +276,8 @@ class PenguinCoreConfig:
             raise ValueError("vpu.simple_op_latency_cycles must be positive")
         if self.vpu.non_pipelineable_op_latency_cycles <= 0:
             raise ValueError("vpu.non_pipelineable_op_latency_cycles must be positive")
+        if self.xlu.transpose_latency_cycles <= 0:
+            raise ValueError("xlu.transpose_latency_cycles must be positive")
         if self.bandwidth.offchip_link_width_bits <= 0 or self.bandwidth.offchip_link_width_bits % 8 != 0:
             raise ValueError(
                 "bandwidth.offchip_link_width_bits must be a positive multiple of 8"
@@ -343,6 +356,12 @@ class PenguinCoreConfig:
 
         return self.vpu.non_pipelineable_op_latency_cycles
 
+    @property
+    def xlu_transpose_latency_cycles(self) -> int:
+        """Modeled latency of one `transpose.xlu` instruction in core cycles."""
+
+        return self.xlu.transpose_latency_cycles
+
     def dma_offchip_cycles(self, payload_bytes: int) -> int:
         """Compute the off-chip serialized-link time for one DMA payload."""
 
@@ -408,5 +427,6 @@ __all__ = [
     "ScalarCoreConfig",
     "TensorCoreConfig",
     "TraceConfig",
+    "XLUConfig",
     "VPUConfig",
 ]

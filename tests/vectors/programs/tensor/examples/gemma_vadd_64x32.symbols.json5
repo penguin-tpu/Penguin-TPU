@@ -1,0 +1,29 @@
+{
+  symbols: {
+    lhs: {
+      kind: "input",
+      region: "vmem",
+      address: 0x08000000,
+      size_bytes: 4096,
+    },
+    output: {
+      kind: "output",
+      region: "vmem",
+      address: 0x08002000,
+      size_bytes: 4096,
+    },
+    program: {
+      kind: "program",
+      region: "imem",
+      address: 0x00100000,
+      size_bytes: 180,
+      file: "gemma_vadd_64x32.S",
+    },
+    rhs: {
+      kind: "input",
+      region: "vmem",
+      address: 0x08001000,
+      size_bytes: 4096,
+    },
+  },
+}

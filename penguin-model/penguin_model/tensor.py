@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import torch
-
 from .core_config import DEFAULT_PENGUIN_CORE_CONFIG, PenguinCoreConfig
 from .memory import _mix_seed, _random_u8_tensor
 
@@ -28,6 +27,7 @@ VPU_SIMPLE_OP_LATENCY_CYCLES = DEFAULT_PENGUIN_CORE_CONFIG.vpu_simple_op_latency
 VPU_NON_PIPELINEABLE_OP_LATENCY_CYCLES = (
     DEFAULT_PENGUIN_CORE_CONFIG.vpu_non_pipelineable_op_latency_cycles
 )
+XLU_TRANSPOSE_LATENCY_CYCLES = DEFAULT_PENGUIN_CORE_CONFIG.xlu_transpose_latency_cycles
 
 FP8_DTYPE = torch.float8_e4m3fn
 BF16_DTYPE = torch.bfloat16
@@ -165,6 +165,34 @@ def bf16_tile_to_bytes(
     return packed.reshape(-1).view(torch.uint8).clone()
 
 
+def bf16_transposed_tile_from_bytes(
+    raw: torch.Tensor,
+    *,
+    config: PenguinCoreConfig = DEFAULT_PENGUIN_CORE_CONFIG,
+) -> torch.Tensor:
+    """Interpret one tensor-register image as a BF16 transposed tile."""
+
+    return (
+        raw.reshape(-1)
+        .view(BF16_DTYPE)
+        .reshape(config.tensor.mreg_row_bytes // 2, config.tensor.mreg_rows)
+    )
+
+
+def bf16_transposed_tile_to_bytes(
+    tile: torch.Tensor,
+    *,
+    config: PenguinCoreConfig = DEFAULT_PENGUIN_CORE_CONFIG,
+) -> torch.Tensor:
+    """Pack one BF16 transposed tile into raw bytes."""
+
+    packed = tile.to(BF16_DTYPE).reshape(
+        config.tensor.mreg_row_bytes // 2,
+        config.tensor.mreg_rows,
+    )
+    return packed.reshape(-1).view(torch.uint8).clone()
+
+
 def compute_bf16_matmul(
     activation_raw: torch.Tensor,
     weight_raw: torch.Tensor,
@@ -224,6 +252,17 @@ def compute_bf16_vmul(
     return _binary_bf16_tile_op(lhs_raw, rhs_raw, torch.mul, config=config)
 
 
+def compute_bf16_vsub(
+    lhs_raw: torch.Tensor,
+    rhs_raw: torch.Tensor,
+    *,
+    config: PenguinCoreConfig = DEFAULT_PENGUIN_CORE_CONFIG,
+) -> torch.Tensor:
+    """Compute one BF16 whole-register elementwise subtraction."""
+
+    return _binary_bf16_tile_op(lhs_raw, rhs_raw, torch.sub, config=config)
+
+
 def compute_bf16_vmax(
     lhs_raw: torch.Tensor,
     rhs_raw: torch.Tensor,
@@ -257,6 +296,28 @@ def compute_bf16_vrelu(
     return bf16_tile_to_bytes(torch.clamp_min(src, 0.0).to(BF16_DTYPE), config=config)
 
 
+def compute_bf16_vexp(
+    src_raw: torch.Tensor,
+    *,
+    config: PenguinCoreConfig = DEFAULT_PENGUIN_CORE_CONFIG,
+) -> torch.Tensor:
+    """Compute one BF16 whole-register elementwise exponential."""
+
+    src = bf16_tile_from_bytes(src_raw, config=config).to(torch.float32)
+    return bf16_tile_to_bytes(torch.exp(src).to(BF16_DTYPE), config=config)
+
+
+def compute_bf16_vrecip(
+    src_raw: torch.Tensor,
+    *,
+    config: PenguinCoreConfig = DEFAULT_PENGUIN_CORE_CONFIG,
+) -> torch.Tensor:
+    """Compute one BF16 whole-register elementwise reciprocal."""
+
+    src = bf16_tile_from_bytes(src_raw, config=config).to(torch.float32)
+    return bf16_tile_to_bytes(torch.reciprocal(src).to(BF16_DTYPE), config=config)
+
+
 def compute_bf16_vmov(
     src_raw: torch.Tensor,
     *,
@@ -264,7 +325,46 @@ def compute_bf16_vmov(
 ) -> torch.Tensor:
     """Copy one BF16 whole-register tile without modification."""
 
-    return bf16_tile_to_bytes(bf16_tile_from_bytes(src_raw, config=config).clone(), config=config)
+    return bf16_tile_to_bytes(
+        bf16_tile_from_bytes(src_raw, config=config).clone(),
+        config=config,
+    )
+
+
+def compute_bf16_row_reduce_max(
+    src_raw: torch.Tensor,
+    *,
+    config: PenguinCoreConfig = DEFAULT_PENGUIN_CORE_CONFIG,
+) -> torch.Tensor:
+    """Reduce BF16 rows to one maximum and broadcast it across each row."""
+
+    src = bf16_tile_from_bytes(src_raw, config=config).to(torch.float32)
+    reduced = torch.amax(src, dim=1, keepdim=True).expand_as(src)
+    return bf16_tile_to_bytes(reduced.to(BF16_DTYPE), config=config)
+
+
+def compute_bf16_row_reduce_sum(
+    src_raw: torch.Tensor,
+    *,
+    config: PenguinCoreConfig = DEFAULT_PENGUIN_CORE_CONFIG,
+) -> torch.Tensor:
+    """Reduce BF16 rows to one sum and broadcast it across each row."""
+
+    src = bf16_tile_from_bytes(src_raw, config=config).to(torch.float32)
+    reduced = torch.sum(src, dim=1, keepdim=True).expand_as(src)
+    return bf16_tile_to_bytes(reduced.to(BF16_DTYPE), config=config)
+
+
+def compute_bf16_transpose(
+    src_raw: torch.Tensor,
+    *,
+    config: PenguinCoreConfig = DEFAULT_PENGUIN_CORE_CONFIG,
+) -> torch.Tensor:
+    """Compute one BF16 whole-register transpose."""
+
+    src = bf16_tile_from_bytes(src_raw, config=config)
+    transposed = src.transpose(0, 1).contiguous()
+    return bf16_transposed_tile_to_bytes(transposed, config=config)
 
 
 __all__ = [
@@ -286,15 +386,24 @@ __all__ = [
     "WEIGHT_SLOTS_PER_MXU",
     "WEIGHT_TILE_COLS_FP8",
     "WEIGHT_TILE_ROWS",
+    "XLU_TRANSPOSE_LATENCY_CYCLES",
     "bf16_tile_from_bytes",
+    "bf16_transposed_tile_from_bytes",
+    "bf16_transposed_tile_to_bytes",
     "bf16_tile_to_bytes",
+    "compute_bf16_transpose",
     "compute_bf16_matmul",
     "compute_bf16_vadd",
     "compute_bf16_vmax",
     "compute_bf16_vmin",
     "compute_bf16_vmov",
+    "compute_bf16_vexp",
+    "compute_bf16_vrecip",
+    "compute_bf16_vsub",
     "compute_bf16_vmul",
     "compute_bf16_vrelu",
+    "compute_bf16_row_reduce_max",
+    "compute_bf16_row_reduce_sum",
     "fp8_tile_from_bytes",
     "fp8_tile_to_bytes",
     "make_tensor_register_file",

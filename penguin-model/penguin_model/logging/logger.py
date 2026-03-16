@@ -56,6 +56,7 @@ class TraceLogger:
             5: "EXU.MXU0",
             6: "EXU.MXU1",
             7: "EXU.VPU",
+            8: "EXU.XLU",
         }
         self.arch_threads: dict[tuple[str, int], tuple[int, str]] = {}
         self.ts = 0

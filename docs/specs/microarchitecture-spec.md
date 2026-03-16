@@ -307,24 +307,30 @@ Shared microarchitectural requirements:
 The VPU baseline shall implement the initial BF16 elementwise floor:
 
 - `vadd`
+- `vsub`
 - `vmul`
 - `vmax`
 - `vmin`
 - `vrelu`
 - `vmov`
+- `vexp`
+- `vrecip`
 
 Timing requirements:
 
 - pipelineable elementwise operations use the `2`-cycle latency class
-- future non-pipelineable operations such as division use the `8`-cycle latency class
+- non-pipelineable elementwise operations such as exponent and reciprocal use the
+  `8`-cycle latency class
 
 ### 8.3 XLU
 
-The XLU baseline shall implement whole-register transpose.
+The XLU baseline shall implement whole-register transpose and row-reduction broadcasts.
 
 Timing requirement:
 
 - `transpose.xlu` uses the `4`-cycle latency class
+- `reduce.max.xlu` uses the `4`-cycle latency class
+- `reduce.sum.xlu` uses the `4`-cycle latency class
 
 ## 9. Reset, Initialization, and Model Contract
 

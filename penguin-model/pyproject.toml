@@ -5,6 +5,7 @@ description = "Reference and performance model for Penguin TPU programs"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+  "matplotlib>=3.9",
   "numpy>=2.1",
   "torch>=2.10.0",
 ]

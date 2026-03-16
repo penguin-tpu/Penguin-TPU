@@ -1,0 +1,23 @@
+{
+  symbols: {
+    input: {
+      kind: "input",
+      region: "vmem",
+      address: 0x08000000,
+      size_bytes: 4096,
+    },
+    output: {
+      kind: "output",
+      region: "vmem",
+      address: 0x08001000,
+      size_bytes: 4096,
+    },
+    program: {
+      kind: "program",
+      region: "imem",
+      address: 0x00100000,
+      size_bytes: 164,
+      file: "gemma_transpose_64x32.S",
+    },
+  },
+}

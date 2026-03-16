@@ -7,7 +7,7 @@ from pathlib import Path
 from penguin_model import PenguinCore, StopReason, assemble_text
 from penguin_model.testbench import fresh_arch_state
 
-from trace_utils import event_end, load_trace, require_stage_event, stage_events
+from trace_utils import event_end, load_trace, require_stage_event, stage_events, trace_output_path
 
 
 def _dump_trace(source: str, trace_path: Path):
@@ -29,7 +29,7 @@ def test_taken_branch_executes_two_delay_slots_before_target_starts(tmp_path: Pa
 target:
     li x6, 6
 """,
-        tmp_path / "branch_taken_delay_slots.json",
+        trace_output_path("branch_taken_delay_slots.json"),
     )
 
     delay_slot_1 = require_stage_event(events, stage="execute", contains="saddi x3, x0, 3")
@@ -57,7 +57,7 @@ def test_not_taken_branch_still_executes_two_delay_slots_then_continues_sequenti
 target:
     li x6, 6
 """,
-        tmp_path / "branch_not_taken_delay_slots.json",
+        trace_output_path("branch_not_taken_delay_slots.json"),
     )
 
     delay_slot_1 = require_stage_event(events, stage="execute", contains="saddi x3, x0, 3")
@@ -82,7 +82,7 @@ def test_jump_target_starts_only_after_two_delay_slots_retire(tmp_path: Path) ->
 target:
     li x4, 44
 """,
-        tmp_path / "jump_delay_slots.json",
+        trace_output_path("jump_delay_slots.json"),
     )
 
     delay_slot_1 = require_stage_event(events, stage="execute", contains="saddi x1, x0, 11")
@@ -111,7 +111,7 @@ older_target:
 younger_target:
     li x7, 7
 """,
-        tmp_path / "younger_redirect_trace.json",
+        trace_output_path("younger_redirect_trace.json"),
     )
 
     younger_delay_slot_1 = require_stage_event(events, stage="execute", contains="saddi x3, x0, 3")

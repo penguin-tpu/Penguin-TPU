@@ -11,6 +11,13 @@ def load_trace(path: str | Path) -> list[dict[str, Any]]:
     return json.loads(Path(path).read_text())
 
 
+def trace_output_path(name: str) -> Path:
+    repo_root = Path(__file__).resolve().parents[1]
+    trace_root = repo_root / "outputs" / "tests"
+    trace_root.mkdir(parents=True, exist_ok=True)
+    return trace_root / name
+
+
 def stage_events(
     events: list[dict[str, Any]],
     *,

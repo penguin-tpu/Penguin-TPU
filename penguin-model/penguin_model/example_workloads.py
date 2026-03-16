@@ -20,7 +20,7 @@ from .tensor import (
 )
 
 _PROGRAM_ROOT = Path(__file__).resolve().parents[2] / "tests" / "vectors" / "programs" / "tensor" / "examples"
-_DEFAULT_TRACE_ROOT = Path(__file__).resolve().parents[2] / "examples" / "out"
+_DEFAULT_TRACE_ROOT = Path(__file__).resolve().parents[2] / "outputs" / "examples"
 
 @dataclass(frozen=True, slots=True)
 class _ExampleAddresses:

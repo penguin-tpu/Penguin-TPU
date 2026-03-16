@@ -1,0 +1,29 @@
+{
+  symbols: {
+    activation: {
+      kind: "input",
+      region: "vmem",
+      address: 0x08000000,
+      size_bytes: 2048,
+    },
+    output: {
+      kind: "output",
+      region: "vmem",
+      address: 0x08002000,
+      size_bytes: 2048,
+    },
+    program: {
+      kind: "program",
+      region: "imem",
+      address: 0x00100000,
+      size_bytes: 152,
+      file: "gemma_attention_scores_64x16.S",
+    },
+    weights: {
+      kind: "input",
+      region: "vmem",
+      address: 0x08001000,
+      size_bytes: 512,
+    },
+  },
+}

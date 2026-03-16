@@ -8,6 +8,8 @@ from pathlib import Path
 import pytest
 import torch
 
+from trace_utils import trace_output_path
+
 from penguin_model import (
     DMA_ALIGNMENT_BYTES,
     DMA_CHANNEL_COUNT,
@@ -722,7 +724,7 @@ def test_dump_json_trace_emits_region_aware_trace(tmp_path: Path) -> None:
     state = _fresh_state()
     state.dram.store_u32(DRAM_BASE + 0x20, 7)
     core = PenguinCore(state=state, config=state.config)
-    trace_path = tmp_path / "trace.json"
+    trace_path = trace_output_path("python_model_trace_dma_flow.json")
 
     perf = core.dump_json_trace(_program("trace_dma_flow"), trace_path)
 
@@ -823,7 +825,7 @@ def test_trace_wait_blocks_following_tensor_memory_op_until_later_dma_wait_retir
     state.dram.write(DRAM_BASE + 0x000, torch.arange(0, 128, dtype=torch.uint8).repeat(16))
     state.dram.write(DRAM_BASE + 0x800, torch.arange(128, 256, dtype=torch.uint8).repeat(16))
     core = PenguinCore(state=state, config=state.config)
-    trace_path = tmp_path / "dma_wait_blocks_vload.json"
+    trace_path = trace_output_path("python_model_dma_wait_blocks_vload.json")
 
     perf = core.dump_json_trace(
         [

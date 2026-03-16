@@ -403,11 +403,14 @@ Architectural MXU rules:
 The initial VPU opcode floor is:
 
 - `vadd`
+- `vsub`
 - `vmul`
 - `vmax`
 - `vmin`
 - `vrelu`
 - `vmov`
+- `vexp`
+- `vrecip`
 
 Architectural VPU rules:
 
@@ -421,6 +424,8 @@ Architectural VPU rules:
 The initial XLU opcode floor is:
 
 - `transpose.xlu m<dest>, m<src>`
+- `reduce.max.xlu m<dest>, m<src>`
+- `reduce.sum.xlu m<dest>, m<src>`
 
 Architectural XLU rules:
 

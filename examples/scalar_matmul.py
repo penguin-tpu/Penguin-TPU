@@ -25,7 +25,7 @@ def main() -> int:
         / "examples"
         / "scalar_matmul.S"
     )
-    trace_path = "scalar_trace.json"
+    trace_path = "outputs/examples/scalar_trace.json"
     perf = core.dump_json_trace(load_mapped_program(program_path), trace_path)
 
     print("Input words in DRAM:")

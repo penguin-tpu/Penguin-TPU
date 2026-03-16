@@ -1,11 +1,11 @@
 {
-  "symbols": {
-    "program": {
-      "kind": "program",
-      "region": "imem",
-      "address": 0x00100000,
-      "size_bytes": 44,
-      "file": "vmem_sum_loop.S",
+  symbols: {
+    program: {
+      kind: "program",
+      region: "imem",
+      address: 0x00100000,
+      size_bytes: 44,
+      file: "vmem_sum_loop.S",
     },
   },
 }

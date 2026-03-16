@@ -234,6 +234,199 @@ def _custom_symbols(relative_path: str) -> dict[str, BundleSymbol]:
             ),
         }
 
+    if relative_path == "tensor/examples/gemma_linear_64x32.S":
+        return {
+            "activation": BundleSymbol(
+                name="activation",
+                kind="input",
+                region="vmem",
+                address=VMEM_BASE + 0x0000,
+                size_bytes=MREG_BYTES,
+            ),
+            "weights": BundleSymbol(
+                name="weights",
+                kind="input",
+                region="vmem",
+                address=VMEM_BASE + 0x1000,
+                size_bytes=2 * WEIGHT_SLOT_BYTES,
+            ),
+            "output": BundleSymbol(
+                name="output",
+                kind="output",
+                region="vmem",
+                address=VMEM_BASE + 0x2000,
+                size_bytes=2 * MREG_BYTES,
+            ),
+        }
+
+    if relative_path == "tensor/examples/gemma_mlp_gate_64x32.S":
+        return {
+            "gate": BundleSymbol(
+                name="gate",
+                kind="input",
+                region="vmem",
+                address=VMEM_BASE + 0x0000,
+                size_bytes=2 * MREG_BYTES,
+            ),
+            "up": BundleSymbol(
+                name="up",
+                kind="input",
+                region="vmem",
+                address=VMEM_BASE + 0x1000,
+                size_bytes=2 * MREG_BYTES,
+            ),
+            "constants": BundleSymbol(
+                name="constants",
+                kind="input",
+                region="vmem",
+                address=VMEM_BASE + 0x3000,
+                size_bytes=6 * MREG_BYTES,
+            ),
+            "output": BundleSymbol(
+                name="output",
+                kind="output",
+                region="vmem",
+                address=VMEM_BASE + 0x2000,
+                size_bytes=2 * MREG_BYTES,
+            ),
+        }
+
+    if relative_path == "tensor/examples/gemma_vadd_64x32.S":
+        return {
+            "lhs": BundleSymbol(
+                name="lhs",
+                kind="input",
+                region="vmem",
+                address=VMEM_BASE + 0x0000,
+                size_bytes=2 * MREG_BYTES,
+            ),
+            "rhs": BundleSymbol(
+                name="rhs",
+                kind="input",
+                region="vmem",
+                address=VMEM_BASE + 0x1000,
+                size_bytes=2 * MREG_BYTES,
+            ),
+            "output": BundleSymbol(
+                name="output",
+                kind="output",
+                region="vmem",
+                address=VMEM_BASE + 0x2000,
+                size_bytes=2 * MREG_BYTES,
+            ),
+        }
+
+    if relative_path == "tensor/examples/gemma_transpose_64x32.S":
+        return {
+            "input": BundleSymbol(
+                name="input",
+                kind="input",
+                region="vmem",
+                address=VMEM_BASE + 0x0000,
+                size_bytes=2 * MREG_BYTES,
+            ),
+            "output": BundleSymbol(
+                name="output",
+                kind="output",
+                region="vmem",
+                address=VMEM_BASE + 0x1000,
+                size_bytes=2 * MREG_BYTES,
+            ),
+        }
+
+    if relative_path == "tensor/examples/gemma_attention_scores_64x64.S":
+        return {
+            "activation": BundleSymbol(
+                name="activation",
+                kind="input",
+                region="vmem",
+                address=VMEM_BASE + 0x0000,
+                size_bytes=MREG_BYTES,
+            ),
+            "weights": BundleSymbol(
+                name="weights",
+                kind="input",
+                region="vmem",
+                address=VMEM_BASE + 0x1000,
+                size_bytes=4 * WEIGHT_SLOT_BYTES,
+            ),
+            "output": BundleSymbol(
+                name="output",
+                kind="output",
+                region="vmem",
+                address=VMEM_BASE + 0x2000,
+                size_bytes=4 * MREG_BYTES,
+            ),
+        }
+
+    if relative_path == "tensor/examples/gemma_attention_scores_64x16.S":
+        return {
+            "activation": BundleSymbol(
+                name="activation",
+                kind="input",
+                region="vmem",
+                address=VMEM_BASE + 0x0000,
+                size_bytes=MREG_BYTES,
+            ),
+            "weights": BundleSymbol(
+                name="weights",
+                kind="input",
+                region="vmem",
+                address=VMEM_BASE + 0x1000,
+                size_bytes=WEIGHT_SLOT_BYTES,
+            ),
+            "output": BundleSymbol(
+                name="output",
+                kind="output",
+                region="vmem",
+                address=VMEM_BASE + 0x2000,
+                size_bytes=MREG_BYTES,
+            ),
+        }
+
+    if relative_path == "tensor/examples/gemma_softmax_64x16.S":
+        return {
+            "input": BundleSymbol(
+                name="input",
+                kind="input",
+                region="vmem",
+                address=VMEM_BASE + 0x0000,
+                size_bytes=MREG_BYTES,
+            ),
+            "output": BundleSymbol(
+                name="output",
+                kind="output",
+                region="vmem",
+                address=VMEM_BASE + 0x2000,
+                size_bytes=MREG_BYTES,
+            ),
+        }
+
+    if relative_path == "tensor/examples/gemma_attention_context_64x32.S":
+        return {
+            "activation": BundleSymbol(
+                name="activation",
+                kind="input",
+                region="vmem",
+                address=VMEM_BASE + 0x0000,
+                size_bytes=2 * MREG_BYTES,
+            ),
+            "weights": BundleSymbol(
+                name="weights",
+                kind="input",
+                region="vmem",
+                address=VMEM_BASE + 0x1000,
+                size_bytes=4 * WEIGHT_SLOT_BYTES,
+            ),
+            "output": BundleSymbol(
+                name="output",
+                kind="output",
+                region="vmem",
+                address=VMEM_BASE + 0x2000,
+                size_bytes=2 * MREG_BYTES,
+            ),
+        }
+
     return {}
 
 

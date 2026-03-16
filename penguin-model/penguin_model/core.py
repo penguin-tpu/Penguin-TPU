@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Iterator, Mapping, Sequence
+import os
 from os import PathLike
+from pathlib import Path
+import re
 from typing import TYPE_CHECKING
 
 from .arch_state import ArchState, PerformanceCounters, StopReason
@@ -22,6 +25,7 @@ from .instructions import (
     SType,
     TensorMemType,
     UType,
+    XLUTransposeType,
     VPUBinaryType,
     VPUUnaryType,
     WeightMemType,
@@ -56,6 +60,8 @@ TMEM_LANE = 4
 MXU0_LANE = 5
 MXU1_LANE = 6
 VPU_LANE = 7
+XLU_LANE = 8
+_AUTO_TRACE_COUNTERS: dict[str, int] = {}
 
 
 def _format_instruction(instruction: Instruction) -> str:
@@ -94,6 +100,8 @@ def _format_instruction(instruction: Instruction) -> str:
         return f"{mnemonic} m{params.md}, m{params.ms1}, m{params.ms2}"
     if isinstance(params, VPUUnaryType):
         return f"{mnemonic} m{params.md}, m{params.ms}"
+    if isinstance(params, XLUTransposeType):
+        return f"{mnemonic} m{params.md}, m{params.ms}"
     return f"{mnemonic} {params}"
 
 
@@ -104,6 +112,8 @@ def _execute_lane_for_instruction(instruction: Instruction) -> int:
         return TMEM_LANE
     if isinstance(instruction.params, (VPUBinaryType, VPUUnaryType)):
         return VPU_LANE
+    if isinstance(instruction.params, XLUTransposeType):
+        return XLU_LANE
     if instruction.mnemonic.endswith(".mxu0"):
         return MXU0_LANE
     if instruction.mnemonic.endswith(".mxu1"):
@@ -118,6 +128,28 @@ def _dma_channel_for_instruction(instruction: Instruction) -> int | None:
     if not parts[2].startswith("ch"):
         return None
     return int(parts[2][2:])
+
+
+def _is_async_tensor_lane(lane: int) -> bool:
+    return lane in {MXU0_LANE, MXU1_LANE, VPU_LANE, XLU_LANE}
+
+
+def _frontend_latency_cycles(instruction: Instruction, execute_lane: int, total_latency: int) -> int:
+    if _is_async_tensor_lane(execute_lane):
+        return 1
+    if instruction.mnemonic.startswith("dma.wait."):
+        return total_latency
+    if execute_lane == DMA_LANE:
+        return 1
+    return total_latency
+
+
+def _lane_occupancy_cycles(instruction: Instruction, execute_lane: int, total_latency: int) -> int:
+    if _is_async_tensor_lane(execute_lane):
+        return total_latency
+    if execute_lane == DMA_LANE and not instruction.mnemonic.startswith("dma.wait."):
+        return 1
+    return total_latency
 
 
 class PenguinCore:
@@ -153,6 +185,16 @@ class PenguinCore:
         return self.state.config
 
     def _reset_trace_pipeline(self) -> None:
+        self._cycle_issue_ready = 0
+        self._cycle_exu_ready = {
+            SALU_LANE: 0,
+            DMA_LANE: 0,
+            TMEM_LANE: 0,
+            MXU0_LANE: 0,
+            MXU1_LANE: 0,
+            VPU_LANE: 0,
+            XLU_LANE: 0,
+        }
         self._trace_ifu_ready = 0
         self._trace_idu_ready = 0
         self._trace_issue_ready = 0
@@ -163,6 +205,7 @@ class PenguinCore:
             MXU0_LANE: 0,
             MXU1_LANE: 0,
             VPU_LANE: 0,
+            XLU_LANE: 0,
         }
 
     @property
@@ -198,10 +241,16 @@ class PenguinCore:
             )
 
         current_pc = self.state.pc
-        start_cycle = self.state.perf.cycles
+        execute_lane = _execute_lane_for_instruction(instruction)
+        issue_cycle = max(
+            self.state.perf.cycles,
+            self._cycle_issue_ready,
+            self._cycle_exu_ready[execute_lane],
+        )
+        self.state.perf.cycles = issue_cycle
+        start_cycle = issue_cycle
         insn_id = self.state.perf.instructions
         logger = self.state.trace_logger
-        execute_lane = _execute_lane_for_instruction(instruction)
         # Capture trace transfer info for dma.wait so we can log transfer end in trace time (not cycle time).
         trace_transfer_end_insn_id: int | None = None
         trace_transfer_end_channel: int | None = None
@@ -263,13 +312,18 @@ class PenguinCore:
 
         spec.semantics(self.state, instruction.params)
         total_latency = max(1, spec.latency + self.state.instruction_extra_cycles)
+        frontend_latency = _frontend_latency_cycles(instruction, execute_lane, total_latency)
+        lane_occupancy = _lane_occupancy_cycles(instruction, execute_lane, total_latency)
         execute_duration = max(1, total_latency * trace_ticks_per_cycle - 2)
         trace_execute_end = trace_execute_start + execute_duration
+        trace_frontend_release = trace_execute_start + frontend_latency * trace_ticks_per_cycle
         self.state.trace_end_cycle = trace_execute_end
-        self.state.perf.record_instruction(instruction.mnemonic, total_latency)
+        self.state.perf.record_instruction(instruction.mnemonic, frontend_latency)
+        self._cycle_issue_ready = issue_cycle + frontend_latency
+        self._cycle_exu_ready[execute_lane] = issue_cycle + lane_occupancy
         self._trace_ifu_ready = trace_dispatch_start
         self._trace_idu_ready = trace_execute_start
-        self._trace_issue_ready = trace_execute_end
+        self._trace_issue_ready = trace_frontend_release
         self._trace_exu_ready[execute_lane] = trace_execute_end
 
         if (
@@ -331,6 +385,16 @@ class PenguinCore:
 
         self.state.control_transfer_set = False
 
+    def _drain_async_tensor_units(self) -> None:
+        completion_cycle = max(
+            self.state.perf.cycles,
+            self._cycle_exu_ready[MXU0_LANE],
+            self._cycle_exu_ready[MXU1_LANE],
+            self._cycle_exu_ready[VPU_LANE],
+            self._cycle_exu_ready[XLU_LANE],
+        )
+        self.state.perf.cycles = completion_cycle
+
     def execute(
         self,
         program: Iterable[Instruction],
@@ -339,6 +403,19 @@ class PenguinCore:
         max_instructions: int | None = None,
         trace_logger: TraceLogger | None = None,
     ) -> PerformanceCounters:
+        if trace_logger is None:
+            auto_trace_path = _pytest_auto_trace_path()
+            if auto_trace_path is not None:
+                from .logging import TraceLogger, TraceLoggerConfig
+
+                with TraceLogger(TraceLoggerConfig(filename=str(auto_trace_path))) as auto_trace_logger:
+                    return self.execute(
+                        program,
+                        start_pc=start_pc,
+                        max_instructions=max_instructions,
+                        trace_logger=auto_trace_logger,
+                    )
+
         instructions = list(program) if not isinstance(program, Sequence) else program
         program_base = getattr(program, "base_address", 0)
         if start_pc is None:
@@ -383,11 +460,18 @@ class PenguinCore:
                     break
 
             if self.state.pc == program_end:
+                self._drain_async_tensor_units()
                 self.state.stop(StopReason.PROGRAM_END)
                 if trace_logger is not None:
                     trace_logger.log_stop(
                         self.state.stop_reason.value,
-                        cycle=self.state.perf.cycles * self.state.config.trace.ticks_per_cycle,
+                        cycle=max(
+                            self.state.perf.cycles * self.state.config.trace.ticks_per_cycle,
+                            self._trace_exu_ready[MXU0_LANE],
+                            self._trace_exu_ready[MXU1_LANE],
+                            self._trace_exu_ready[VPU_LANE],
+                            self._trace_exu_ready[XLU_LANE],
+                        ),
                     )
                 break
 
@@ -401,20 +485,34 @@ class PenguinCore:
                 break
 
             if self.state.pc < program_base:
+                self._drain_async_tensor_units()
                 self.state.stop(StopReason.PROGRAM_END)
                 if trace_logger is not None:
                     trace_logger.log_stop(
                         self.state.stop_reason.value,
-                        cycle=self.state.perf.cycles * self.state.config.trace.ticks_per_cycle,
+                        cycle=max(
+                            self.state.perf.cycles * self.state.config.trace.ticks_per_cycle,
+                            self._trace_exu_ready[MXU0_LANE],
+                            self._trace_exu_ready[MXU1_LANE],
+                            self._trace_exu_ready[VPU_LANE],
+                            self._trace_exu_ready[XLU_LANE],
+                        ),
                     )
                 break
 
             if self.state.pc > program_end:
+                self._drain_async_tensor_units()
                 self.state.stop(StopReason.PROGRAM_END)
                 if trace_logger is not None:
                     trace_logger.log_stop(
                         self.state.stop_reason.value,
-                        cycle=self.state.perf.cycles * self.state.config.trace.ticks_per_cycle,
+                        cycle=max(
+                            self.state.perf.cycles * self.state.config.trace.ticks_per_cycle,
+                            self._trace_exu_ready[MXU0_LANE],
+                            self._trace_exu_ready[MXU1_LANE],
+                            self._trace_exu_ready[VPU_LANE],
+                            self._trace_exu_ready[XLU_LANE],
+                        ),
                     )
                 break
 
@@ -441,6 +539,22 @@ class PenguinCore:
                 max_instructions=max_instructions,
                 trace_logger=trace_logger,
             )
+
+
+def _pytest_auto_trace_path() -> Path | None:
+    current_test = os.environ.get("PYTEST_CURRENT_TEST")
+    if current_test is None:
+        return None
+
+    base = current_test.rsplit(" ", 1)[0]
+    sanitized = re.sub(r"[^A-Za-z0-9._-]+", "_", base).strip("_")
+    count = _AUTO_TRACE_COUNTERS.get(sanitized, 0)
+    _AUTO_TRACE_COUNTERS[sanitized] = count + 1
+
+    repo_root = Path(__file__).resolve().parents[2]
+    trace_root = repo_root / "outputs" / "tests"
+    trace_root.mkdir(parents=True, exist_ok=True)
+    return trace_root / f"{sanitized}__{count:02d}.json"
 
 
 __all__ = [

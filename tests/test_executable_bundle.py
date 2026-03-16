@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from trace_utils import trace_output_path
 
 from penguin_compiler import (
     BundleManifest as CompilerBundleManifest,
@@ -234,7 +235,7 @@ def test_compiler_cli_copies_adjacent_sidecar_payloads_into_bundle(tmp_path: Pat
 
 def test_model_cli_runs_bundle_and_writes_trace(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     bundle_dir = _write_sample_bundle(tmp_path)
-    trace_path = tmp_path / "trace.json"
+    trace_path = trace_output_path("executable_bundle_model_cli.json")
 
     assert model_main(["--bundle", str(bundle_dir), "--trace", str(trace_path)]) == 0
 

@@ -111,8 +111,8 @@ def _print_summary(
     if loaded_bundle is not None and loaded_bundle.symbol_data:
         print(f"preloaded_symbols: {sorted(loaded_bundle.symbol_data)}")
     if loaded_bundle is not None and loaded_bundle.constants:
-        # TODO: constants.bin is bundle collateral today, but the manifest still lacks a
-        # runtime mapping that would let the model CLI stage it into DRAM or VMEM.
+        # The current bundle contract reports constants.bin but does not yet provide a
+        # runtime memory mapping for automatic DRAM/VMEM staging.
         print(
             f"constants_blob: {len(loaded_bundle.constants)} bytes "
             "(present but not memory-mapped by the current bundle contract)"

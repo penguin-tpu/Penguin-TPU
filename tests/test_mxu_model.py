@@ -17,6 +17,7 @@ from penguin_model import (
     VLOAD_LATENCY_CYCLES,
     VSTORE_LATENCY_CYCLES,
     ArchState,
+    IType,
     Instruction,
     PenguinCore,
     StopReason,
@@ -342,6 +343,33 @@ def test_mxu0_push_and_matmul_produce_expected_bf16_tile() -> None:
 
     _assert_program_completed(core, perf, instructions=2)
     assert _read_mreg_bytes(core.state, 2) == expected
+
+
+def test_scalar_issue_overlaps_inflight_mxu_latency() -> None:
+    _require_mxu_support()
+    core = _fresh_core()
+    activation = _small_activation_tile()
+    weights = _weight_tile_a()
+
+    _write_mreg_bytes(core.state, 1, _pack_fp8_tile(activation))
+    core.state.vmem.write(VMEM_BASE + 0x120, _as_byte_tensor(_pack_weight_tile(weights)))
+    core.state.write_xreg(1, VMEM_BASE + 0x120)
+
+    perf = core.execute(
+        [
+            _make_instruction("mxu.push.mxu0", slot="w0", rs1=1, imm=0),
+            _make_instruction("matmul.mxu0", dest="m2", src="m1", slot="w0"),
+            Instruction("saddi", IType(rd=10, rs1=0, imm=1)),
+            Instruction("saddi", IType(rd=11, rs1=0, imm=2)),
+            Instruction("saddi", IType(rd=12, rs1=0, imm=3)),
+        ]
+    )
+
+    _assert_program_completed(core, perf, instructions=5)
+    assert core.state.read_xreg(10) == 1
+    assert core.state.read_xreg(11) == 2
+    assert core.state.read_xreg(12) == 3
+    assert perf.cycles == MXU_PUSH_LATENCY_CYCLES + MATMUL_LATENCY_CYCLES
 
 
 def test_matmul_add_uses_explicit_partial_tensor_operand() -> None:

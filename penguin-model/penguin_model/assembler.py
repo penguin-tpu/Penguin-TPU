@@ -24,6 +24,7 @@ from .instructions import (
     SType,
     TensorMemType,
     UType,
+    XLUTransposeType,
     VPUBinaryType,
     VPUUnaryType,
     WeightMemType,
@@ -564,6 +565,26 @@ def _assemble_instruction(
         return Instruction(
             mnemonic,
             VPUUnaryType(
+                md=_parse_mregister(
+                    operands[0], source_name=source_name, line_number=line.line_number
+                ),
+                ms=_parse_mregister(
+                    operands[1], source_name=source_name, line_number=line.line_number
+                ),
+            ),
+        )
+
+    if spec.params_type is XLUTransposeType:
+        _expect_operand_count(
+            mnemonic,
+            operands,
+            expected=2,
+            source_name=source_name,
+            line_number=line.line_number,
+        )
+        return Instruction(
+            mnemonic,
+            XLUTransposeType(
                 md=_parse_mregister(
                     operands[0], source_name=source_name, line_number=line.line_number
                 ),

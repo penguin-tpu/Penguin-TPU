@@ -16,8 +16,8 @@ What exists now:
   label-resolved self-checking programs inspired by `riscv-tests` `rv32ui`
 - a GitHub Actions CI workflow that installs the `uv` workspace and runs
   the full Python test suite on pushes and pull requests
-- initial VPU elementwise functional/performance modeling for `vadd`, `vmul`, `vmax`,
-  `vmin`, `vrelu`, and `vmov`
+- initial VPU elementwise functional/performance modeling for `vadd`, `vsub`, `vmul`,
+  `vmax`, `vmin`, `vrelu`, `vmov`, `vexp`, and `vrecip`
 - executable-package manifest/symbol-table support on both sides of the software
   boundary:
   - `penguin-compiler` can now write bundle directories with `program.S`,
@@ -46,12 +46,12 @@ What exists now:
   - each example emits real bundle directories for each stage, runs those bundles through
     `penguin-model`, and compares the final output against a matching PyTorch reference
   - the stage programs live under `tests/vectors/programs/tensor/examples/` and cover:
-    projection matmuls, attention score matmul, attention context matmul, BF16 gating,
-    BF16 residual add, and BF16 transpose
+    projection matmuls, attention score matmul, decomposed BF16 softmax, attention
+    context matmul, decomposed BF16 GELU gating, BF16 residual add, and BF16 transpose
   - important current limitation: these examples are still a staged hardware-visible
-    subset, not a full direct Gemma lowering in one Penguin program; RoPE, RMSNorm, and
-    softmax remain host-side between stage bundles, and the staged references reflect
-    those same boundaries
+    subset, not a full direct Gemma lowering in one Penguin program; RoPE and RMSNorm
+    remain host-side between stage bundles, and the staged references reflect those same
+    boundaries
 - runtime outputs are now split at the repo root under `outputs/`:
   - `outputs/examples/` for example traces and bundle artifacts
   - `outputs/tests/` for pytest program-execution traces
@@ -173,13 +173,17 @@ Reasoning:
   interpretation
 - first opcode floor:
   - `vadd`
+  - `vsub`
   - `vmul`
   - `vmax`
   - `vmin`
   - `vrelu`
   - `vmov`
+  - `vexp`
+  - `vrecip`
 - pipelineable elementwise operations use a 2-cycle latency class
-- future non-pipelineable operations such as division use an 8-cycle latency class
+- non-pipelineable elementwise operations such as exponent and reciprocal use an 8-cycle
+  latency class
 
 Reasoning:
 
@@ -196,6 +200,8 @@ Reasoning:
 - intended for transpose work
 - initial opcode floor:
   - `transpose.xlu`
+  - `reduce.max.xlu`
+  - `reduce.sum.xlu`
 - initial data view is BF16 over the `64 x 16` tensor-register interpretation
 - initial transpose latency class is 4 cycles
 

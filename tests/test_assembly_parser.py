@@ -14,6 +14,7 @@ from penguin_model import (
     JType,
     MXUMatmulAccType,
     TensorMemType,
+    XLUTransposeType,
     VPUBinaryType,
     VPUUnaryType,
     VMEM_BASE,
@@ -84,15 +85,43 @@ def test_assembler_parses_vpu_operands() -> None:
     program = assemble_text(
         """
     vadd m7, m8, m9
-    vrelu m10, m11
-    vmov m12, m13
+    vsub m10, m11, m12
+    vmax m13, m14, m15
+    vmin m16, m17, m18
+    vmul m19, m20, m21
+    vrelu m22, m23
+    vmov m24, m25
+    vexp m26, m27
+    vrecip m28, m29
 """
     )
 
     assert list(program) == [
         Instruction("vadd", VPUBinaryType(md=7, ms1=8, ms2=9)),
-        Instruction("vrelu", VPUUnaryType(md=10, ms=11)),
-        Instruction("vmov", VPUUnaryType(md=12, ms=13)),
+        Instruction("vsub", VPUBinaryType(md=10, ms1=11, ms2=12)),
+        Instruction("vmax", VPUBinaryType(md=13, ms1=14, ms2=15)),
+        Instruction("vmin", VPUBinaryType(md=16, ms1=17, ms2=18)),
+        Instruction("vmul", VPUBinaryType(md=19, ms1=20, ms2=21)),
+        Instruction("vrelu", VPUUnaryType(md=22, ms=23)),
+        Instruction("vmov", VPUUnaryType(md=24, ms=25)),
+        Instruction("vexp", VPUUnaryType(md=26, ms=27)),
+        Instruction("vrecip", VPUUnaryType(md=28, ms=29)),
+    ]
+
+
+def test_assembler_parses_xlu_operands() -> None:
+    program = assemble_text(
+        """
+    transpose.xlu m14, m15
+    reduce.max.xlu m16, m17
+    reduce.sum.xlu m18, m19
+"""
+    )
+
+    assert list(program) == [
+        Instruction("transpose.xlu", XLUTransposeType(md=14, ms=15)),
+        Instruction("reduce.max.xlu", XLUTransposeType(md=16, ms=17)),
+        Instruction("reduce.sum.xlu", XLUTransposeType(md=18, ms=19)),
     ]
 
 

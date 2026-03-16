@@ -1,11 +1,11 @@
 {
-  "symbols": {
-    "program": {
-      "kind": "program",
-      "region": "imem",
-      "address": 0x00100000,
-      "size_bytes": 64,
-      "file": "salu_progress_while_dma.S",
+  symbols: {
+    program: {
+      kind: "program",
+      region: "imem",
+      address: 0x00100000,
+      size_bytes: 64,
+      file: "salu_progress_while_dma.S",
     },
   },
 }

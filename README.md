@@ -90,9 +90,12 @@ Common verification and example commands from the repo root:
 - `uv run penguin-compile bundle --program tests/vectors/programs/scalar/examples/scalar_matmul.S --output-dir /tmp/penguin-bundle`
 - `uv run penguin-model --program tests/vectors/programs/scalar/examples/scalar_matmul.S`
 - `uv run python examples/matmul.py`
-- `uv run python examples/matmul_large.py --trace examples/out/matmul_large_trace.json`
-- `uv run python examples/linear_large.py --trace examples/out/linear_large_trace.json`
+- `uv run python examples/matmul_large.py --trace outputs/examples/matmul_large_trace.json`
+- `uv run python examples/linear_large.py --trace outputs/examples/linear_large_trace.json`
 - `uv run python scripts/generate_program_symbol_tables.py`
+
+Generated Perfetto traces now live under `outputs/examples/` for example runs and
+`outputs/tests/` for pytest program-execution runs.
 
 ## Design References
 

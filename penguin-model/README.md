@@ -38,8 +38,17 @@ uv run pytest
 Run a checked-in example workload:
 
 ```bash
-uv run python examples/matmul_large.py --trace examples/out/matmul_large_trace.json
+uv run python examples/matmul_large.py --trace outputs/examples/matmul_large_trace.json
 ```
+
+Generate the current PI0 workload roofline report and plot:
+
+```bash
+uv run python examples/roofline_report.py --output outputs/examples/penguin_roofline.png
+```
+
+Example traces default to `outputs/examples/`. Under pytest, direct program executions
+also emit JSON traces under `outputs/tests/`.
 
 Load a checked-in program from source with its mapped IMEM base:
 
@@ -65,8 +74,4 @@ When a bundle contains file-backed symbol payloads, the model loader can stage t
 their mapped DRAM/VMEM/IMEM regions before execution through
 `preload_loaded_bundle_symbols(...)`.
 
-Deferred bundle TODO:
-
-- `constants.bin` is loaded and reported by the CLI, but the manifest does not yet define
-  a runtime memory mapping for it, so the model does not automatically stage constants
-  into DRAM or VMEM yet.
+Known deferred bundle work is tracked in `TODO.md`.
