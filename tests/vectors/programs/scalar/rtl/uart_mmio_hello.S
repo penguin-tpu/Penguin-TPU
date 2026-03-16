@@ -199,6 +199,14 @@ wait_22:
     sbeq x3, x0, wait_22
     nop
     nop
+    li x4, 13
+    sst x4, 0(x2)
+
+wait_23:
+    sld x3, 0(x1)
+    sbeq x3, x0, wait_23
+    nop
+    nop
     li x4, 10
     sst x4, 0(x2)
 
