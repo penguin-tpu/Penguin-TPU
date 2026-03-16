@@ -78,6 +78,8 @@ The wrapper script:
 - selects the active top-level from `--target`
 - retries device programming if `4_program_device.tcl` fails intermittently
 - validates the UART output with `uv run python`
+- for `uart_hello`, requires two `Hello World` observations with an acceptable
+  period window around 1 second
 
 The retry path is not theoretical. During the March 16, 2026 `scalar_core`
 board run, the first `open_hw_target` attempt failed with "No devices
@@ -132,7 +134,10 @@ uv run python scripts/vivado/read_uart_hello.py \
   --port /dev/ttyUSB0 \
   --baud 115200 \
   --timeout 6 \
-  --expect "Hello World"
+  --expect "Hello World" \
+  --min-occurrences 2 \
+  --min-period 0.90 \
+  --max-period 1.10
 ```
 
 For `scalar_core`:

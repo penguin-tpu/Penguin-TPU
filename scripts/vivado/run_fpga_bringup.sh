@@ -51,9 +51,15 @@ fi
 case "${TARGET}" in
     uart_hello)
         EXPECT_MESSAGE="Hello World"
+        MIN_OCCURRENCES=2
+        MIN_PERIOD=0.90
+        MAX_PERIOD=1.10
         ;;
     scalar_core)
         EXPECT_MESSAGE="hello, this is penguin"
+        MIN_OCCURRENCES=1
+        MIN_PERIOD=""
+        MAX_PERIOD=""
         ;;
     *)
         echo "unsupported target: ${TARGET}" >&2
@@ -92,4 +98,7 @@ uv run python "${REPO_ROOT}/scripts/vivado/read_uart_hello.py" \
     --port "${SERIAL_PORT}" \
     --baud "${SERIAL_BAUD}" \
     --timeout "${SERIAL_TIMEOUT}" \
-    --expect "${EXPECT_MESSAGE}"
+    --expect "${EXPECT_MESSAGE}" \
+    --min-occurrences "${MIN_OCCURRENCES}" \
+    ${MIN_PERIOD:+--min-period "${MIN_PERIOD}"} \
+    ${MAX_PERIOD:+--max-period "${MAX_PERIOD}"}
