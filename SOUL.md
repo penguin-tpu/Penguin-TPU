@@ -401,3 +401,28 @@ The current document set should be treated as the first coherent baseline for th
 architecture and memory organization. Future changes should update the formal specs and
 then reflect the delta here, rather than letting `SOUL.md` become a second competing
 specification.
+
+## RTL Bring-Up Start
+
+- `rtl/penguin_tpu/` now includes a minimal FPGA hello-world path:
+  - vendored `uart.v`, `uart_tx.v`, and `uart_rx.v` from the referenced
+    `alexforencich/verilog-uart` project under the upstream MIT license
+  - a new `penguin_uart_hello_top.v` top level that sends `Hello World\r\n`
+    once per second over UART
+- the top-level UART path is intentionally simple and parameterized only by
+  `CLK_FREQ_HZ` and `BAUD_RATE`; it is meant for first-board bring-up before
+  any Penguin core integration
+- `tests/cocotb/` now contains a first RTL regression for that bring-up path:
+  - `tb_uart_hello.py` drives the top-level clock/reset, decodes the serial
+    waveform, and checks both the `Hello World\r\n` payload and 1 Hz cadence
+  - `test_uart_hello.py` runs the cocotb test through Verilator from pytest
+- current cocotb dependency is intentionally pinned to `>=1.8,<1.9` because the
+  installed Verilator version is `5.020`, which is older than the minimum
+  version expected by newer cocotb Verilator integrations
+- GitHub Actions CI now runs RTL regressions in a dedicated `rtl-tests` job that
+  installs Verilator on `ubuntu-latest` and executes `pytest tests/cocotb`
+
+Open follow-up for the next FPGA step:
+
+- board-specific reset polarity, clock frequency, pin constraints, and Vivado
+  project flow still need to be supplied before bitstream generation

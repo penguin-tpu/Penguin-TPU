@@ -12,6 +12,7 @@ dependencies = [
 
 [dependency-groups]
 dev = [
+  "cocotb>=1.8,<1.9",
   "pytest>=8.3",
 ]
 

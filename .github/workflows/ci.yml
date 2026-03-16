@@ -25,7 +25,35 @@ jobs:
           python-version-file: pyproject.toml
 
       - name: Sync workspace dependencies
-        run: uv sync --dev --locked
+        run: uv sync --dev
 
-      - name: Run test suite
-        run: uv run pytest
+      - name: Run software test suite
+        run: uv run pytest --ignore=tests/cocotb
+
+  rtl-tests:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install Verilator
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y verilator
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version-file: pyproject.toml
+
+      - name: Sync workspace dependencies
+        run: uv sync --dev
+
+      - name: Run RTL cocotb test suite
+        run: uv run pytest tests/cocotb
