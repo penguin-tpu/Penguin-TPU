@@ -19,6 +19,7 @@ from .bundle import (
     BundleSymbolTable,
     write_executable_bundle,
 )
+from .rtl import write_verilog_rom_init
 
 
 def _parse_int(value: str) -> int:
@@ -86,6 +87,29 @@ def _build_parser() -> argparse.ArgumentParser:
         default=[],
         metavar="RELATIVE_PATH=HOST_PATH",
         help="Additional file-backed bundle payload to copy into the bundle.",
+    )
+
+    rtl_rom_parser = subparsers.add_parser(
+        "rtl-rom",
+        help="Assemble a scalar program into a Verilog ROM-init include.",
+    )
+    rtl_rom_parser.add_argument("--program", type=Path, required=True, help="Assembly source path.")
+    rtl_rom_parser.add_argument(
+        "--output",
+        type=Path,
+        required=True,
+        help="Destination Verilog include path.",
+    )
+    rtl_rom_parser.add_argument(
+        "--array-name",
+        default="imem",
+        help="Verilog memory array identifier used on the left-hand side.",
+    )
+    rtl_rom_parser.add_argument(
+        "--base-address",
+        type=_parse_int,
+        default=0,
+        help="Program base address used when resolving labels.",
     )
     return parser
 
@@ -204,10 +228,23 @@ def _bundle_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def _rtl_rom_command(args: argparse.Namespace) -> int:
+    output = write_verilog_rom_init(
+        args.output,
+        args.program,
+        array_name=args.array_name,
+        base_address=args.base_address,
+    )
+    print(f"wrote rtl rom init: {output}")
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = _build_parser().parse_args(list(argv) if argv is not None else None)
     if args.command == "bundle":
         return _bundle_command(args)
+    if args.command == "rtl-rom":
+        return _rtl_rom_command(args)
     raise ValueError(f"Unsupported command '{args.command}'")
 
 

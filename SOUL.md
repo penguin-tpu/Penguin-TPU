@@ -614,3 +614,8 @@ Open follow-up for the next FPGA step:
     - `TNS=0.000 ns`
   - functional board validation and timing signoff now both pass with the
     divided clock
+- moved scalar RTL ROM-init generation into `penguin-compiler`:
+  - added `write_verilog_rom_init(...)` / `render_verilog_rom_init(...)`
+  - added `penguin-compile rtl-rom --program ... --output ...`
+  - the checked-in scalar UART hello ROM include can now be regenerated through
+    the compiler instead of via an ad hoc `python -c` command
