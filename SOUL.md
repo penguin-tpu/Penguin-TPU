@@ -35,6 +35,9 @@ What exists now:
 - checked-in programs under `tests/vectors/programs/` now also carry adjacent
   `*.symbols.json5` sidecars, and the shared Python loaders consume those sidecars when
   running scalar/tensor example programs from source files
+- the formal spec set is now consolidated into two production-style documents:
+  - [architecture-spec.md](/home/tk/Desktop/Penguin-TPU/docs/specs/architecture-spec.md)
+  - [microarchitecture-spec.md](/home/tk/Desktop/Penguin-TPU/docs/specs/microarchitecture-spec.md)
 - fixed-shape Gemma-inspired examples now exist under `examples/` and run as staged
   executable-package flows over checked-in tensor assembly:
   - `examples/gemma_attention.py`
@@ -55,6 +58,11 @@ What exists now:
 - deterministic pseudo-random power-on initialization for DRAM, VMEM, scalar registers,
   tensor registers, and MXU weight-slot state in the Python model
 - initial XLU transpose functional/performance modeling for `transpose.xlu`
+- a spreadsheet-style normalized roofline model for the current machine shape, including
+  DRAM and VMEM roofs, representative kernel projections, and a saved PNG plot
+- a PI0 workload roofline analysis built from external OpenPI and Understanding-PI0
+  sources, with dominant-kernel coverage, DRAM-vs-VMEM arithmetic intensities, and a
+  workload-driven roofline plot
 - repo-wide verification now also locks:
   - all checked-in assembly programs under `tests/vectors/programs/` have valid
     `*.symbols.json5` sidecars whose recorded sizes match the assembled instruction
@@ -69,19 +77,11 @@ What exists now:
   - sidecar symbol-table loading flow
   - the current CLI surfaces and their remaining deferred scope
 - formal baseline specs:
-  - [scalar-functional-subset.md](/home/tk/Desktop/Penguin-TPU/docs/specs/scalar-functional-subset.md)
   - [architecture-spec.md](/home/tk/Desktop/Penguin-TPU/docs/specs/architecture-spec.md)
   - [microarchitecture-spec.md](/home/tk/Desktop/Penguin-TPU/docs/specs/microarchitecture-spec.md)
-  - [memory-organization-spec.md](/home/tk/Desktop/Penguin-TPU/docs/specs/memory-organization-spec.md)
-  - [configuration-parameters-spec.md](/home/tk/Desktop/Penguin-TPU/docs/specs/configuration-parameters-spec.md)
   - [upstream-npu-spec-merge-review.md](/home/tk/Desktop/Penguin-TPU/docs/reviews/upstream-npu-spec-merge-review.md)
 
-What does not exist yet:
-
-- direct PyTorch-to-Penguin export logic
-- manifest-level runtime mapping for `constants.bin`
-- RTL testbench flow
-- FPGA bring-up flow
+Current open work and undecided items now live in `TODO.md`.
 
 ## Frozen Baseline
 
@@ -357,13 +357,6 @@ Implemented today:
     the next fetch uses the target; only the PC log semantics were adjusted to reflect
     fetch-stage PC.
 
-Not yet implemented:
-
-- VPU execution
-- XLU execution
-- executable package
-- compiler lowering
-
 ## Tensor Modeling Notes
 
 The tensor-side implementation intentionally made a few conservative choices where the
@@ -377,8 +370,7 @@ spec is not fully frozen yet.
   - `matmul.add.mxu0 mD, mS, w0, mP`
 - This memory-operand syntax is a model choice, not a fully frozen ISA encoding.
 - The model uses `torch.float8_e4m3fn` as the practical stand-in for the spec’s
-  `FP8_e4m3` contract. Confirm later whether this is acceptable or whether a stricter
-  custom FP8 implementation is required.
+  `FP8_e4m3` contract.
 - The model computes MXU results into BF16 tensor-register images and does not yet
   implement optional BF16-to-FP8 writeback, because the writeback-mode instruction forms
   are not frozen.
@@ -441,38 +433,7 @@ around it.
 - the XLU model now implements `transpose.xlu m<dest>, m<src>` as a BF16 whole-register
   transpose that writes the raw bytes of the transposed `16 x 64` tile into `m<dest>`
 
-Open question to confirm later:
-
-- whether the intended `MEM_BASE` behavior is exactly a high-bits extension
-  `(mem_base << 32) | low32`, or some other shared offset encoding
-- whether the architected first VPU data view should remain BF16-only, or whether FP8
-  elementwise views are also intended in the initial ISA
-- whether the XLU should grow a separate FP8 transpose opcode/view, or whether BF16-only
-  transpose is the intended first architecture cut
-
-## Immediate Next Steps
-
-1. Start using the executable-package manifest and symbol table from actual compiler
-   export paths instead of example-only/test-only flows.
-2. Add formal tensor layout/packing spec, especially padding and tail-handling rules.
-3. Add a first binary/text assembly encoding spec for 32-bit instructions.
-4. Define the host control and CSR map for launch, halt, done, and error reporting.
-5. Refine tensor execution timing and overlap semantics for long-chime MXU/VPU work.
-6. Implement the next tensor-side functional unit: XLU transpose.
-
-## Remaining Open Items
-
-Only a small set of important questions remain:
-
-- exact DMA instruction shapes
-- exact `vload` / `vstore` encodings
-- exact host-side CSR-region base address and field layout
-- exact DMA instruction shapes for tensor-era programs
-- exact `MEM_BASE` address-extension encoding
-- exact XLU transpose instruction encoding and sequencing
-- whether VMEM is logically unified or internally partitioned by traffic class
-- final tensor ISA encoding details
-- halt behavior while long-chime tensor operations are in flight
+Current pending modeling work and open architecture decisions are tracked in `TODO.md`.
 
 ## Checkpoint Note
 
@@ -536,8 +497,8 @@ Open follow-up for the next FPGA step:
     custom-opcode space
   - `microarchitecture-spec.md` defines the scalar decode baseline and first
     scalar RTL slice structure
-  - `scalar-functional-subset.md` no longer treats the scalar binary layer as
-    undefined
+  - architecture-visible scalar ISA, memory-map, and configuration requirements are now
+    consolidated into `architecture-spec.md`
 
 ## Scalar RTL First Implementation
 

@@ -1,559 +1,414 @@
 # Penguin Microarchitecture Specification
 
-Status: Working Baseline 0.4
+Status: Baseline 1.0
+
+## 1. Scope
+
+This document defines the baseline implementation direction for Penguin-TPU.
+
+It is the authoritative specification for:
+
+- the intended block-level organization
+- pipeline and issue behavior
+- functional-unit timing classes
+- shared model and RTL parameters
+- memory-system implementation direction
+- arbitration and overlap rules
+- reset / initialization strategy used by the software model
+- trace and observability requirements
+
+This document refines the architecture specification. If this document conflicts with the
+architecture specification on an architecture-visible behavior, the architecture
+specification takes precedence.
+
+## 2. Design Objectives
+
+The baseline microarchitecture shall optimize for:
+
+- a narrow, explainable single-issue frontend
+- deterministic on-chip timing for a fixed configuration
+- explicit overlap of long-chime execution units
+- a single asynchronous boundary at `DRAM <-> VMEM`
+- straightforward software-model, RTL, and trace alignment
+
+The baseline does not attempt to optimize for:
+
+- superscalar issue
+- out-of-order execution
+- speculative memory disambiguation
+- hidden hardware-managed tensor caches
+- generalized trap recovery
+
+## 3. Frozen Shared Parameters
+
+The following parameters are frozen for the current baseline implementation.
+
+### 3.1 Architectural shape
+
+| Parameter | Value | Meaning |
+|---|---:|---|
+| `INSN_WIDTH` | `32` bits | Fixed instruction width |
+| `INSN_ALIGN` | `4` bytes | Instruction alignment |
+| `NUM_XREG` | `32` | Scalar register count |
+| `CONTROL_FLOW_DELAY_SLOTS` | `2` | Required branch/jump delay slots |
+| `NUM_MREG` | `64` | Tensor register count |
+| `MREG_ROWS` | `64` | Rows per tensor register |
+| `MREG_ROW_BYTES` | `32` bytes | Bytes per tensor-register row |
+| `MREG_BYTES` | `2048` bytes | Bytes per tensor register |
+| `MXU_COUNT` | `2` | Architected MXU count |
+| `WEIGHT_SLOTS_PER_MXU` | `2` | Weight slots per MXU |
+| `WEIGHT_TILE_ROWS` | `32` | Rows per MXU weight tile |
+| `WEIGHT_TILE_COLS_FP8` | `16` | FP8 columns per MXU weight tile |
+| `WEIGHT_SLOT_BYTES` | `512` bytes | Bytes per MXU weight slot |
+| `DMA_CHANNELS` | `8` | Architected DMA channels |
+| `DMA_ALIGN` | `32` bytes | DMA alignment and granularity |
+| `IMEM_BASE` | `0x0010_0000` | IMEM base address |
+| `IMEM_SIZE` | `32 KiB` | IMEM capacity |
+| `VMEM_BASE` | `0x0800_0000` | VMEM base address |
+| `VMEM_SIZE` | `1 MiB` | VMEM capacity |
+| `DRAM_BASE` | `0x8000_0000` | DRAM base address |
+| `DRAM_SIZE` | `16 GiB` | DRAM capacity |
+
+### 3.2 Timing classes and bandwidth fragments
+
+| Parameter | Value | Meaning |
+|---|---:|---|
+| `MATMUL_LATENCY_CYCLES` | `64` | One MXU matmul launch latency class |
+| `VPU_SIMPLE_OP_LATENCY_CYCLES` | `2` | Pipelineable VPU latency class |
+| `VPU_NON_PIPELINEABLE_OP_LATENCY_CYCLES` | `8` | Non-pipelineable VPU latency class |
+| `XLU_TRANSPOSE_LATENCY_CYCLES` | `4` | Whole-register transpose latency class |
+| `OFFCHIP_LINK_WIDTH_BITS` | `32` | DRAM-link beat width |
+| `OFFCHIP_LINK_CORE_CYCLES_PER_BEAT` | `2` | Off-chip serialized beat time |
+| `DMA_OFFCHIP_COMMAND_WORDS` | `2` | DRAM-side DMA command overhead |
+| `VMEM_BUS_WIDTH_BITS` | `128` | VMEM/system-bus beat width |
+| `VMEM_BUS_CORE_CYCLES_PER_BEAT` | `1` | VMEM/system-bus beat time |
+| `VMEM_TENSOR_ALIGN` | `32` bytes | VMEM alignment for `vload`, `vstore`, `mxu.push.*` |
+| `TRACE_TICKS_PER_CYCLE` | `3` | Trace timestamp granularity |
+
+### 3.3 Software-model initialization parameters
+
+| Parameter | Value | Meaning |
+|---|---:|---|
+| `INIT_SEED` | `0x50E11234` | Deterministic pseudo-random initialization seed |
+| `RANDOMIZE_DRAM` | `true` | Randomize DRAM at power-on in the Python model |
+| `RANDOMIZE_VMEM` | `true` | Randomize VMEM at power-on in the Python model |
+| `RANDOMIZE_SCALAR_REGISTERS` | `true` | Randomize scalar registers except `x0` |
+| `RANDOMIZE_TENSOR_REGISTERS` | `true` | Randomize tensor registers |
+| `RANDOMIZE_WEIGHT_SLOTS` | `true` | Randomize MXU weight-slot state |
+
+## 4. Top-Level Organization
+
+The baseline Penguin microarchitecture is organized around the following major
+subsystems:
+
+- an instruction frontend
+- a scalar execution path
+- a tensor register file and tensor interconnect
+- two MXUs
+- one VPU
+- one XLU
+- an instruction memory path
+- a VMEM subsystem
+- a DMA engine complex connecting `DRAM` and `VMEM`
+- a host-visible control and status block
 
-## 1. Purpose
+### 4.1 Frontend
 
-This document defines the intended microarchitectural direction for Penguin. It refines
-the architecture-level goals in [architecture-spec.md](/home/tk/Desktop/Penguin-TPU/docs/specs/architecture-spec.md) into an implementation strategy that is still flexible enough for design-space exploration.
+The frontend baseline shall be:
 
-This is an initial design-iteration document. It captures the currently intended
-organization and explicitly calls out unresolved choices.
+- single-stream instruction fetch
+- single instruction decode
+- single issue decision per cycle
+- fixed-width 32-bit fetch from `IMEM`
 
-## 2. Finalized Microarchitectural Decisions And Rationale
+The frontend phase model used by the performance model and trace infrastructure is:
 
-This section captures the microarchitectural decisions that are currently treated as the
- baseline implementation direction.
+- `IFG`: instruction-address generation and request launch
+- `IFR`: instruction return
+- `IDU`: decode and dispatch
+- `EXU`: execution-unit launch or scalar execution
 
-### 2.1 Narrow frontend
+### 4.2 Execution-unit overlap model
 
-Decision:
+The baseline implementation shall support concurrent long-chime unit activity.
 
-- one fetch stream
-- one decode stream
-- one issue decision per cycle
-- fixed-width 32-bit instruction fetch
+Requirements:
 
-Rationale:
+- `mxu0`, `mxu1`, `vpu`, `xlu`, and DMA transfers may be active concurrently
+- only one new instruction may issue in a cycle
+- issue stalls when the targeted unit cannot accept a new instruction
+- issue does not perform dynamic reordering to bypass stalled older instructions
 
-- minimizes frontend complexity
-- aligns with the non-VLIW architectural choice
-- shifts throughput pressure to long-chime compute units instead of fetch bandwidth
+### 4.3 Tensor access organization
 
-### 2.2 Concurrent long-chime execution
+The baseline tensor-access model shall be fully connected at the architectural boundary:
 
-Decision:
+- every functional unit may access every tensor register
+- internal arbitration may stall or serialize traffic
+- internal banking shall not be exposed as a software-visible rule
 
-- `mxu0`, `mxu1`, VPU, and XLU may be active concurrently
-- only one new instruction may be issued in a cycle
+The baseline implementation direction is a central tensor crossbar or equivalent shared
+interconnect.
 
-Rationale:
+## 5. Scalar Frontend and Scalar Execution Path
 
-- preserves the single-issue frontend while still enabling overlap
-- matches the compiler-scheduled latency-hiding model
+### 5.1 Scalar decode
 
-### 2.3 Fully connected tensor access
+The scalar decode path shall recognize the RV32I-compatible binary baseline defined by
+the architecture specification.
 
-Decision:
+Minimum decode outputs:
 
-- a central crossbar connects tensor registers to all functional units
-- every functional unit can reach every tensor register
+- instruction class
+- `rd`
+- `rs1`
+- `rs2`
+- sign-extended immediate
+- target execution unit
+- legality classification
 
-Rationale:
+The decode stage should classify standard RISC-V custom major opcodes distinctly from
+fully illegal encodings to preserve future accelerator-extension space.
 
-- avoids exposing bank partitioning as an architectural rule
-- simplifies software scheduling and operand naming
-- leaves bandwidth/arbitration as a microarchitectural optimization problem
+### 5.2 Scalar execution blocks
 
-### 2.4 Distinct dual-MXU implementations
-
-Decision:
-
-- `mxu0` implements systolic-array accumulation
-- `mxu1` implements inner-product-tree accumulation
-
-Rationale:
-
-- makes direct implementation comparison part of the design, not an afterthought
-- keeps the software-visible contract identical across both engines
-
-### 2.5 VMEM-centered data staging
-
-Decision:
-
-- VMEM is the sole on-chip data staging memory for tensor traffic
-- `m` registers talk to VMEM only
-- `mxu.push.*` also sources from VMEM
-
-Rationale:
-
-- isolates the async boundary at DRAM <-> VMEM
-- keeps on-chip tensor dataflow deterministic and easier to model
-- prevents compute instructions from inheriting DRAM variability
-
-### 2.6 Blocking on-chip transfers, async off-chip transfers
-
-Decision:
-
-- DMA is asynchronous
-- VMEM-facing `vload`, `vstore`, and `mxu.push.*` are blocking
-
-Rationale:
-
-- keeps async completion semantics narrow and explicit
-- avoids polluting all data movement with fence logic
-- simplifies both the functional model and the first RTL control path
-
-### 2.7 Structural conflicts are absorbed by stalls, not partial retirement
-
-Decision:
-
-- bank conflicts, crossbar contention, or destination-port conflicts are resolved by
-  stalling or arbitration
-- these conflicts are not allowed to create architecturally visible partial-tile results
-
-Rationale:
-
-- keeps internal storage implementation hidden from software
-- avoids fragile compiler rules around partially written destination tiles
-- makes RTL and model comparison significantly cleaner
-
-### 2.8 Minimal execution-control and observability plane
-
-Decision:
-
-- the microarchitecture shall expose enough control and status state to support host
-  launch, halt, completion, and DMA-busy observation
-
-Rationale:
-
-- IMEM population, execution start, and completion need an explicit system contract
-- this state is required for bring-up even before tensor execution is complete
-
-## 3. High-Level Organization
-
-The intended Penguin microarchitecture is organized around four major subsystems:
-
-- a single-instruction scalar fetch, decode, and issue frontend
-- a scalar execution path for control and orchestration
-- a tensor register file with 64 architectural tile registers
-- long-latency tensor functional units: `mxu0`, `mxu1`, VPU, and XLU
-
-The scalar path is responsible for launching long-chime tensor work. The tensor units are
-responsible for sustaining throughput over many cycles after a single issue event.
-
-Multiple long-chime units may therefore be active concurrently even though only one new
-instruction is issued in any given cycle.
-
-## 4. Frontend And Issue
-
-### 4.1 Frontend structure
-
-The frontend is intentionally narrow:
-
-- one fetch stream
-- one decode stream
-- one issue decision per cycle, subject to stalls
-- at most one scalar or tensor instruction launch per cycle
-- fixed-width 32-bit instruction fetch
-- no multiword instruction fetch should be required by the ISA
-
-This choice is intended to reduce instruction footprint and frontend complexity relative
-to a TPU-style VLIW frontend.
-
-### 4.2 Issue policy
-
-Penguin is statically scheduled, but hardware still checks whether the destination
-functional unit is currently able to accept a new instruction.
-
-Microarchitectural requirements:
-
-- issue logic shall track busy status for long-latency units
-- if an instruction targets a busy unit, issue stalls until the unit becomes available
-- if an instruction is legal and the targeted unit is ready, it may issue without dynamic
-  rescheduling
-
-This is not out-of-order execution. It is correctness-preserving issue gating around a
-statically scheduled program.
-
-The current design direction is:
-
-- on-chip execution uses deterministic unit latency and busy tracking
-- off-chip memory activity is asynchronous
-- explicit synchronization is required only for off-chip memory completion
-- synchronization should be resource-specific rather than one global wait
-- `mxu0` and `mxu1` may execute concurrently, but they cannot both be issued in the same
-  cycle
-- memory-facing operations use scalar-register indirect addressing plus a CSR high-address
-  base offset
-- the CSR high-address base offset is shared across memory-like instructions
-- DMA synchronization is channel-specific, with waits targeting individual DMA channels
-- the first architecture revision exposes 8 DMA channels
-- the 8 DMA channels are symmetric in capability
-
-### 4.3 Frontend phase model
-
-The baseline frontend is intended to be explainable in a small number of phases:
-
-- IFG: instruction-address generation and IMEM request launch
-- IFR: instruction return from IMEM
-- ID: decode and dispatch
-- EX: scalar execution or long-chime unit launch
-
-This phase model is not meant to force a specific RTL partitioning, but it does capture
-the timing intuition behind the 2-delay-slot branch model and the one-instruction-per-
-cycle issue rule.
-
-### 4.4 Scalar decode baseline
-
-The scalar frontend should now be treated as decoding an RV32I-compatible 32-bit binary
-instruction stream for the scalar subset.
-
-Microarchitectural expectations:
-
-- one 32-bit instruction word is fetched from IMEM at a time
-- decode extracts standard RV32I scalar fields:
-  - `opcode`
-  - `rd`
-  - `rs1`
-  - `rs2`
-  - `funct3`
-  - `funct7`
-- immediate generation follows standard RV32I bit reassembly and sign-extension rules
-  for R/I/S/B/U/J formats
-- scalar decode must distinguish at least:
-  - ALU register-register operations
-  - ALU register-immediate operations
-  - scalar load/store operations
-  - branches
-  - jumps
-  - upper-immediate operations
-  - system/misc-memory forms
-- `sld` / `sst` reuse the standard `lw` / `sw` encoding shapes but route to Penguin VMEM
-  semantics rather than a flat general memory space
-- `sfence`, `secall`, and `sebreak` reuse the standard `fence` / `ecall` / `ebreak`
-  encoding shapes
-
-The scalar decoder should also classify the RISC-V custom major opcodes separately from
-fully illegal encodings:
-
-- `custom-0`
-- `custom-1`
-- `custom-2`
-- `custom-3`
-
-The first scalar-only core may still treat those as unsupported, but it should preserve
-that classification boundary because those opcode families are reserved for future
-Penguin accelerator instructions.
-
-### 4.5 First scalar RTL slice
-
-The intended first scalar RTL slice should be organized around a small set of clearly
-separated blocks:
+The intended first scalar implementation slice is partitioned into:
 
 - scalar decoder
 - scalar register file
 - scalar ALU / compare datapath
 - branch and jump target unit
 - VMEM-facing scalar load/store unit
-- scalar control block that owns `pc`, delay-slot sequencing, and halt status
+- scalar control block that owns `pc`, delay-slot tracking, and halt status
 
-The implementation should remain single-issue and in-order.
+### 5.3 Delay-slot handling
 
-The detailed step-by-step bring-up sequence is documented in
-[scalar-core-encoding-and-rtl-plan.md](/home/tk/Desktop/Penguin-TPU/docs/plans/scalar-core-encoding-and-rtl-plan.md).
+The microarchitecture shall preserve the architectural two-delay-slot rule without
+speculation.
 
-## 5. Tensor Register File
+The baseline implementation direction is:
 
-The tensor register file is the key datapath structure for accelerator execution.
+- the control block records a pending redirect and the remaining delay-slot count
+- sequential fetch continues through the two delay-slot instructions
+- once the delay-slot count reaches zero, the redirect is applied
+- a younger branch or jump in a delay slot overwrites the older pending redirect
 
-Microarchitectural requirements:
+## 6. Tensor Register File and Local Interconnect
 
-- 64 architectural tensor registers
-- tensor registers are addressed as `m0` through `m63`
-- each register stores one 2D tile
-- each tile has 64 rows
-- each row stores 32 bytes
-- the register file is physically shared across tensor data types
-- instruction semantics define how a given operation interprets row contents
-- MXU, VPU, and XLU consume tensor operands through the shared tensor-register structure
-- a central crossbar connects tensor registers to the functional units
-- every functional unit can access every tensor register through that crossbar
-- the tensor register file must support row-wise readout at the throughput required by
-  the target functional unit
+### 6.1 Register file
 
-The exact porting and arbitration structure behind the crossbar is not fixed in this
-revision, but register reachability is intended to be fully connected.
+The tensor register file shall hold:
 
-Physical banking remains an implementation detail. If the chosen storage organization
-cannot serve a requested access pattern in one cycle, the microarchitecture must stall or
-arbitrate without exposing partial architectural completion.
+- `64` registers
+- `2048` bytes per register
+- whole-register read and write access for tensor instructions
 
-## 6. Long-Chime Execution
+The baseline does not require architectural bank visibility.
 
-Long-chime execution is central to Penguin.
+### 6.2 Weight slots
 
-### 6.1 Definition
+Each MXU shall contain two distinct weight-slot storage entries.
 
-A long-chime operation is a multi-cycle tensor instruction that sweeps over one or more
-rows of one or more tensor registers after a single issue event.
+The baseline implementation direction is weight-stationary:
 
-### 6.2 Consequences
+- weight data is pushed into the selected slot from `VMEM`
+- the slot remains resident until overwritten
+- matmul launch selects between `w0` and `w1`
 
-Microarchitectural support is expected for:
+### 6.3 Structural-conflict handling
 
-- unit-local sequencing across tile rows
-- deterministic per-instruction total latency
-- architectural busy indication while a long-chime operation is in flight
-- scalar issue overlap when no architectural hazard exists
+Structural conflicts shall be handled by stalls or arbitration.
 
-These determinism expectations apply to on-chip execution, not to off-chip memory
-latency.
+They shall not create:
 
-### 6.3 Scheduling intention
+- partial architectural row retirement
+- partial architectural tile retirement
+- architecturally visible younger-over-older preemption
 
-The compiler is expected to place scalar instructions into the useful slack created by
-long-chime tensor instructions. The microarchitecture should support that overlap without
-requiring multi-instruction issue.
+## 7. Memory-System Implementation Direction
 
-## 7. Control-Transfer Timing
+### 7.1 High-level rule
 
-The baseline architecture now requires 2 branch/jump delay slots. The functional model
-and the frontend microarchitecture must preserve that 2-slot rule.
+The baseline memory system shall keep the asynchronous boundary narrow:
 
-Future work may revisit whether the frontend implementation should expose additional
-internal control speculation, but it must still preserve the 2 architectural delay
-slots visible to software.
+- `IMEM` fetch is local and deterministic
+- `VMEM` is the sole on-chip tensor staging memory
+- `DRAM` access is off-chip and asynchronous
+- DMA is the only `DRAM <-> VMEM` path
 
-## 8.1 Execution-control state and reset expectations
+### 7.2 Blocking on-chip tensor transfers
 
-The microarchitecture shall maintain at least the following control and observability
-state:
+The following instructions are modeled and implemented as blocking:
 
-- execution enable / disable state
-- current `pc`
-- halt / done / error outcome state
-- DMA busy indication for all 8 channels
+- `vload`
+- `vstore`
+- `mxu.push.*`
+- scalar `sld`
+- scalar `sst`
 
-On reset, execution is disabled, DMA channels are idle, and any in-flight issue-side
-state is cleared. Tensor data arrays and weight slots need not be zeroed by reset unless
-some later integration requirement states otherwise.
+The baseline intent is to keep on-chip movement deterministic and simpler to verify.
 
-The CSR region containing this control and status state should be laid out consecutively
-in memory. The exact region base address remains a SoC-integration choice.
+### 7.3 Asynchronous DMA
 
-## 8.2 Performance-model trace semantics
+DMA shall be channelized and asynchronous.
 
-The reference performance model emits a Perfetto-compatible trace. For alignment with
-the pipeline view:
+Each channel supports:
 
-- **PC**: The logged PC is the value at the instruction fetch stage—i.e. the address of
-  the instruction currently in the IFU. The model logs PC when an instruction enters
-  the IFU so that the logged PC always matches the fetch address of the instruction
-  in the IFU.
-- **DMA transfer bars**: The start of a DMA transfer is logged when the load/store
-  issues; the end is logged when the matching `dma.wait.chN` completes. Both use the
-  same trace (pipeline) time base so that dependent instructions (e.g. `vload` after
-  a wait) do not appear to start before the fence resolves.
+- at most one outstanding transfer
+- independent busy/completion state
+- `dma.wait.chN` synchronization
 
-## 9. Matrix Execution Units
-
-### 9.1 Functional role
-
-Penguin contains two distinct MXU instances:
-
-- `mxu0`: systolic-array-based
-- `mxu1`: inner-product-tree-based
-
-Both MXUs perform low-precision floating-point MAC over tile operands.
-
-Microarchitectural expectations:
+The microarchitecture is free to implement the DMA channels with shared internal data
+paths or arbitration, provided the architecture-visible channel behavior is preserved.
 
-- row-wise operand consumption from the tensor register file
-- deterministic instruction latency
-- support for long-chime operation
-- architecturally visible completion only after the full tile sweep is complete
-- MXU operand selection is whole-register at the architectural level
-- weight-stationary scheduling is the intended MXU dataflow
-- the MXU exposes two architecture-visible weight selectors, `w0` and `w1`
-- `mxu0.w0/w1` and `mxu1.w0/w1` are distinct physical state
-- processing elements may retain weights internally and reuse them across multiple cycles
-- `w0` and `w1` select one of two PE-resident weight-buffer entries
-- weight slots are loaded through explicit MXU push operations such as
-  `mxu.push.mxu0 w0`
-- MXU push operations source weight data from VMEM rather than from the `m0..m63`
-  tensor register file
-- MXU push operations are on-chip and blocking rather than asynchronously fenced
-- the architecture-visible MXU contract allows accumulation of matmul partial sums across
-  K-sweeps
-- accumulation mode is expected to be explicit in the issued opcode rather than inferred
-  from destination register state
-- the architecture-visible MXU contract excludes fused tensor postprocessing such as bias
-  add inside the MXU
-
-### 9.2 Dual-MXU design goal
-
-The project explicitly intends to compare two coexisting MXU organizations:
-
-1. `mxu0`: systolic-array-style accumulation
-2. `mxu1`: parallel inner-product-tree accumulation
-
-The reason for carrying both options is to enable direct comparison of:
+### 7.4 Baseline transfer formulas
 
-- area
-- energy efficiency
-- throughput implications
-- control complexity
+The performance model and timing expectations shall use the following formulas.
 
-The architecture should remain stable across both engines so that the comparison is
-meaningful.
+Definitions:
 
-### 9.3 Low-precision MAC
+- `OFFCHIP_BYTES_PER_BEAT = OFFCHIP_LINK_WIDTH_BITS / 8 = 4`
+- `VMEM_BYTES_PER_BEAT = VMEM_BUS_WIDTH_BITS / 8 = 16`
 
-The MXU uses low-precision floating-point MACs.
+Required formulas:
 
-Current intended arithmetic contract:
-
-- multiplicands use `FP8_e4m3`
-- accumulation uses BF16
-- an optional writeback mode may quantize results back to FP8
-- BF16-to-FP8 quantization uses round-to-nearest-even
-- BF16-to-FP8 quantization saturates on overflow
-- a scalar output scale factor is applied per workload-level matmul
-- scaling is applied on the output path rather than on MXU input fetch
-
-## 10. Vector Processing Unit
-
-The VPU is a row-wise tensor unit that shares the tensor-register abstraction with the
-MXU.
-
-Microarchitectural expectations:
-
-- row-wise operand readout
-- VPU operands are read directly from the tensor register file through the shared crossbar
-- VPU results are written back to the tensor register file rather than directly to memory
-- VPU operand selection is whole-register at the architectural level
-- initial floating-point VPU operations interpret tensor registers through the BF16
-  `64 x 16` view
-- deterministic latency
-- long-chime execution model
-- first implementation target is elementwise operations
-- initial intended opcode floor is `vadd`, `vmul`, `vmax`, `vmin`, `vrelu`, and `vmov`
-- simple pipelineable elementwise operations use a 2-cycle latency class
-- future non-pipelineable operations such as division use an 8-cycle latency class
-- later scope may include additional row-wise or reduction-adjacent operations
-
-The VPU exists to handle tensor work that is not best mapped onto the MXU.
-
-## 11. Cross-Lane Transpose Unit
-
-The XLU is a dedicated transpose unit that shares the tensor-register and
-long-chime execution model with the other tensor-side functional units.
-
-Microarchitectural expectations:
-
-- XLU operands are read from the tensor register file through the shared crossbar
-- XLU results are written back to the tensor register file rather than directly to memory
-- XLU operates on whole-register sources and destinations at the architectural level
-- XLU latency is deterministic for a fixed instruction form and configuration
-- XLU may execute concurrently with MXU or VPU when scheduling and structural resources
-  permit
-- the baseline XLU scope is transpose only
-- the implementation may reuse the shift-based transpose structure from the upstream
-  `npu_model` design as a starting point
-
-The detailed internal transpose fabric is intentionally not frozen in this revision. The
-important contract is that XLU is a dedicated on-chip transpose unit, not a DMA
-substitute.
-
-## 12. DMA And Memory Stall Behavior
-
-The first microarchitecture should make DMA behavior explicit enough for model and RTL
-alignment.
-
-Microarchitectural expectations:
-
-- 8 architected DMA channels each expose a logical busy state
-- a `dma.wait.chN` instruction may stall the frontend until channel `N` becomes idle
-- while a `dma.wait.chN` stalls issue, older in-flight long-chime operations may continue
-  draining
-- completion order across different DMA channels need not match issue order
-- request queues, transaction counters, and request/response bookkeeping are
-  microarchitectural choices rather than architecture-visible contracts
-- the baseline performance model shall account for both:
-  - off-chip serialized-link bandwidth on the DRAM side
-  - on-chip VMEM/system-bus bandwidth on the scratchpad side
-
-The important invariant is that a channel-specific wait only releases once the
-architecture-visible destination bytes are valid for the transfer issued on that channel.
-
-Baseline DMA constraint:
-
-- each DMA channel supports at most one outstanding operation at a time
-- software is responsible for fencing or otherwise retiring a channel before reusing it
-- the functional/performance model should detect channel reuse violations explicitly
-
-## 13. Memory-System Direction
-
-The memory structure is an explicit intermediate milestone between scalar-core bring-up
-and matrix acceleration.
-
-Microarchitectural implication:
-
-- the team should not optimize matrix execution in isolation before the memory path is
-  well-defined
-
-The future memory structure must support:
-
-- scalar load/store behavior already defined by the scalar spec
-- byte-addressed IMEM for instruction fetch
-- fixed-width 32-bit instruction storage in IMEM
-- movement of tile data between DRAM and VMEM through DMA
-- movement of tile data into and out of the tensor register file through VMEM-facing
-  load/store operations
-- raw-byte, unit-stride DMA transport without tensor-shape interpretation in the DMA path
-- whole-register VMEM-facing tensor transfers in the first design cut
-- byte-addressed VMEM
-- scalar-register indirect memory addressing for DMA and tensor-memory operations
-- CSR-based high-address extension for memory regions beyond the 32-bit scalar range
-- one shared memory-base CSR rather than separate per-memory-space base CSRs
-- deterministic behavior suitable for static scheduling
-- concurrent MXU, VPU, and XLU operation when bandwidth and structural resources permit
-- asynchronous off-chip transfers
-- explicit completion synchronization for off-chip transfers
-- channel-specific DMA completion waits
-- blocking on-chip transfers between VMEM and compute-local storage
-- 32-byte alignment for DMA and VMEM-facing tensor operations
-
-Software should still schedule with structural resource limits in mind, but tensor
-register reachability itself should not be restricted by static register partitioning.
-
-Formal details are further defined in
-[memory-organization-spec.md](/home/tk/Desktop/Penguin-TPU/docs/specs/memory-organization-spec.md).
-
-## 14. Performance And Comparison Goals
-
-The microarchitecture is intended to support disciplined comparison rather than ad hoc
-tuning.
-
-At minimum, the design flow should eventually compare `mxu0` and `mxu1` on:
-
-- cycle count
-- utilization
-- LUT, FF, BRAM, and DSP cost
-- achievable clock frequency
-- energy or power proxies when available
-
-## 15. Remaining Open Microarchitectural Items
-
-This revision still leaves these items open:
-
-- tensor crossbar bandwidth and read-port structure
-- exact long-chime pipeline depth per unit
-- exact busy-bit or scoreboard structure
-- exact scalar-to-tensor hazard rules
-- exact XLU datapath organization and instruction shapes
-- exact DMA instruction shapes
-- exact VMEM-facing tensor load/store instruction shapes
-- halt behavior when an unrecoverable error arrives with long-chime work in flight
-
-## 16. Immediate Next Spec Work
-
-The next design-spec iterations should define:
-
-- the memory structure formally
-- the tensor instruction set
-- the executable-package format
-- the tile data-layout rules
-- the XLU instruction contract
-- the criteria for comparing `mxu0` versus `mxu1`
+- `dma_offchip_cycles(bytes) = ceil((bytes + 4 * DMA_OFFCHIP_COMMAND_WORDS) / OFFCHIP_BYTES_PER_BEAT) * OFFCHIP_LINK_CORE_CYCLES_PER_BEAT`
+- `vmem_transfer_cycles(bytes) = ceil(bytes / VMEM_BYTES_PER_BEAT) * VMEM_BUS_CORE_CYCLES_PER_BEAT`
+- `dma_transfer_cycles(bytes) = max(dma_offchip_cycles(bytes), vmem_transfer_cycles(bytes))`
+
+For the frozen baseline values:
+
+- one off-chip beat costs `2` core cycles
+- one VMEM beat costs `1` core cycle
+- one `vload` / `vstore` of a `2048`-byte tensor register takes `128` cycles
+- one `mxu.push.*` of a `512`-byte weight tile takes `32` cycles
+
+## 8. Functional Units
+
+### 8.1 MXU0 and MXU1
+
+The two MXUs share the same architectural interface but intentionally differ internally.
+
+Baseline intent:
+
+- `mxu0`: systolic-array accumulation
+- `mxu1`: inner-product-tree accumulation
+
+Shared microarchitectural requirements:
+
+- deterministic latency class of `64` cycles per matmul launch
+- whole-register activation source
+- selected weight-slot source
+- BF16 architectural accumulation
+- ability to overlap with scalar and other long-chime units, subject to issue policy
+
+### 8.2 VPU
+
+The VPU baseline shall implement the initial BF16 elementwise floor:
+
+- `vadd`
+- `vmul`
+- `vmax`
+- `vmin`
+- `vrelu`
+- `vmov`
+
+Timing requirements:
+
+- pipelineable elementwise operations use the `2`-cycle latency class
+- future non-pipelineable operations such as division use the `8`-cycle latency class
+
+### 8.3 XLU
+
+The XLU baseline shall implement whole-register transpose.
+
+Timing requirement:
+
+- `transpose.xlu` uses the `4`-cycle latency class
+
+## 9. Reset, Initialization, and Model Contract
+
+### 9.1 Reset behavior
+
+The hardware shall reset control state, but the architecture does not require zeroed
+data memories or registers.
+
+The reference model shall instantiate the unspecified state deterministically using the
+frozen initialization seed and randomization controls.
+
+### 9.2 `PenguinCoreConfig`
+
+The Python functional / performance model shall expose one top-level configuration object
+that binds the frozen parameter set to a concrete machine instance.
+
+Required logical fragments:
+
+- scalar
+- memory map
+- memory backend
+- initialization
+- DMA
+- tensor
+- VPU
+- XLU
+- bandwidth
+- trace
+
+The active runtime behavior of a model instance shall flow from the bound configuration,
+not from unrelated global constants.
+
+## 10. Trace and Observability
+
+The baseline model and trace infrastructure shall distinguish:
+
+- instruction fetch / frontend occupancy
+- decode / dispatch occupancy
+- scalar execution
+- DMA execution
+- memory-region-visible traffic
+
+The current trace timestamp granularity is `3` ticks per core cycle.
+
+The baseline trace lane split is:
+
+- `IFU`
+- `IDU`
+- `EXU.SALU`
+- `EXU.DMA`
+- additional tensor-unit lanes as needed by the model
+
+## 11. Performance-Model Interpretation
+
+The current roofline and throughput model shall interpret the frozen parameters in
+normalized `ops/cycle` and `bytes/cycle` units unless an explicit clock frequency is
+provided externally.
+
+Required derived roofs:
+
+- DRAM roof from `2 B/cycle`
+- VMEM roof from `16 B/cycle`
+- total MXU peak from two `64`-cycle matmul engines
+
+The performance model may scale those normalized values linearly into `ops/s` and
+`bytes/s` when a frequency target is supplied, but clock frequency is not frozen by this
+specification.
+
+## 12. Implementation Freedom
+
+The following remain implementation choices provided the architecture-visible behavior is
+preserved:
+
+- exact RTL partitioning of frontend phases
+- bank and port structure inside the tensor register file
+- specific arbitration policy for internal tensor and VMEM paths
+- detailed systolic-array / reduction-tree internal datapath organization
+- detailed DMA datapath sharing between channels
+- physical placement, clock gating, and local buffering strategy
+
+The following are not implementation freedoms in this baseline:
+
+- instruction width and scalar binary compatibility
+- two control-flow delay slots
+- the three-region memory map
+- DMA channelization and fence-by-channel behavior
+- the frozen timing-class and bandwidth parameters above

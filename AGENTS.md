@@ -71,14 +71,19 @@ For Python coding style, follow the conventions used in
   architecture and microarchitecture specifications. Those documents should read like
   real arch/uarch specs, not rough notes.
 - `AGENTS.md` is the agent onboarding guide and operating manual for the repo.
-- `SOUL.md` is the running project memory. Record major changes, intentions, open
-  questions, caveats, and state transitions there.
+- `SOUL.md` is the running project memory. Record major changes, intentions, caveats, and
+  state transitions there.
+- `TODO.md` at the repo root is the single source of truth for active pending tasks,
+  TODOs, and to-be-decided items across the repo.
+- Do not maintain separate open-work lists in `SOUL.md`, package READMEs, plan docs, or
+  code comments when the item belongs in `TODO.md`. Those files may describe current
+  behavior and link to `TODO.md`, but active task tracking stays centralized.
 - If `SOUL.md` becomes too large, compact it by summarizing stale details and removing
   information that no longer matters.
 - Run Python commands through `uv`, such as `uv run python ...`, `uv run pytest`, or a
   `uv run` CLI entry point. Do not use bare `python` or `pytest` in this repo unless
   there is a specific reason not to.
-- If an agent task lasts more than 3 minutes, then after finishing the task, invoke the
+- If an agent task lasts more than 5 minutes, then after finishing the task, invoke the
   `slackbot` skill to send a short Slack message summarizing what was completed.
 
 ## Version Control Policy
@@ -92,8 +97,9 @@ For Python coding style, follow the conventions used in
   - an important reorganization is complete and coherent
 - Use your own identity as the commit author when creating those commits, not the user's, so that agent-authored changes are distinguishable from human-authored ones, and you get the credits.
 - Do not create noisy checkpoint commits for tiny, unstable edits.
-- Record the intention of the checkpoint and any unresolved questions in `SOUL.md`
+- Record the intention of the checkpoint and the resulting state change in `SOUL.md`
   before or alongside the work.
+- Update `TODO.md` whenever open work is added, resolved, re-scoped, or clarified.
 
 ## Top-Level Structure
 
@@ -101,7 +107,8 @@ For Python coding style, follow the conventions used in
 pyproject.toml          Root `uv` workspace
 README.md               Human-facing repo summary
 AGENTS.md               Agent onboarding, long-term planning, scope rules
-SOUL.md                 Running project memory, TODOs, caveats, questions
+SOUL.md                 Running project memory, caveats, state transitions
+TODO.md                 Single source of truth for pending work and open decisions
 docs/specs/             Formal architecture and microarchitecture specs
 penguin-compiler/       Python package for direct model-to-assembly export
 penguin-model/          Python package for reference/performance execution
@@ -174,6 +181,8 @@ RTL naming convention:
 - internal module reset ports should be named `reset`
 - board- or tool-facing top-level IO may keep platform-specific names when required by
   FPGA constraints or external integration
+- for broader Verilog/SystemVerilog style and formatting rules, follow
+  `docs/guides/verilog-systemverilog-style-guide.md`
 
 Current intended substructure:
 
@@ -213,20 +222,22 @@ The same artifacts are consumed by:
 
 This avoids building separate loaders or test formats for each layer.
 
-Keep only three core contracts in `docs/specs/`:
+Keep the formal spec set consolidated into two primary documents in `docs/specs/`:
 
-1. ISA behavior
-2. tensor and memory layout
-3. configuration parameters visible to both software and hardware
+1. `architecture-spec.md` for architecture-visible behavior, ISA semantics, memory map,
+   and software-visible configuration
+2. `microarchitecture-spec.md` for implementation-oriented organization, pipeline,
+   memory-system structure, and performance-model-visible constraints
 
-Everything else should derive from those contracts. There is intentionally no standalone
-IR contract in this version.
+Everything else should derive from those two documents. There is intentionally no
+standalone IR contract in this version.
 
 ## Specs And Documentation
 
 Use `docs/specs/` for formal specification documents. These should read like real
 arch/uarch specs, not rough notes. `README.md` serves as the concise project overview and
-usage entry point. Long-term planning lives in `AGENTS.md`; running state in `SOUL.md`.
+usage entry point. Long-term operating rules live in `AGENTS.md`; running state lives in
+`SOUL.md`; active pending work and undecided items live in `TODO.md`.
 
 Specification documents under `docs/specs/` should eventually cover:
 
@@ -417,9 +428,10 @@ When adding code, prefer this order:
 
 When reaching a stable checkpoint:
 
-1. Update `SOUL.md` with what changed, why it matters, and what is still unresolved.
-2. Review `git status`.
-3. Create a git commit if the change is cohesive and worth future reference. Create the commit with your name as author.
+1. Update `SOUL.md` with what changed and why it matters.
+2. Update `TODO.md` for any newly opened, resolved, or re-scoped tasks and decisions.
+3. Review `git status`.
+4. Create a git commit if the change is cohesive and worth future reference. Create the commit with your name as author.
 
-If you need project status, unresolved caveats, or open design questions, read `SOUL.md`
-next.
+If you need project status and historical context, read `SOUL.md` next. If you need the
+current pending work or open decisions, read `TODO.md` next.
