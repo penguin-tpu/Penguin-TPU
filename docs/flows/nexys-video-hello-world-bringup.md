@@ -26,7 +26,7 @@ Observed scalar-core implementation caveat:
 
 - `penguin_scalar_uart_hello_top` currently routes and programs successfully,
   but does not meet timing on the Nexys Video target in Vivado 2024.2
-  (`WNS=-2.787 ns`, `TNS=-2266.791 ns` in the routed timing summary)
+  (`WNS=-5.322 ns`, `TNS=-9779.392 ns` in the routed timing summary)
 - despite the timing violation, the programmed board still emitted the expected
   repeating UART string during the March 16, 2026 validation run
 
@@ -142,6 +142,19 @@ uv run python scripts/vivado/read_uart_hello.py \
   --expect "hello, this is penguin"
 ```
 
+To also validate the repeated 1 Hz cadence on hardware:
+
+```bash
+uv run python scripts/vivado/read_uart_hello.py \
+  --port /dev/ttyUSB0 \
+  --baud 115200 \
+  --timeout 5 \
+  --expect "hello, this is penguin" \
+  --min-occurrences 3 \
+  --min-period 0.90 \
+  --max-period 1.10
+```
+
 If the board enumerates on a different device node, replace `/dev/ttyUSB0`
 with the correct path.
 
@@ -156,6 +169,11 @@ hello, this is penguin
 
 - `uart_hello` emits `Hello World\r\n` once per second.
 - `scalar_core` continuously emits `hello, this is penguin` with no separator.
+- the current scalar-core FPGA image implements an MMIO cycle counter at
+  `0x00000108` and uses that counter in software to hold the message cadence to
+  roughly 1 second between messages on the 100 MHz board clock
+- observed March 16, 2026 scalar-core hardware intervals between successive
+  detected messages were `1.006618 s` and `0.990736 s`
 
 ## Generated Artifacts
 

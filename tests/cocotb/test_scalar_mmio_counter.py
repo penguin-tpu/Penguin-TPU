@@ -14,7 +14,7 @@ SCALAR_DIR = RTL_DIR / "scalar"
 
 
 @pytest.mark.skipif(shutil.which("verilator") is None, reason="verilator not installed")
-def test_scalar_uart_hello_cocotb() -> None:
+def test_scalar_mmio_cycle_counter_cocotb() -> None:
     verilog_sources = [
         SCALAR_DIR / "penguin_scalar_decoder.v",
         SCALAR_DIR / "penguin_scalar_regfile.v",
@@ -32,10 +32,10 @@ def test_scalar_uart_hello_cocotb() -> None:
     parameters = {
         "CLK_FREQ_HZ": 2_000,
         "BAUD_RATE": 200,
-        "CYCLE_COUNTER_INCREMENT": 50_000,
+        "CYCLE_COUNTER_INCREMENT": 7,
     }
 
-    sim_build = ROOT / ".pytest_sim_build" / "scalar_uart_hello_verilator"
+    sim_build = ROOT / ".pytest_sim_build" / "scalar_mmio_counter_verilator"
     shutil.rmtree(sim_build, ignore_errors=True)
     sim_build.mkdir(parents=True, exist_ok=True)
 
@@ -56,7 +56,7 @@ def test_scalar_uart_hello_cocotb() -> None:
             "SIM": "verilator",
             "TOPLEVEL_LANG": "verilog",
             "TOPLEVEL": "penguin_scalar_uart_hello_top",
-            "MODULE": "tb_scalar_uart_hello",
+            "MODULE": "tb_scalar_mmio_counter",
             "VERILOG_SOURCES": " ".join(str(path) for path in verilog_sources),
             "SIM_BUILD": str(sim_build),
             "COCOTB_RESULTS_FILE": str(sim_build / "results.xml"),
@@ -68,7 +68,6 @@ def test_scalar_uart_hello_cocotb() -> None:
             "PYTHONPATH": pythonpath,
         }
     )
-    env.update({f"PARAM_{name}": str(value) for name, value in parameters.items()})
 
     subprocess.run(
         ["make", "-f", str(Path(makefiles_dir) / "Makefile.sim")],

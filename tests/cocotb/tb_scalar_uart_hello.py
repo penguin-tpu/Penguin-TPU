@@ -10,14 +10,19 @@ from cocotb.utils import get_sim_time
 
 CLK_FREQ_HZ = int(os.environ["PARAM_CLK_FREQ_HZ"])
 BAUD_RATE = int(os.environ["PARAM_BAUD_RATE"])
+CYCLE_COUNTER_INCREMENT = int(os.environ["PARAM_CYCLE_COUNTER_INCREMENT"])
 CLOCK_PERIOD_NS = 10
 UART_PRESCALE = (CLK_FREQ_HZ + (BAUD_RATE * 4)) // (BAUD_RATE * 8)
 UART_BIT_CYCLES = UART_PRESCALE * 8
 MESSAGE = b"hello, this is penguin"
+MESSAGE_PERIOD_COUNTER_TICKS = 100_000_000
+MESSAGE_PERIOD_CYCLES = MESSAGE_PERIOD_COUNTER_TICKS // CYCLE_COUNTER_INCREMENT
+assert MESSAGE_PERIOD_COUNTER_TICKS % CYCLE_COUNTER_INCREMENT == 0
 
 
-async def read_uart_byte(dut) -> int:
+async def read_uart_byte(dut) -> tuple[int, int]:
     await FallingEdge(dut.uart_rx_out)
+    start_cycle = int(get_sim_time("ns")) // CLOCK_PERIOD_NS
     await ClockCycles(dut.sys_clk_i, UART_BIT_CYCLES + (UART_BIT_CYCLES // 2))
 
     value = 0
@@ -26,7 +31,21 @@ async def read_uart_byte(dut) -> int:
         await ClockCycles(dut.sys_clk_i, UART_BIT_CYCLES)
 
     assert int(dut.uart_rx_out.value) == 1
-    return value
+    return value, start_cycle
+
+
+async def read_uart_message(dut) -> tuple[bytes, int]:
+    decoded = bytearray()
+    first_start_cycle: int | None = None
+
+    for _ in range(len(MESSAGE)):
+        value, start_cycle = await read_uart_byte(dut)
+        if first_start_cycle is None:
+            first_start_cycle = start_cycle
+        decoded.append(value)
+
+    assert first_start_cycle is not None
+    return bytes(decoded), first_start_cycle
 
 
 @cocotb.test()
@@ -38,9 +57,13 @@ async def scalar_core_prints_uart_mmio_message(dut) -> None:
     await ClockCycles(dut.sys_clk_i, 5)
     dut.cpu_resetn.value = 1
 
-    decoded = bytearray()
-    for _ in range(len(MESSAGE)):
-        decoded.append(await read_uart_byte(dut))
+    first_message, first_start_cycle = await read_uart_message(dut)
+    second_message, second_start_cycle = await read_uart_message(dut)
+    third_message, third_start_cycle = await read_uart_message(dut)
 
-    assert bytes(decoded) == MESSAGE
+    assert first_message == MESSAGE
+    assert second_message == MESSAGE
+    assert third_message == MESSAGE
+    assert (second_start_cycle - first_start_cycle) == MESSAGE_PERIOD_CYCLES
+    assert (third_start_cycle - second_start_cycle) == MESSAGE_PERIOD_CYCLES
     assert int(dut.scalar_halted.value) == 0

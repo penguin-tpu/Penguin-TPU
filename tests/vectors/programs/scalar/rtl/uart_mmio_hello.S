@@ -3,9 +3,19 @@
 # MMIO map used by the current FPGA top-level:
 #   0x00000100 : UART status, bit0 = TX ready
 #   0x00000104 : UART TX data, low byte transmitted on store
+#   0x00000108 : free-running 32-bit cycle counter
+#
+# The Nexys Video scalar-core top runs at 100 MHz, so a 1 Hz message cadence
+# corresponds to 100,000,000 core cycles between message starts.
 
     li x1, 0x00000100
     li x2, 0x00000104
+    li x5, 0x00000108
+    slui x6, 0x05F5E
+    saddi x6, x6, 256
+
+message_start:
+    sld x7, 0(x5)
 
 wait_00:
     sld x3, 0(x1)
@@ -183,6 +193,13 @@ wait_21:
     li x4, 110
     sst x4, 0(x2)
 
-    sjal x0, wait_00
+delay_wait:
+    sld x8, 0(x5)
+    ssub x9, x8, x7
+    sbltu x9, x6, delay_wait
+    nop
+    nop
+
+    sjal x0, message_start
     nop
     nop

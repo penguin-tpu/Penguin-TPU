@@ -3,7 +3,10 @@
 module penguin_scalar_uart_hello_top #
 (
     parameter integer CLK_FREQ_HZ = 100_000_000,
-    parameter integer BAUD_RATE = 115200
+    parameter integer BAUD_RATE = 115200,
+    // Keep the board image cycle-accurate by default; tests may override this
+    // to accelerate the counter-driven 1 Hz loop in simulation.
+    parameter [31:0] CYCLE_COUNTER_INCREMENT = 32'd1
 )
 (
     input  wire sys_clk_i,
@@ -15,6 +18,7 @@ module penguin_scalar_uart_hello_top #
     localparam integer IMEM_WORDS = 256;
     localparam [31:0] UART_STATUS_ADDR = 32'h0000_0100;
     localparam [31:0] UART_TX_ADDR = 32'h0000_0104;
+    localparam [31:0] CYCLE_COUNTER_ADDR = 32'h0000_0108;
     localparam [31:0] UART_PRESCALE_CALC = (CLK_FREQ_HZ + (BAUD_RATE * 4)) / (BAUD_RATE * 8);
     localparam [15:0] UART_PRESCALE = UART_PRESCALE_CALC[15:0];
 
@@ -22,6 +26,7 @@ module penguin_scalar_uart_hello_top #
     wire reset = !cpu_resetn;
 
     reg [31:0] imem [0:IMEM_WORDS-1];
+    reg [31:0] cycle_counter_reg;
     integer imem_index;
 
     wire [31:0] scalar_imem_addr;
@@ -54,7 +59,18 @@ module penguin_scalar_uart_hello_top #
     end
 
     assign scalar_imem_rdata = (scalar_imem_addr[31:10] == 22'd0) ? imem[scalar_imem_addr[9:2]] : 32'h0010_0073;
-    assign scalar_dmem_rdata = (scalar_dmem_addr == UART_STATUS_ADDR) ? {31'd0, uart_tx_ready} : 32'd0;
+    assign scalar_dmem_rdata =
+        (scalar_dmem_addr == UART_STATUS_ADDR) ? {31'd0, uart_tx_ready} :
+        (scalar_dmem_addr == CYCLE_COUNTER_ADDR) ? cycle_counter_reg :
+        32'd0;
+
+    always @(posedge clock) begin
+        if (reset) begin
+            cycle_counter_reg <= 32'd0;
+        end else begin
+            cycle_counter_reg <= cycle_counter_reg + CYCLE_COUNTER_INCREMENT;
+        end
+    end
 
     penguin_scalar_core scalar_core_inst (
         .clock(clock),

@@ -37,6 +37,7 @@ What exists now:
   running scalar/tensor example programs from source files
 - deterministic pseudo-random power-on initialization for DRAM, VMEM, scalar registers,
   tensor registers, and MXU weight-slot state in the Python model
+- initial XLU transpose functional/performance modeling for `transpose.xlu`
 - repo-wide verification now also locks:
   - all checked-in assembly programs under `tests/vectors/programs/` have valid
     `*.symbols.json5` sidecars whose recorded sizes match the assembled instruction
@@ -176,6 +177,10 @@ Reasoning:
 - XLU writes only to `m` registers
 - whole-register operations only
 - intended for transpose work
+- initial opcode floor:
+  - `transpose.xlu`
+- initial data view is BF16 over the `64 x 16` tensor-register interpretation
+- initial transpose latency class is 4 cycles
 
 Reasoning:
 
@@ -416,6 +421,8 @@ around it.
   pseudo-random data in the Python model via `config.initialization`
 - checked-in startup programs that depend on clean scalar state now include an explicit
   scalar-register scrub prologue
+- the XLU model now implements `transpose.xlu m<dest>, m<src>` as a BF16 whole-register
+  transpose that writes the raw bytes of the transposed `16 x 64` tile into `m<dest>`
 
 Open question to confirm later:
 
@@ -423,6 +430,8 @@ Open question to confirm later:
   `(mem_base << 32) | low32`, or some other shared offset encoding
 - whether the architected first VPU data view should remain BF16-only, or whether FP8
   elementwise views are also intended in the initial ISA
+- whether the XLU should grow a separate FP8 transpose opcode/view, or whether BF16-only
+  transpose is the intended first architecture cut
 
 ## Immediate Next Steps
 
@@ -546,6 +555,15 @@ Open follow-up for the next FPGA step:
 - adjusted the checked-in UART-MMIO hello program so the scalar-core FPGA target
   loops forever instead of printing once and halting; this makes post-program
   serial attachment reliable during board validation
+- the scalar-core UART-MMIO top now also exposes a 32-bit free-running cycle
+  counter at `0x00000108`
+- the checked-in assembly program now snapshots that counter and uses it to hold
+  the message cadence to 1 Hz on the 100 MHz Nexys Video clock
+- added cocotb coverage for the new counter:
+  - reset-to-zero behavior
+  - increment behavior
+  - modulo-32-bit wraparound behavior
+  - counter-driven inter-message cadence in the scalar UART-MMIO program
 
 ## Multi-Target FPGA Bring-Up
 
@@ -570,12 +588,20 @@ Open follow-up for the next FPGA step:
   - UART validation on `/dev/ttyUSB0` succeeded and captured repeated
     `hello, this is penguin`
   - the routed bitstream is therefore functionally usable on the board
+- reran the full board flow again after adding the MMIO cycle counter and
+  counter-based software delay:
+  - the same intermittent first-attempt programming failure recurred and the
+    wrapper retry path recovered on the second attempt
+  - UART validation again succeeded on `/dev/ttyUSB0`
+  - stricter repeated-message validation measured host-side inter-message
+    intervals of `1.006618 s` and `0.990736 s`, which is consistent with the
+    intended 1 Hz cadence
 - current scalar-core FPGA caveat:
   - Vivado 2024.2 still reports negative routed timing on
     `penguin_scalar_uart_hello_top`
-  - routed timing summary from the successful board-tested build:
-    - `WNS=-2.787 ns`
-    - `TNS=-2266.791 ns`
+  - routed timing summary from the most recent successful board-tested build:
+    - `WNS=-5.322 ns`
+    - `TNS=-9779.392 ns`
   - functional board validation passed despite the timing violation, so timing
     closure remains the next hardware-quality issue rather than basic
     functionality
