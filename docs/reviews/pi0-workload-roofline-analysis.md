@@ -46,14 +46,24 @@ Those lengths explain the dominant matrix shapes in the profiler report:
 
 ## 3. Experiment Plan
 
+This document’s quantitative results were originally generated against an older Penguin
+tensor contract. The current architecture baseline has now moved to:
+
+- square `64 x 64` FP8 MXUs
+- `64 x 32` BF16 whole-register VPU / XLU views
+- paired-register BF16 MXU writeback for each full `64 x 64` result tile
+
+The numerical roofline results in this note should therefore be treated as historical
+until the workload study is rerun against the updated parameters.
+
 The workload roofline experiment uses the following steps:
 
 1. identify the dominant kernels directly from the external profiler output
 2. keep only the dominant kernels whose cumulative FLOP share is materially complete
 3. map those kernels onto the current Penguin tensor contract
 4. compute DRAM arithmetic intensity from dense workload operand bytes per kernel call
-5. compute VMEM arithmetic intensity from Penguin whole-tile traffic using the current
-   `64 x 32 @ 32 x 16 -> 64 x 16` MXU contract and whole-register VMEM transfers
+5. compute VMEM arithmetic intensity from Penguin whole-tile traffic using the then-
+   current Penguin MXU contract and whole-register VMEM transfers
 6. project those intensities onto the current DRAM roof, VMEM roof, and MXU peak
 7. plot both hierarchy views on one roofline and report the aggregate dominant-kernel
    point

@@ -47,6 +47,13 @@ What exists now:
 - [tensor-arch-decision-study.md](/home/tk/Desktop/Penguin-TPU/docs/reviews/tensor-arch-decision-study.md)
   now captures the current research-backed recommendations on vector-register scope,
   scaled-matmul scale storage, and square-vs-rectangular MXU geometry
+- current normative tensor parameters are now:
+  - one main `m` register file with `64` registers of `64 x 64` FP8 or `64 x 32` BF16
+    whole-register interpretation
+  - `32` `e` registers carrying whole-tensor `FP8_E8M0` scales
+  - square `64 x 64` FP8 MXUs with paired-register BF16 writeback
+- historical notes later in this file may still mention earlier `32 x 32` / `2048`-byte
+  tensor baselines and should not be treated as normative
 - fixed-shape Gemma-inspired examples now exist under `examples/` and run as staged
   executable-package flows over checked-in tensor assembly:
   - `examples/gemma_attention.py`
@@ -162,15 +169,19 @@ Reasoning:
 ### MXU numerical contract
 
 - `FP8_e4m3 x FP8_e4m3 -> BF16`
-- output-only scaling per workload-level matmul
-- optional BF16-to-FP8 writeback
-- BF16-to-FP8 uses round-to-nearest-even with saturation on overflow
+- one whole-tensor `FP8_E8M0` activation scale from an `e` register
+- one whole-tensor `FP8_E8M0` weight scale from an `e` register
+- square `64 x 64` FP8 MXU geometry
+- one full `64 x 64` BF16 result tile writes back as two consecutive `m` registers
+- BF16-to-FP8 conversion is deferred to a later explicit conversion path
 
 Reasoning:
 
 - low-precision multiplicands keep matrix hardware efficient
 - BF16 accumulation is a practical first target
-- output-only scaling is simpler than per-input scaling
+- dedicated `e` registers keep scale metadata out of both scalar `x` state and dense
+  tensor `m` state
+- square MXU geometry scales better than rectangular byte-matching as datatypes evolve
 
 ### VPU contract
 
@@ -178,7 +189,7 @@ Reasoning:
 - VPU writes only to `m` registers
 - no local operand buffers
 - whole-register operations only
-- initial floating-point elementwise view is BF16 over the `64 x 16` tensor-register
+- initial floating-point elementwise view is BF16 over the `64 x 32` tensor-register
   interpretation
 - first opcode floor:
   - `vadd`
@@ -211,7 +222,7 @@ Reasoning:
   - `transpose.xlu`
   - `reduce.max.xlu`
   - `reduce.sum.xlu`
-- initial data view is BF16 over the `64 x 16` tensor-register interpretation
+- initial data view is BF16 over the `64 x 32` tensor-register interpretation
 - initial transpose latency class is 4 cycles
 
 Reasoning:
@@ -242,8 +253,8 @@ Reasoning:
 - first revision exposes 8 symmetric DMA channels
 - `vload` / `vstore` are blocking VMEM <-> `m` transfers
 - `mxu.push.*` is a blocking VMEM -> `w*` transfer
-- `vload` / `vstore` transfer one full 2048-byte tensor register image
-- `mxu.push.*` transfers one full 512-byte weight tile
+- `vload` / `vstore` transfer one full 4096-byte tensor register image
+- `mxu.push.*` transfers one full 4096-byte weight tile
 - `vload` / `vstore` / `mxu.push.*` all require 32-byte-aligned VMEM addresses
 - DMA, `vload` / `vstore`, and `mxu.push.*` all use scalar-register indirect addressing
 - one shared memory-base CSR extends addressing beyond the 32-bit scalar range

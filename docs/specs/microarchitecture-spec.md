@@ -51,15 +51,20 @@ The following parameters are frozen for the current baseline implementation.
 | `INSN_ALIGN` | `4` bytes | Instruction alignment |
 | `NUM_XREG` | `32` | Scalar register count |
 | `CONTROL_FLOW_DELAY_SLOTS` | `2` | Required branch/jump delay slots |
+| `NUM_EREG` | `32` | Scale register count |
+| `EREG_BITS` | `8` | Bits per `e` register (`FP8_E8M0`) |
 | `NUM_MREG` | `64` | Tensor register count |
 | `MREG_ROWS` | `64` | Rows per tensor register |
-| `MREG_ROW_BYTES` | `32` bytes | Bytes per tensor-register row |
-| `MREG_BYTES` | `2048` bytes | Bytes per tensor register |
+| `MREG_ROW_BYTES` | `64` bytes | Bytes per tensor-register row |
+| `MREG_BYTES` | `4096` bytes | Bytes per tensor register |
 | `MXU_COUNT` | `2` | Architected MXU count |
 | `WEIGHT_SLOTS_PER_MXU` | `2` | Weight slots per MXU |
-| `WEIGHT_TILE_ROWS` | `32` | Rows per MXU weight tile |
-| `WEIGHT_TILE_COLS_FP8` | `16` | FP8 columns per MXU weight tile |
-| `WEIGHT_SLOT_BYTES` | `512` bytes | Bytes per MXU weight slot |
+| `WEIGHT_TILE_ROWS` | `64` | Rows per MXU weight tile |
+| `WEIGHT_TILE_COLS_FP8` | `64` | FP8 columns per MXU weight tile |
+| `WEIGHT_SLOT_BYTES` | `4096` bytes | Bytes per MXU weight slot |
+| `MXU_ARRAY_ROWS` | `64` | Rows per MXU array |
+| `MXU_ARRAY_COLS` | `64` | Columns per MXU array |
+| `VPU_LANES_BF16` | `32` | BF16 lanes in the baseline VPU |
 | `DMA_CHANNELS` | `8` | Architected DMA channels |
 | `DMA_ALIGN` | `32` bytes | DMA alignment and granularity |
 | `IMEM_BASE` | `0x0010_0000` | IMEM base address |
@@ -103,6 +108,7 @@ subsystems:
 
 - an instruction frontend
 - a scalar execution path
+- a scale register file
 - a tensor register file and tensor interconnect
 - two MXUs
 - one VPU
@@ -173,7 +179,7 @@ fully illegal encodings to preserve future accelerator-extension space.
 The accelerator decode path shall recognize the baseline custom-opcode allocation defined
 by the architecture specification:
 
-- `custom-0` for DMA and VMEM-facing tensor transfers
+- `custom-0` for scalar-side auxiliary loads, DMA, and VMEM-facing tensor transfers
 - `custom-1` for MXU launch instructions
 - `custom-2` for VPU whole-register instructions
 - `custom-3` for XLU whole-register instructions
@@ -182,6 +188,7 @@ Minimum accelerator decode outputs:
 
 - accelerator family
 - reconstructed `6`-bit tensor-register operands where present
+- reconstructed `5`-bit scale-register operands where present
 - reconstructed weight-slot selector where present
 - reconstructed DMA channel selector where present
 - reconstructed scaled VMEM immediate where present
@@ -196,6 +203,7 @@ The intended first scalar implementation slice is partitioned into:
 
 - scalar decoder
 - scalar register file
+- scale-register load path for `seli` and `seld`
 - scalar ALU / compare datapath
 - branch and jump target unit
 - VMEM-facing scalar load/store unit
@@ -213,19 +221,51 @@ The baseline implementation direction is:
 - once the delay-slot count reaches zero, the redirect is applied
 - a younger branch or jump in a delay slot overwrites the older pending redirect
 
-## 6. Tensor Register File and Local Interconnect
+## 6. Scale Register File, Tensor Register File, and Local Interconnect
 
-### 6.1 Register file
+### 6.1 Scale register file
+
+The scale register file shall hold:
+
+- `32` registers
+- `8` bits per register
+- one whole-tensor `FP8_E8M0` scale per register
+
+Baseline implementation direction:
+
+- `seli` writes `e` registers through a scalar-side immediate path
+- `seld` writes `e` registers through a scalar-controlled VMEM byte-load path
+- MXUs read `e` registers as side metadata for scaled matmul launch
+
+Rationale:
+
+- scale values are too small and too structured to justify burning full `m` registers
+- scale values are not ordinary scalar integers and should not consume general `x`
+  register bandwidth and lifetime
+
+### 6.2 Tensor register file
 
 The tensor register file shall hold:
 
 - `64` registers
-- `2048` bytes per register
+- `4096` bytes per register
 - whole-register read and write access for tensor instructions
+
+The baseline whole-register interpretations are:
+
+- `64 x 32` BF16 for VPU, XLU, and MXU half-result traffic
+- `64 x 64` FP8 source tiles across the full physical row width for MXU input traffic
+
+The baseline MXU result contract writes one `64 x 64` BF16 tile into two consecutive
+tensor registers:
+
+- destination base register carries BF16 columns `[31:0]`
+- destination base plus one carries BF16 columns `[63:32]`
+- accumulate-form partial sums follow that same paired-register convention
 
 The baseline does not require architectural bank visibility.
 
-### 6.2 Weight slots
+### 6.3 Weight slots
 
 Each MXU shall contain two distinct weight-slot storage entries.
 
@@ -234,8 +274,9 @@ The baseline implementation direction is weight-stationary:
 - weight data is pushed into the selected slot from `VMEM`
 - the slot remains resident until overwritten
 - matmul launch selects between `w0` and `w1`
+- each weight slot stores one `64 x 64` FP8 tile
 
-### 6.3 Structural-conflict handling
+### 6.4 Structural-conflict handling
 
 Structural conflicts shall be handled by stalls or arbitration.
 
@@ -263,6 +304,7 @@ The following instructions are modeled and implemented as blocking:
 - `vload`
 - `vstore`
 - `mxu.push.*`
+- `seld`
 - scalar `sld`
 - scalar `sst`
 
@@ -300,8 +342,8 @@ For the frozen baseline values:
 
 - one off-chip beat costs `2` core cycles
 - one VMEM beat costs `1` core cycle
-- one `vload` / `vstore` of a `2048`-byte tensor register takes `128` cycles
-- one `mxu.push.*` of a `512`-byte weight tile takes `32` cycles
+- one `vload` / `vstore` of a `4096`-byte tensor register takes `256` cycles
+- one `mxu.push.*` of a `4096`-byte weight tile takes `256` cycles
 
 ## 8. Functional Units
 
@@ -319,7 +361,10 @@ Shared microarchitectural requirements:
 - deterministic latency class of `64` cycles per matmul launch
 - whole-register activation source
 - selected weight-slot source
+- selected activation-scale and weight-scale source
 - BF16 architectural accumulation
+- square `64 x 64` array geometry for both `mxu0` and `mxu1`
+- paired-register BF16 writeback for each full MXU result tile
 - ability to overlap with scalar and other long-chime units, subject to issue policy
 
 ### 8.2 VPU
@@ -341,10 +386,12 @@ Timing requirements:
 - pipelineable elementwise operations use the `2`-cycle latency class
 - non-pipelineable elementwise operations such as exponent and reciprocal use the
   `8`-cycle latency class
+- the baseline lane count is `32` BF16 lanes
 
 ### 8.3 XLU
 
-The XLU baseline shall implement whole-register transpose and row-reduction broadcasts.
+The XLU baseline shall implement whole-register transpose and row-reduction broadcasts
+over the baseline `64 x 32` BF16 view.
 
 Timing requirement:
 
@@ -370,6 +417,7 @@ that binds the frozen parameter set to a concrete machine instance.
 Required logical fragments:
 
 - scalar
+- scale
 - memory map
 - memory backend
 - initialization

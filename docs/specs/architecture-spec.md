@@ -44,6 +44,7 @@ The baseline machine contains:
 
 - one scalar integer control path
 - one architectural tensor register file of `64` registers, `m0` through `m63`
+- one architectural scale register file of `32` registers, `e0` through `e31`
 - two architecturally visible matrix execution units, `mxu0` and `mxu1`
 - one vector processing unit, `vpu`
 - one transpose unit, `xlu`
@@ -51,6 +52,17 @@ The baseline machine contains:
 - one on-chip tensor/vector memory, `VMEM`
 - one off-chip backing memory, `DRAM`
 - eight architected DMA channels between `DRAM` and `VMEM`
+
+The baseline machine shall not expose a second full-width architectural vector-register
+file in this revision.
+
+Rationale:
+
+- one main tensor register file keeps the operand model small
+- bias, reduction, and epilogue convenience do not yet justify a second general-purpose
+  tensor-like storage namespace
+- narrow metadata-like scale values are handled through dedicated `e` registers instead
+  of a second wide tile store
 
 The machine is intentionally narrow in the frontend:
 
@@ -146,13 +158,45 @@ The tensor architectural state shall include:
 Tensor-register requirements:
 
 - each tensor register stores `64` rows
-- each row stores exactly `32` bytes
-- each tensor register therefore stores `2048` raw bytes
+- each row stores exactly `64` bytes
+- each tensor register therefore stores `4096` raw bytes
 - the tensor register file is flat and type-agnostic
 - tensor element interpretation is selected by the instruction semantics, not by the
   storage class
 
-### 5.3 Control and status state
+The architecture intentionally keeps one main tensor-register file sized around a
+`64 x 32` BF16 whole-register view:
+
+- one `m` register stores one `64 x 32` BF16 half-tile
+- one `m` register also stores one `64 x 64` FP8 source tile
+- one full `64 x 64` BF16 MXU result therefore occupies two consecutive `m` registers
+
+Rationale:
+
+- the machine keeps one main tensor register file rather than adding a second wide
+  vector-like file
+- the compute array is chosen for square FP8 contraction, not for BF16 byte-width
+  matching
+- BF16 result expansion is handled through paired-register writeback rather than through
+  a rectangular MXU geometry
+
+### 5.3 Scale state
+
+The scale architectural state shall include:
+
+- `32` exponent registers, `e0` through `e31`
+
+Scale-register requirements:
+
+- each `e` register stores one `FP8_E8M0` scaling factor
+- one `e` register applies to one whole tensor operand, not to per-row or per-block
+  subregions
+- `e` registers are distinct from both scalar `x` registers and tensor `m` registers
+
+The baseline architecture uses `e` registers because scale values are metadata-like
+operand descriptors, not ordinary scalar integers and not dense tensor tiles.
+
+### 5.4 Control and status state
 
 The architecture-visible execution-control plane shall include at least:
 
@@ -182,6 +226,7 @@ Memory-region rules:
 - `IMEM`, `VMEM`, and `DRAM` are byte-addressed
 - instruction fetch conceptually reads `IMEM`
 - scalar data load/store access `VMEM` only
+- `seld` access to `e` registers reads `VMEM` only
 - tensor register load/store and MXU weight push access `VMEM` only
 - DMA is the only architected path between `DRAM` and `VMEM`
 
@@ -191,6 +236,7 @@ The following alignment rules are architectural:
 
 - instruction fetch address alignment: `4` bytes
 - scalar `sld` / `sst` alignment: `4` bytes
+- scalar `seld` byte-load alignment: `1` byte
 - DMA source address alignment: `32` bytes
 - DMA destination address alignment: `32` bytes
 - DMA size granularity: multiple of `32` bytes
@@ -205,6 +251,7 @@ Unless software or host setup explicitly initializes them:
 - `DRAM` contents are architecturally undefined
 - `VMEM` contents are architecturally undefined
 - scalar registers other than `x0` are architecturally undefined
+- `e` registers are architecturally undefined
 - tensor registers and MXU weight slots are architecturally undefined
 
 The host shall populate `IMEM` before enabling accelerator execution.
@@ -327,36 +374,74 @@ Scalar memory requirements:
 | `secall` | terminate execution with environment-call halt status |
 | `sebreak` | terminate execution with breakpoint halt status |
 
+#### 7.3.8 Scale-register load operations
+
+| Mnemonic | Semantics |
+|---|---|
+| `seli e<dest>, imm8` | `e[dest] <- imm8` interpreted as one `FP8_E8M0` scale |
+| `seld e<dest>, imm(rs1)` | `e[dest] <- VMEM8[x[rs1] + imm]` interpreted as one `FP8_E8M0` scale |
+
+Scale-register rules:
+
+- `seli` and `seld` are the only baseline architectural writers of `e` registers
+- `seld` transfers exactly one byte from `VMEM`
+- `seld` is a dedicated `e`-register load and does not relax the `32`-bit-only rule for
+  ordinary scalar `sld` / `sst`
+
 ## 8. Tensor and Accelerator ISA
 
 ### 8.1 Tensor data views
 
 The tensor register file shall support the following architecturally visible views.
 
-| View | Elements per row | Logical tile shape |
-|---|---:|---|
-| `FP8_e4m3` | `32` | `64 x 32` |
-| `BF16` | `16` | `64 x 16` |
+| View | Elements per row | Logical tile shape | Storage rule |
+|---|---:|---|---|
+| `FP8_e4m3` MXU-source view | `64` | `64 x 64` | One byte per element across the full `64`-byte row |
+| `BF16` whole-register view | `32` | `64 x 32` | One BF16 element per `2` bytes across the full `4096`-byte register image |
 
-### 8.2 Accelerator binary encoding overview
+The baseline architecture deliberately decouples MXU compute geometry from tensor-storage
+byte symmetry:
+
+- MXU compute tiles are square `64 x 64`
+- VPU and XLU operate on the full `64 x 32` BF16 whole-register view
+- FP8 source tiles use the full-width `64 x 64` FP8 packing inside one `m` register
+- BF16 MXU result tiles expand into two consecutive `m` registers
+
+This keeps one main tensor register file and avoids introducing a second wide register
+class purely to match one datatype width pairing.
+
+### 8.2 Scale-register view
+
+The scale register file shall support the following architecturally visible view.
+
+| View | Elements | Meaning |
+|---|---:|---|
+| `FP8_E8M0` | `1` per `e` register | One whole-tensor scaling factor |
+
+Each `e` register scales one entire tensor operand. The baseline architecture does not
+support per-row, per-column, or per-block scale granularity in this revision.
+
+### 8.3 Accelerator binary encoding overview
 
 All accelerator instructions shall use fixed-width `32`-bit words and one of the four
 standard RISC-V custom major opcodes.
 
 | Major opcode | Bits `[6:0]` | Family | Baseline instruction families |
 |---|---|---|---|
-| `custom-0` | `0001011` | Memory movement | `dma.*`, `vload`, `vstore`, `mxu.push.*` |
+| `custom-0` | `0001011` | Scalar-side auxiliary movement | `seli`, `seld`, `dma.*`, `vload`, `vstore`, `mxu.push.*` |
 | `custom-1` | `0101011` | MXU launch | `matmul.*` |
 | `custom-2` | `1011011` | VPU whole-register ops | `vadd`, `vsub`, `vmul`, `vmax`, `vmin`, `vrelu`, `vmov`, `vexp`, `vrecip` |
 | `custom-3` | `1111011` | XLU whole-register ops | `transpose.xlu`, `reduce.max.xlu`, `reduce.sum.xlu` |
 
-### 8.3 Common accelerator field conventions
+### 8.4 Common accelerator field conventions
 
 The accelerator encodings shall follow these common rules:
 
 - scalar `x` registers remain encoded in standard `5`-bit RISC-V register positions
 - tensor `m` registers are architecturally `6` bits wide and therefore use one dedicated
   high-bit field plus one standard `5`-bit low field
+- scale `e` registers are architecturally `5` bits wide and fit directly in one standard
+  RISC-V register field position
 - reserved bits shall be written as zero by software and shall be treated as illegal if
   observed nonzero by a conforming implementation
 
@@ -380,47 +465,40 @@ Weight-selector rule:
 - `w0` encodes as `0`
 - `w1` encodes as `1`
 
-### 8.4 `custom-0`: DMA and VMEM-facing transfer encodings
+### 8.5 `custom-0`: Scalar-side auxiliary, DMA, and VMEM-facing transfer encodings
 
-`custom-0` is split into two formats:
+`custom-0` is split into three formats:
 
-- `TMEM-I` for `vload`, `vstore`, and `mxu.push.*`
+- `TEXP-I` for `seli` and `seld`
 - `TDMA-R` for `dma.*`
+- `TMEM-I` for `vload`, `vstore`, and `mxu.push.*`
 
-#### 8.4.1 `TMEM-I` format
+#### 8.5.1 `TEXP-I` format
 
 | Bits | Field | Meaning |
 |---|---|---|
-| `[31]` | `t_hi` | High bit of tensor register index for `vload` / `vstore`; reserved for `mxu.push.*` |
-| `[30:20]` | `imm11_32` | Signed `11`-bit VMEM offset in units of `32` bytes |
-| `[19:15]` | `rs1` | Scalar base register |
-| `[14:12]` | `funct3` | Transfer sub-opcode |
-| `[11:7]` | `t_lo` | Low bits of tensor register index or encoded weight-slot selector |
+| `[31:20]` | `imm12` | Signed byte offset for `seld`, or immediate payload carrier for `seli` |
+| `[19:15]` | `rs1` | Scalar base register for `seld`; zero for `seli` |
+| `[14:12]` | `funct3` | Scale-load sub-opcode |
+| `[11:7]` | `e` | Destination scale register |
 | `[6:0]` | `opcode` | `custom-0` = `0001011` |
 
-`TMEM-I` `funct3` assignments:
+`TEXP-I` `funct3` assignments:
 
-| `funct3` | Mnemonic family | Operand interpretation |
+| `funct3` | Mnemonic | Operand interpretation |
 |---|---|---|
-| `000` | `vload` | `m = {t_hi, t_lo}` |
-| `001` | `vstore` | `m = {t_hi, t_lo}` |
-| `010` | `mxu.push.mxu0` | `wslot = t_lo[0]`; `t_hi = 0`; `t_lo[4:1] = 0` |
-| `011` | `mxu.push.mxu1` | `wslot = t_lo[0]`; `t_hi = 0`; `t_lo[4:1] = 0` |
-| `100` to `111` | Reserved | Illegal in the baseline |
+| `101` | `seli` | `e`; `rs1 = 0`; `imm8 = imm12[7:0]`; `imm12[11:8] = 0` |
+| `110` | `seld` | `e`; effective address is `x[rs1] + sign_extend(imm12)` |
+| `000` to `100`, `111` | Reserved for other `custom-0` forms or illegal | See the relevant format section |
 
 Architectural rules:
 
-- `vload m<dest>, imm(x<rs1>)` transfers one whole tensor register between `VMEM` and
-  `m<dest>`
-- `vstore m<src>, imm(x<rs1>)` transfers one whole tensor register between `m<src>` and
-  `VMEM`
-- `mxu.push.* w<slot>, imm(x<rs1>)` transfers one whole weight tile from `VMEM` into the
-  selected MXU weight slot
-- the effective address is `x[rs1] + (sign_extend(imm11_32) << 5)`
-- these instructions are blocking
-- the effective VMEM address shall satisfy the `32`-byte alignment rule
+- `seli` writes one immediate `FP8_E8M0` payload into `e<dest>`
+- `seld` writes one byte loaded from `VMEM` into `e<dest>`
+- `seli` and `seld` are scalar-fronted helper operations for the tensor datapath, not
+  general tensor instructions
 
-#### 8.4.2 `TDMA-R` format
+#### 8.5.2 `TDMA-R` format
 
 | Bits | Field | Meaning |
 |---|---|---|
@@ -453,51 +531,86 @@ Architectural rules:
 - completion order across channels is not ordered by issue order
 - `dma.wait.chN` completes immediately if the channel is already idle
 
-### 8.5 `custom-1`: MXU launch encodings
-
-`custom-1` carries the MXU launch family in one `TMXU-R` format.
-
-#### 8.5.1 `TMXU-R` format
+#### 8.5.3 `TMEM-I` format
 
 | Bits | Field | Meaning |
 |---|---|---|
-| `[31]` | `md_hi` | High bit of destination tensor register |
-| `[30]` | `ms_hi` | High bit of activation-source tensor register |
-| `[29]` | `mp_hi` | High bit of partial-sum tensor register for accumulate form; zero otherwise |
-| `[28]` | `mxu` | MXU selector: `0` for `mxu0`, `1` for `mxu1` |
-| `[27]` | `wslot` | Weight-slot selector: `0` for `w0`, `1` for `w1` |
-| `[26:25]` | `0` | Reserved, shall be zero |
-| `[24:20]` | `mp_lo` | Low bits of partial-sum tensor register for accumulate form; zero otherwise |
-| `[19:15]` | `ms_lo` | Low bits of activation-source tensor register |
-| `[14:12]` | `funct3` | MXU sub-opcode |
-| `[11:7]` | `md_lo` | Low bits of destination tensor register |
-| `[6:0]` | `opcode` | `custom-1` = `0101011` |
+| `[31]` | `t_hi` | High bit of tensor register index for `vload` / `vstore`; reserved for `mxu.push.*` |
+| `[30:20]` | `imm11_32` | Signed `11`-bit VMEM offset in units of `32` bytes |
+| `[19:15]` | `rs1` | Scalar base register |
+| `[14:12]` | `funct3` | Transfer sub-opcode |
+| `[11:7]` | `t_lo` | Low bits of tensor register index or encoded weight-slot selector |
+| `[6:0]` | `opcode` | `custom-0` = `0001011` |
 
-`TMXU-R` `funct3` assignments:
+`TMEM-I` `funct3` assignments:
 
-| `funct3` | Meaning | Architectural mnemonic |
+| `funct3` | Mnemonic family | Operand interpretation |
 |---|---|---|
-| `000` | Fresh matmul; `mp_hi = 0`, `mp_lo = 0` | `matmul.mxu<mxu> m<dest>, m<src>, w<wslot>` |
-| `001` | Matmul with explicit partial accumulation | `matmul.add.mxu<mxu> m<dest>, m<src>, w<wslot>, m<partial>` |
-| `010` to `111` | Reserved | Illegal in the baseline |
+| `000` | `vload` | `m = {t_hi, t_lo}` |
+| `001` | `vstore` | `m = {t_hi, t_lo}` |
+| `010` | `mxu.push.mxu0` | `wslot = t_lo[0]`; `t_hi = 0`; `t_lo[4:1] = 0` |
+| `011` | `mxu.push.mxu1` | `wslot = t_lo[0]`; `t_hi = 0`; `t_lo[4:1] = 0` |
+| `100` to `111` | Reserved | Illegal in the baseline |
 
 Architectural rules:
 
-- `m<src>` supplies activation operand `A`
+- `vload m<dest>, imm(x<rs1>)` transfers one whole tensor register between `VMEM` and
+  `m<dest>`
+- `vstore m<src>, imm(x<rs1>)` transfers one whole tensor register between `m<src>` and
+  `VMEM`
+- `mxu.push.* w<slot>, imm(x<rs1>)` transfers one whole weight tile from `VMEM` into the
+  selected MXU weight slot
+- the effective address is `x[rs1] + (sign_extend(imm11_32) << 5)`
+- these instructions are blocking
+- the effective VMEM address shall satisfy the `32`-byte alignment rule
+
+### 8.6 `custom-1`: MXU launch encodings
+
+`custom-1` is allocated to scaled MXU launch instructions.
+
+The normative assembly-visible baseline forms are:
+
+- `matmul.mxu0 m<dest>, m<src>, w<src>, e<a>, e<b>`
+- `matmul.add.mxu0 m<dest>, m<src>, w<src>, m<partial>, e<a>, e<b>`
+- `matmul.mxu1 m<dest>, m<src>, w<src>, e<a>, e<b>`
+- `matmul.add.mxu1 m<dest>, m<src>, w<src>, m<partial>, e<a>, e<b>`
+
+The bit-level `custom-1` field packing is under active revision because the explicit
+addition of two `e`-register operands changes the packing constraints relative to the
+earlier unscaled draft. The major-opcode allocation, assembly-visible operand set, and
+architectural semantics in this section are normative; the exact bitfield packing is
+reserved for the next encoding supplement.
+
+Architectural rules:
+
+- `m<src>` supplies one full `64 x 64` FP8 activation operand `A`
 - `w<wslot>` selects weight operand `B`
-- `m<partial>` supplies the prior partial-sum tile when the accumulate form is used
-- the fresh form computes `C = A @ B`
-- the accumulate form computes `C = (A @ B) + partial`
+- `e<a>` supplies the whole-tensor activation scale
+- `e<b>` supplies the whole-tensor weight scale
+- `m<dest>` names the first register of a two-register BF16 destination pair
+- `m<partial>` names the first register of a two-register BF16 partial-sum pair when the
+  accumulate form is used
+- `m<dest>` and `m<partial>` shall be in the range `m0` through `m62`; use of `m63` as a
+  paired-result base register is illegal
+- the lower BF16 result half, columns `[31:0]`, is written to `m<dest>`
+- the upper BF16 result half, columns `[63:32]`, is written to `m<dest + 1>`
+- the accumulate form reads the lower BF16 partial half from `m<partial>` and the upper
+  BF16 partial half from `m<partial + 1>`
+- the fresh form computes `C = (scale(e<a>) * A) @ (scale(e<b>) * B)`
+- the accumulate form computes `C = ((scale(e<a>) * A) @ (scale(e<b>) * B)) + partial`
 - MXU arithmetic is `FP8_e4m3 x FP8_e4m3 -> BF16`
 - BF16 accumulation is architecturally visible
+- the compute geometry of each MXU is a square `64 x 64` array
+- output-format conversion is a separate concern from MXU geometry and is not encoded as
+  a shape variant of the baseline matmul instructions
 - MXU is pure matmul/accumulate only; bias, residual, activation, and other tensor
   postprocessing are separate instructions
 
-### 8.6 `custom-2`: VPU whole-register encodings
+### 8.7 `custom-2`: VPU whole-register encodings
 
 `custom-2` carries the VPU family in one `TVEC-R` format.
 
-#### 8.6.1 `TVEC-R` format
+#### 8.7.1 `TVEC-R` format
 
 | Bits | Field | Meaning |
 |---|---|---|
@@ -545,14 +658,15 @@ Architectural rules:
 - VPU reads tensor operands from `m` registers
 - VPU writes tensor results to `m` registers only
 - VPU operates on whole tensor registers only
-- the initial floating-point VPU view is BF16 over the `64 x 16` interpretation
+- the initial floating-point VPU view is BF16 over the `64 x 32` interpretation
+- the baseline VPU therefore contains `32` BF16 lanes
 - unary forms shall encode `ms2_hi = 0` and `ms2_lo = 0`
 
-### 8.7 `custom-3`: XLU whole-register encodings
+### 8.8 `custom-3`: XLU whole-register encodings
 
 `custom-3` carries the XLU family in one `TXLU-R` format.
 
-#### 8.7.1 `TXLU-R` format
+#### 8.8.1 `TXLU-R` format
 
 | Bits | Field | Meaning |
 |---|---|---|
@@ -579,7 +693,7 @@ Architectural rules:
 - XLU reads tensor operands from `m` registers
 - XLU writes tensor results to `m` registers only
 - XLU operates on whole tensor registers only
-- the initial transpose and reduction view is BF16 over the `64 x 16` interpretation
+- the initial transpose and reduction view is BF16 over the `64 x 32` interpretation
 
 ## 9. Frozen Architectural Constants
 
@@ -592,15 +706,18 @@ The following constants are architecturally frozen in the current baseline.
 | Scalar register count | `32` |
 | Control-flow delay slots | `2` |
 | Tensor register count | `64` |
+| Scale register count | `32` |
 | Tensor-register rows | `64` |
-| Tensor-register row bytes | `32` |
+| Tensor-register row bytes | `64` |
 | MXU count | `2` |
 | MXU weight slots per MXU | `2` |
-| MXU weight tile shape | `32 x 16 FP8` |
+| MXU array shape | `64 x 64` |
+| MXU weight tile shape | `64 x 64 FP8` |
 | DMA channel count | `8` |
 | DMA alignment | `32` bytes |
-| VPU initial view | `64 x 16 BF16` |
-| XLU initial view | `64 x 16 BF16` |
+| VPU lane count | `32 BF16 lanes` |
+| VPU initial view | `64 x 32 BF16` |
+| XLU initial view | `64 x 32 BF16` |
 
 Timing-class constants used by the baseline performance model are defined in the
 microarchitecture specification.

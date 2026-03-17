@@ -299,28 +299,22 @@ Recommendation: also do not use full `m` registers as the steady-state home for 
 
 Preferred direction:
 
-- add a small dedicated scale store or scale buffer
-- load it from VMEM using scale-specific instructions
-- reference that scale store by descriptor / index from the matmul instruction
+- add dedicated architectural scale storage
+- keep that scale storage distinct from both scalar `x` registers and tensor `m`
+  registers
+- let MXU instructions reference scale operands explicitly
 
-The important design constraint is that the scale store should be sized for metadata, not
-for dense tiles. It should feel more like:
+The architecture has since chosen a simpler first cut than the ideal block-scale design
+discussed above:
 
-- packed per-block scale SRAM
-- or a tiny architected scale-register bank
+- `32` architectural `e` registers
+- each `e` register stores one `FP8_E8M0` scale
+- each `e` register applies to one whole tensor operand
+- scalar-side instructions load `e` registers from immediate or memory
 
-It should not feel like:
-
-- another full tensor register file
-
-Suggested baseline for Penguin:
-
-- support blockwise scales on the contracting dimension
-- store scales in a packed VMEM layout
-- add instructions that load packed scales into a dedicated on-chip scale buffer
-- let MXU instructions reference the scale-buffer entry explicitly
-
-This keeps the main tensor register file dense and lets scale granularity evolve later.
+That choice is less flexible than a packed block-scale buffer, but it still captures the
+main architectural point of this study: scale values deserve their own storage class
+rather than living in scalar `x` registers or full tensor `m` registers.
 
 ## 6. Question 3: Rectangular or Square MXU?
 
@@ -455,9 +449,11 @@ For Penguin’s next tensor-architecture revision:
    - reduction-to-packed-tile conventions
    - possibly a very small side vector store later if profiling demands it
 3. Introduce dedicated scale storage for scaled matmul rather than reusing scalar `x`
-   registers or full `m` registers.
+   registers or full `m` registers. The adopted first cut is a `32`-entry `e`-register
+   file with one `FP8_E8M0` whole-tensor scale per register.
 4. Move the MXU plan back toward square geometry and decouple result-format conversion
-   from compute-array shape.
+   from compute-array shape. The adopted first cut is a `64 x 64` FP8 MXU whose `64 x 64`
+   BF16 result is written back as two consecutive `64 x 32` BF16 tensor-register halves.
 
 ### 7.2 Suggested concrete Penguin policy
 
@@ -466,8 +462,9 @@ If the goal is a practical and stable first tensor ISA:
 - `m` registers remain the only general tensor register class
 - reductions write into canonical packed rows of `m` registers
 - bias application uses broadcast semantics from packed rows or from VMEM streams
-- scales are loaded into a dedicated scale buffer from VMEM
-- MXU remains square and produces BF16 results first
+- scales are loaded into dedicated `e` registers from immediate or VMEM
+- MXU remains square at `64 x 64` and produces BF16 results first
+- one full BF16 MXU result occupies two consecutive `m` registers
 - FP8 result emission is a later explicit conversion step
 
 ## 8. Confidence and Gaps
@@ -503,7 +500,7 @@ I judge these inferences to be strong because they align with both:
 If Penguin wants the cleanest path forward:
 
 - do not add a full vector-register file yet
-- do add a small dedicated scale store if scaled matmul is real
+- do add dedicated scale storage if scaled matmul is real
 - do not let byte-bandwidth symmetry force a rectangular MXU
 - keep the compute array square and make output precision a conversion problem, not a
   geometry problem
