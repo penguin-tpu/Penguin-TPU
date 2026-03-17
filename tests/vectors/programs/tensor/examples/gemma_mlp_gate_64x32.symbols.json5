@@ -3,8 +3,8 @@
     constants: {
       kind: "input",
       region: "vmem",
-      address: 0x08003000,
-      size_bytes: 12288,
+      address: 0x08002000,
+      size_bytes: 24576,
     },
     gate: {
       kind: "input",
@@ -15,14 +15,14 @@
     output: {
       kind: "output",
       region: "vmem",
-      address: 0x08002000,
+      address: 0x08008000,
       size_bytes: 4096,
     },
     program: {
       kind: "program",
       region: "imem",
       address: 0x00100000,
-      size_bytes: 348,
+      size_bytes: 260,
       file: "gemma_mlp_gate_64x32.S",
     },
     up: {

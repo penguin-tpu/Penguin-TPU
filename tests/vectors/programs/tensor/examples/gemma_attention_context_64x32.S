@@ -1,4 +1,4 @@
-# Fixed-shape Gemma attention context tile: 64x64 FP8 probs @ 64x32 FP8 values -> 64x32 BF16 context.
+# Fixed-shape Gemma attention context tile: 64x32 FP8 probs @ 32x32 FP8 values -> 64x32 BF16 context.
 
     # Startup scalar-register scrub: software must not assume power-on register contents.
     saddi x1, x0, 0
@@ -34,24 +34,12 @@
     saddi x31, x0, 0
 
     li x1, VMEM_BASE + 0x0000
-    li x2, VMEM_BASE + 0x0800
     li x10, VMEM_BASE + 0x1000
-    li x11, VMEM_BASE + 0x1200
-    li x12, VMEM_BASE + 0x1400
-    li x13, VMEM_BASE + 0x1600
     li x20, VMEM_BASE + 0x2000
-    li x21, VMEM_BASE + 0x2800
 
-    mxu.push.mxu0 w0, 0(x10)
-    mxu.push.mxu0 w1, 0(x11)
+    seli e0, 0
+    seli e1, 0
     vload m1, 0(x1)
-    matmul.mxu0 m2, m1, w0
-    matmul.mxu0 m3, m1, w1
-
-    mxu.push.mxu0 w0, 0(x12)
-    mxu.push.mxu0 w1, 0(x13)
-    vload m4, 0(x2)
-    matmul.add.mxu0 m2, m4, w0, m2
+    mxu.push.mxu0 w0, 0(x10)
+    matmul.mxu0 m2, m1, w0, e0, e1
     vstore m2, 0(x20)
-    matmul.add.mxu0 m3, m4, w1, m3
-    vstore m3, 0(x21)

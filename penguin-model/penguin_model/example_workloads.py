@@ -14,6 +14,8 @@ from .tensor import (
     BF16_DTYPE,
     FP8_DTYPE,
     bf16_tile_from_bytes,
+    bf16_tile_pair_from_bytes,
+    bf16_tile_pair_to_bytes,
     bf16_tile_to_bytes,
     fp8_tile_to_bytes,
     weight_tile_to_bytes,
@@ -71,7 +73,7 @@ def run_matmul_example(
     perf = core.dump_json_trace(load_mapped_program(_PROGRAM_ROOT / "matmul.S"), resolved_trace_path)
     _require_program_end(core)
 
-    output = _read_bf16_tile(state, addresses.output00, config=config)
+    output = _read_bf16_result_tile(state, addresses.output00, config=config)
     _require_exact_match("matmul", output, golden)
     return ExampleRunResult(
         name="matmul",
@@ -123,15 +125,15 @@ def run_linear_example(
 
     top = torch.cat(
         (
-            _read_bf16_tile(state, addresses.output00, config=config),
-            _read_bf16_tile(state, addresses.output01, config=config),
+            _read_bf16_result_tile(state, addresses.output00, config=config),
+            _read_bf16_result_tile(state, addresses.output01, config=config),
         ),
         dim=1,
     )
     bottom = torch.cat(
         (
-            _read_bf16_tile(state, addresses.output10, config=config),
-            _read_bf16_tile(state, addresses.output11, config=config),
+            _read_bf16_result_tile(state, addresses.output10, config=config),
+            _read_bf16_result_tile(state, addresses.output11, config=config),
         ),
         dim=1,
     )
@@ -193,21 +195,22 @@ def _resolve_trace_path(trace_path: str | Path | None, default_name: str) -> Pat
 def _example_addresses(config: PenguinCoreConfig) -> _ExampleAddresses:
     vmem_base = config.memory_map.vmem.base
     dram_base = config.memory_map.dram.base
+    mreg_bytes = config.mreg_bytes
     return _ExampleAddresses(
-        activation0=vmem_base + 0x0000,
-        activation1=vmem_base + 0x0800,
-        weight0=vmem_base + 0x1000,
-        weight1=vmem_base + 0x1200,
-        bias0=vmem_base + 0x1800,
-        bias1=vmem_base + 0x2000,
-        bias2=vmem_base + 0x2800,
-        output00=vmem_base + 0x3000,
-        output01=vmem_base + 0x3800,
-        output10=vmem_base + 0x4000,
-        output11=vmem_base + 0x4800,
-        dma_act_scratch=vmem_base + 0x0000,
-        dma_weight_scratch=vmem_base + 0x0800,
-        dma_output_scratch=vmem_base + 0x1000,
+        activation0=vmem_base + 0 * mreg_bytes,
+        activation1=vmem_base + 1 * mreg_bytes,
+        weight0=vmem_base + 2 * mreg_bytes,
+        weight1=vmem_base + 3 * mreg_bytes,
+        bias0=vmem_base + 4 * mreg_bytes,
+        bias1=vmem_base + 6 * mreg_bytes,
+        bias2=vmem_base + 8 * mreg_bytes,
+        output00=vmem_base + 10 * mreg_bytes,
+        output01=vmem_base + 12 * mreg_bytes,
+        output10=vmem_base + 14 * mreg_bytes,
+        output11=vmem_base + 16 * mreg_bytes,
+        dma_act_scratch=vmem_base + 0 * mreg_bytes,
+        dma_weight_scratch=vmem_base + 1 * mreg_bytes,
+        dma_output_scratch=vmem_base + 2 * mreg_bytes,
         dma_act_dram_base=dram_base + 0x0100_0000,
         dma_weight_dram_base=dram_base + 0x0200_0000,
         dma_output_dram_base=dram_base + 0x0300_0000,
@@ -250,11 +253,7 @@ def _quantize_fp8(values: torch.Tensor) -> torch.Tensor:
 def _bf16_reference_matmul(activation: torch.Tensor, weights: torch.Tensor) -> torch.Tensor:
     activation_fp8 = _quantize_fp8(activation)
     weight_fp8 = _quantize_fp8(weights)
-    acc = torch.zeros((activation_fp8.shape[0], weight_fp8.shape[1]), dtype=BF16_DTYPE)
-    for inner in range(weight_fp8.shape[0]):
-        product = activation_fp8[:, inner].unsqueeze(1) * weight_fp8[inner, :].unsqueeze(0)
-        acc = (acc.to(torch.float32) + product).to(BF16_DTYPE)
-    return acc
+    return (activation_fp8 @ weight_fp8).to(BF16_DTYPE)
 
 
 def _bf16_reference_linear(
@@ -267,6 +266,26 @@ def _bf16_reference_linear(
     return (matmul.to(torch.float32) + bias_bf16.to(torch.float32)).to(BF16_DTYPE)
 
 
+def _bf16_reference_tiled_matmul(
+    activation: torch.Tensor,
+    weights: torch.Tensor,
+    *,
+    config: PenguinCoreConfig,
+    k_tiles: int,
+) -> torch.Tensor:
+    rows = activation.shape[0]
+    cols = weights.shape[1]
+    acc = torch.zeros((rows, cols), dtype=BF16_DTYPE)
+    for k_tile in range(k_tiles):
+        start = k_tile * config.tensor.weight_tile_rows
+        stop = start + config.tensor.weight_tile_rows
+        activation_fp8 = _quantize_fp8(activation[:, start:stop])
+        weight_fp8 = _quantize_fp8(weights[start:stop, :])
+        partial = activation_fp8 @ weight_fp8
+        acc = (acc.to(torch.float32) + partial.to(torch.float32)).to(BF16_DTYPE)
+    return acc
+
+
 def _read_bf16_tile(
     state,
     address: int,
@@ -277,6 +296,17 @@ def _read_bf16_tile(
     return bf16_tile_from_bytes(raw, config=config).clone()
 
 
+def _read_bf16_result_tile(
+    state,
+    address: int,
+    *,
+    config: PenguinCoreConfig = DEFAULT_PENGUIN_CORE_CONFIG,
+) -> torch.Tensor:
+    raw_lo = state.vmem.read(address, config.mreg_bytes).clone()
+    raw_hi = state.vmem.read(address + config.mreg_bytes, config.mreg_bytes).clone()
+    return bf16_tile_pair_from_bytes(raw_lo, raw_hi, config=config).clone()
+
+
 def _read_bf16_tile_from_memory(
     memory,
     address: int,
@@ -285,6 +315,17 @@ def _read_bf16_tile_from_memory(
 ) -> torch.Tensor:
     raw = memory.read(address, config.mreg_bytes).clone()
     return bf16_tile_from_bytes(raw, config=config).clone()
+
+
+def _read_bf16_result_tile_from_memory(
+    memory,
+    address: int,
+    *,
+    config: PenguinCoreConfig = DEFAULT_PENGUIN_CORE_CONFIG,
+) -> torch.Tensor:
+    raw_lo = memory.read(address, config.mreg_bytes).clone()
+    raw_hi = memory.read(address + config.mreg_bytes, config.mreg_bytes).clone()
+    return bf16_tile_pair_from_bytes(raw_lo, raw_hi, config=config).clone()
 
 
 def _write_bias_tiles_to_vmem(
@@ -301,7 +342,9 @@ def _write_bias_tiles_to_vmem(
             break
         bias_slice = bias[start : start + cols].to(BF16_DTYPE).reshape(1, cols)
         bias_tile = bias_slice.expand(config.tensor.mreg_rows, cols).clone()
-        state.vmem.write(address, bf16_tile_to_bytes(bias_tile, config=config))
+        raw_lo, raw_hi = bf16_tile_pair_to_bytes(bias_tile, config=config)
+        state.vmem.write(address, raw_lo)
+        state.vmem.write(address + config.mreg_bytes, raw_hi)
 
 
 def _activation_tile_address(
@@ -334,7 +377,10 @@ def _output_tile_address(
     addresses: _ExampleAddresses,
     config: PenguinCoreConfig,
 ) -> int:
-    return addresses.dma_output_dram_base + (m_tile * n_tiles + n_tile) * config.mreg_bytes
+    return (
+        addresses.dma_output_dram_base
+        + (m_tile * n_tiles + n_tile) * config.matmul_result_bytes
+    )
 
 
 def _write_tiled_inputs_to_dram(
@@ -403,7 +449,7 @@ def _read_output_from_dram(
 
     for m_tile in range(m_tiles):
         for n_tile in range(n_tiles):
-            tile = _read_bf16_tile_from_memory(
+            tile = _read_bf16_result_tile_from_memory(
                 state.dram,
                 _output_tile_address(
                     m_tile,
@@ -420,7 +466,6 @@ def _read_output_from_dram(
                 * config.tensor.weight_tile_cols_fp8 : (n_tile + 1)
                 * config.tensor.weight_tile_cols_fp8,
             ] = tile
-
     return output
 
 
@@ -444,9 +489,22 @@ def _run_dma_stripmined_example(
     activation = _deterministic_activation(rows=rows, cols=inner, config=config)
     weights = _deterministic_weight(rows=inner, cols=cols, config=config)
     golden = (
-        _bf16_reference_matmul(activation, weights)
+        _bf16_reference_tiled_matmul(
+            activation,
+            weights,
+            config=config,
+            k_tiles=k_tiles,
+        )
         if bias is None
-        else _bf16_reference_linear(activation, weights, bias)
+        else (
+            _bf16_reference_tiled_matmul(
+                activation,
+                weights,
+                config=config,
+                k_tiles=k_tiles,
+            ).to(torch.float32)
+            + bias.to(BF16_DTYPE).reshape(1, -1).expand(rows, cols).to(torch.float32)
+        ).to(BF16_DTYPE)
     )
 
     core = PenguinCore(config=config)

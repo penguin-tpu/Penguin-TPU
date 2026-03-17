@@ -192,6 +192,10 @@ Scale-register requirements:
 - one `e` register applies to one whole tensor operand, not to per-row or per-block
   subregions
 - `e` registers are distinct from both scalar `x` registers and tensor `m` registers
+- the raw `8`-bit `e` payload is interpreted as an unbiased signed binary exponent
+  `exp8`
+- `scale(e)` is therefore defined as `2^exp8`
+- `seli eN, 0` encodes unity scale
 
 The baseline architecture uses `e` registers because scale values are metadata-like
 operand descriptors, not ordinary scalar integers and not dense tensor tiles.
@@ -387,6 +391,8 @@ Scale-register rules:
 - `seld` transfers exactly one byte from `VMEM`
 - `seld` is a dedicated `e`-register load and does not relax the `32`-bit-only rule for
   ordinary scalar `sld` / `sst`
+- both instructions write the raw exponent payload; scale interpretation is defined in
+  Section 5.3
 
 ## 8. Tensor and Accelerator ISA
 
@@ -571,9 +577,9 @@ Architectural rules:
 The normative assembly-visible baseline forms are:
 
 - `matmul.mxu0 m<dest>, m<src>, w<src>, e<a>, e<b>`
-- `matmul.add.mxu0 m<dest>, m<src>, w<src>, m<partial>, e<a>, e<b>`
+- `matmul.acc.mxu0 m<dest>, m<src>, w<src>, m<partial>, e<a>, e<b>`
 - `matmul.mxu1 m<dest>, m<src>, w<src>, e<a>, e<b>`
-- `matmul.add.mxu1 m<dest>, m<src>, w<src>, m<partial>, e<a>, e<b>`
+- `matmul.acc.mxu1 m<dest>, m<src>, w<src>, m<partial>, e<a>, e<b>`
 
 The bit-level `custom-1` field packing is under active revision because the explicit
 addition of two `e`-register operands changes the packing constraints relative to the

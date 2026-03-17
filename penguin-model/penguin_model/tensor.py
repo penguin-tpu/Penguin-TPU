@@ -1,14 +1,17 @@
-"""Tensor-register and MXU weight-slot helpers for the Penguin model."""
+"""Tensor-register, scale-register, and MXU helpers for the Penguin model."""
 
 from __future__ import annotations
 
 import torch
+
 from .core_config import DEFAULT_PENGUIN_CORE_CONFIG, PenguinCoreConfig
 from .memory import _mix_seed, _random_u8_tensor
 
 NUM_MREG = DEFAULT_PENGUIN_CORE_CONFIG.tensor.num_mreg
 MREG_ROWS = DEFAULT_PENGUIN_CORE_CONFIG.tensor.mreg_rows
 MREG_ROW_BYTES = DEFAULT_PENGUIN_CORE_CONFIG.tensor.mreg_row_bytes
+MREG_FP8_COLS = DEFAULT_PENGUIN_CORE_CONFIG.mreg_fp8_cols
+MREG_BF16_COLS = DEFAULT_PENGUIN_CORE_CONFIG.mreg_bf16_cols
 MREG_BYTES = DEFAULT_PENGUIN_CORE_CONFIG.mreg_bytes
 
 MXU_COUNT = DEFAULT_PENGUIN_CORE_CONFIG.tensor.mxu_count
@@ -17,6 +20,9 @@ WEIGHT_TILE_ROWS = DEFAULT_PENGUIN_CORE_CONFIG.tensor.weight_tile_rows
 WEIGHT_TILE_COLS_FP8 = DEFAULT_PENGUIN_CORE_CONFIG.tensor.weight_tile_cols_fp8
 WEIGHT_SLOT_BYTES = DEFAULT_PENGUIN_CORE_CONFIG.weight_slot_bytes
 
+MATMUL_RESULT_ROWS = DEFAULT_PENGUIN_CORE_CONFIG.matmul_result_rows
+MATMUL_RESULT_COLS = DEFAULT_PENGUIN_CORE_CONFIG.matmul_result_cols
+MATMUL_RESULT_REGISTERS = DEFAULT_PENGUIN_CORE_CONFIG.matmul_result_registers
 VMEM_TENSOR_ALIGN = DEFAULT_PENGUIN_CORE_CONFIG.tensor.vmem_alignment_bytes
 
 VLOAD_LATENCY_CYCLES = DEFAULT_PENGUIN_CORE_CONFIG.vload_latency_cycles
@@ -66,10 +72,7 @@ def make_weight_slot_file_for_config(config: PenguinCoreConfig) -> torch.Tensor:
     )
     if not config.initialization.randomize_weight_slots:
         return torch.zeros(shape, dtype=torch.uint8)
-    return torch.zeros(
-        shape,
-        dtype=torch.uint8,
-    ) + _random_u8_tensor(
+    return _random_u8_tensor(
         config.tensor.mxu_count
         * config.tensor.weight_slots_per_mxu
         * config.weight_slot_bytes,
@@ -77,17 +80,26 @@ def make_weight_slot_file_for_config(config: PenguinCoreConfig) -> torch.Tensor:
     ).reshape(shape)
 
 
+def decode_scale_fp8_e8m0(raw: int) -> float:
+    """Decode one scale-register payload as an unbiased signed power-of-two scale."""
+
+    value = int(raw) & 0xFF
+    if value >= 0x80:
+        value -= 0x100
+    return float(2.0**value)
+
+
 def fp8_tile_from_bytes(
     raw: torch.Tensor,
     *,
     config: PenguinCoreConfig = DEFAULT_PENGUIN_CORE_CONFIG,
 ) -> torch.Tensor:
-    """Interpret one tensor-register image as a 64x32 FP8 tile."""
+    """Interpret one tensor-register image as a FP8 activation tile."""
 
     return (
         raw.reshape(-1)
         .view(FP8_DTYPE)
-        .reshape(config.tensor.mreg_rows, config.tensor.mreg_row_bytes)
+        .reshape(config.tensor.mreg_rows, config.mreg_fp8_cols)
         .to(torch.float32)
     )
 
@@ -97,12 +109,29 @@ def bf16_tile_from_bytes(
     *,
     config: PenguinCoreConfig = DEFAULT_PENGUIN_CORE_CONFIG,
 ) -> torch.Tensor:
-    """Interpret one tensor-register image as a 64x16 BF16 tile."""
+    """Interpret one tensor-register image as one BF16 whole-register tile."""
 
     return (
         raw.reshape(-1)
         .view(BF16_DTYPE)
-        .reshape(config.tensor.mreg_rows, config.tensor.mreg_row_bytes // 2)
+        .reshape(config.tensor.mreg_rows, config.mreg_bf16_cols)
+    )
+
+
+def bf16_tile_pair_from_bytes(
+    raw_lo: torch.Tensor,
+    raw_hi: torch.Tensor,
+    *,
+    config: PenguinCoreConfig = DEFAULT_PENGUIN_CORE_CONFIG,
+) -> torch.Tensor:
+    """Interpret two tensor-register images as one full BF16 MXU result tile."""
+
+    return torch.cat(
+        (
+            bf16_tile_from_bytes(raw_lo, config=config),
+            bf16_tile_from_bytes(raw_hi, config=config),
+        ),
+        dim=1,
     )
 
 
@@ -111,7 +140,7 @@ def weight_tile_from_bytes(
     *,
     config: PenguinCoreConfig = DEFAULT_PENGUIN_CORE_CONFIG,
 ) -> torch.Tensor:
-    """Interpret one MXU weight-slot image as a 32x16 FP8 tile."""
+    """Interpret one MXU weight-slot image as one FP8 weight tile."""
 
     return (
         raw.reshape(-1)
@@ -126,7 +155,7 @@ def weight_tile_to_bytes(
     *,
     config: PenguinCoreConfig = DEFAULT_PENGUIN_CORE_CONFIG,
 ) -> torch.Tensor:
-    """Pack a 32x16 FP8 weight tile into raw bytes."""
+    """Pack one FP8 weight tile into raw bytes."""
 
     packed = (
         tile.to(torch.float32)
@@ -141,11 +170,11 @@ def fp8_tile_to_bytes(
     *,
     config: PenguinCoreConfig = DEFAULT_PENGUIN_CORE_CONFIG,
 ) -> torch.Tensor:
-    """Pack a 64x32 FP8 tile into raw bytes."""
+    """Pack one FP8 activation tile into raw bytes."""
 
     packed = (
         tile.to(torch.float32)
-        .reshape(config.tensor.mreg_rows, config.tensor.mreg_row_bytes)
+        .reshape(config.tensor.mreg_rows, config.mreg_fp8_cols)
         .to(FP8_DTYPE)
     )
     return packed.reshape(-1).view(torch.uint8).clone()
@@ -156,13 +185,24 @@ def bf16_tile_to_bytes(
     *,
     config: PenguinCoreConfig = DEFAULT_PENGUIN_CORE_CONFIG,
 ) -> torch.Tensor:
-    """Pack a 64x16 BF16 tile into raw bytes."""
+    """Pack one BF16 whole-register tile into raw bytes."""
 
-    packed = (
-        tile.to(BF16_DTYPE)
-        .reshape(config.tensor.mreg_rows, config.tensor.mreg_row_bytes // 2)
-    )
+    packed = tile.to(BF16_DTYPE).reshape(config.tensor.mreg_rows, config.mreg_bf16_cols)
     return packed.reshape(-1).view(torch.uint8).clone()
+
+
+def bf16_tile_pair_to_bytes(
+    tile: torch.Tensor,
+    *,
+    config: PenguinCoreConfig = DEFAULT_PENGUIN_CORE_CONFIG,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Pack one full BF16 MXU result tile into its two architectural destination registers."""
+
+    packed = tile.to(BF16_DTYPE).reshape(config.matmul_result_rows, config.matmul_result_cols)
+    return (
+        bf16_tile_to_bytes(packed[:, : config.mreg_bf16_cols], config=config),
+        bf16_tile_to_bytes(packed[:, config.mreg_bf16_cols :], config=config),
+    )
 
 
 def bf16_transposed_tile_from_bytes(
@@ -175,7 +215,7 @@ def bf16_transposed_tile_from_bytes(
     return (
         raw.reshape(-1)
         .view(BF16_DTYPE)
-        .reshape(config.tensor.mreg_row_bytes // 2, config.tensor.mreg_rows)
+        .reshape(config.mreg_bf16_cols, config.tensor.mreg_rows)
     )
 
 
@@ -186,36 +226,36 @@ def bf16_transposed_tile_to_bytes(
 ) -> torch.Tensor:
     """Pack one BF16 transposed tile into raw bytes."""
 
-    packed = tile.to(BF16_DTYPE).reshape(
-        config.tensor.mreg_row_bytes // 2,
-        config.tensor.mreg_rows,
-    )
+    packed = tile.to(BF16_DTYPE).reshape(config.mreg_bf16_cols, config.tensor.mreg_rows)
     return packed.reshape(-1).view(torch.uint8).clone()
 
 
 def compute_bf16_matmul(
     activation_raw: torch.Tensor,
     weight_raw: torch.Tensor,
-    partial_raw: torch.Tensor | None = None,
+    scale_a_raw: int,
+    scale_b_raw: int,
+    partial_raw: tuple[torch.Tensor, torch.Tensor] | None = None,
     *,
     config: PenguinCoreConfig = DEFAULT_PENGUIN_CORE_CONFIG,
-) -> torch.Tensor:
-    """Compute one 64x32 @ 32x16 MXU tile with BF16 accumulation."""
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Compute one scaled 64x64 @ 64x64 MXU tile with BF16 accumulation."""
 
     activation = fp8_tile_from_bytes(activation_raw, config=config)
     weight = weight_tile_from_bytes(weight_raw, config=config)
+    product = activation @ weight
+    product *= decode_scale_fp8_e8m0(scale_a_raw) * decode_scale_fp8_e8m0(scale_b_raw)
+
     if partial_raw is None:
         acc = torch.zeros(
-            (config.tensor.mreg_rows, config.tensor.weight_tile_cols_fp8),
+            (config.matmul_result_rows, config.matmul_result_cols),
             dtype=BF16_DTYPE,
         )
     else:
-        acc = bf16_tile_from_bytes(partial_raw, config=config).clone()
+        acc = bf16_tile_pair_from_bytes(partial_raw[0], partial_raw[1], config=config).clone()
 
-    for inner in range(config.tensor.weight_tile_rows):
-        product = activation[:, inner].unsqueeze(1) * weight[inner, :].unsqueeze(0)
-        acc = (acc.to(torch.float32) + product).to(BF16_DTYPE)
-    return bf16_tile_to_bytes(acc, config=config)
+    result = (acc.to(torch.float32) + product.to(torch.float32)).to(BF16_DTYPE)
+    return bf16_tile_pair_to_bytes(result, config=config)
 
 
 def _binary_bf16_tile_op(
@@ -371,7 +411,12 @@ __all__ = [
     "BF16_DTYPE",
     "FP8_DTYPE",
     "MATMUL_LATENCY_CYCLES",
+    "MATMUL_RESULT_COLS",
+    "MATMUL_RESULT_REGISTERS",
+    "MATMUL_RESULT_ROWS",
+    "MREG_BF16_COLS",
     "MREG_BYTES",
+    "MREG_FP8_COLS",
     "MREG_ROW_BYTES",
     "MREG_ROWS",
     "MXU_COUNT",
@@ -388,22 +433,25 @@ __all__ = [
     "WEIGHT_TILE_ROWS",
     "XLU_TRANSPOSE_LATENCY_CYCLES",
     "bf16_tile_from_bytes",
+    "bf16_tile_pair_from_bytes",
+    "bf16_tile_pair_to_bytes",
+    "bf16_tile_to_bytes",
     "bf16_transposed_tile_from_bytes",
     "bf16_transposed_tile_to_bytes",
-    "bf16_tile_to_bytes",
-    "compute_bf16_transpose",
     "compute_bf16_matmul",
+    "compute_bf16_row_reduce_max",
+    "compute_bf16_row_reduce_sum",
+    "compute_bf16_transpose",
     "compute_bf16_vadd",
+    "compute_bf16_vexp",
     "compute_bf16_vmax",
     "compute_bf16_vmin",
     "compute_bf16_vmov",
-    "compute_bf16_vexp",
-    "compute_bf16_vrecip",
-    "compute_bf16_vsub",
     "compute_bf16_vmul",
+    "compute_bf16_vrecip",
     "compute_bf16_vrelu",
-    "compute_bf16_row_reduce_max",
-    "compute_bf16_row_reduce_sum",
+    "compute_bf16_vsub",
+    "decode_scale_fp8_e8m0",
     "fp8_tile_from_bytes",
     "fp8_tile_to_bytes",
     "make_tensor_register_file",

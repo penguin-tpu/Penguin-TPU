@@ -42,10 +42,6 @@ repo-level TODO tracking. Keep historical context and completed-change notes in
   work.
 - Decide whether `mem_base` is architecturally a high-bits extension
   `(mem_base << 32) | low32` or some other shared address-offset encoding.
-- Decide whether the first architected VPU data view remains BF16-only or also includes
-  FP8 elementwise views.
-- Decide whether the first XLU architecture cut stays BF16-only for transpose or grows a
-  separate FP8 transpose path.
 
 ## RTL
 

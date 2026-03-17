@@ -1,4 +1,4 @@
-# Single MXU tile matmul: 64x32 activations @ 32x16 weights -> 64x16 BF16 output.
+# Single MXU tile matmul: 64x64 activations @ 64x64 weights -> 64x64 BF16 output.
 
     # Startup scalar-register scrub: software must not assume power-on register contents.
     saddi x1, x0, 0
@@ -34,10 +34,13 @@
     saddi x31, x0, 0
 
     li x1, VMEM_BASE + 0x0000
-    li x2, VMEM_BASE + 0x1000
-    li x3, VMEM_BASE + 0x3000
+    li x2, VMEM_BASE + 0x2000
+    li x3, VMEM_BASE + 0xA000
 
+    seli e0, 0
+    seli e1, 0
     vload m1, 0(x1)
     mxu.push.mxu0 w0, 0(x2)
-    matmul.mxu0 m2, m1, w0
+    matmul.mxu0 m2, m1, w0, e0, e1
     vstore m2, 0(x3)
+    vstore m3, 0x1000(x3)

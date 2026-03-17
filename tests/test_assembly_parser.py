@@ -13,6 +13,9 @@ from penguin_model import (
     Instruction,
     JType,
     MXUMatmulAccType,
+    MXUMatmulType,
+    ScaleImmType,
+    ScaleMemType,
     TensorMemType,
     XLUTransposeType,
     VPUBinaryType,
@@ -66,17 +69,23 @@ def test_assembler_rejects_invalid_register_names() -> None:
 def test_assembler_parses_tensor_memory_and_mxu_operands() -> None:
     program = assemble_text(
         """
+    seli e1, 0
+    seld e2, 4(x7)
     vload m3, 32(x1)
     mxu.push.mxu1 w0, 64(x2)
-    matmul.add.mxu1 m4, m3, w0, m5
+    matmul.mxu0 m6, m7, w1, e3, e4
+    matmul.acc.mxu1 m4, m3, w0, m5, e1, e2
     vstore m4, 96(x6)
 """
     )
 
     assert list(program) == [
+        Instruction("seli", ScaleImmType(ed=1, imm=0)),
+        Instruction("seld", ScaleMemType(ed=2, rs1=7, imm=4)),
         Instruction("vload", TensorMemType(mreg=3, rs1=1, imm=32)),
         Instruction("mxu.push.mxu1", WeightMemType(slot=0, rs1=2, imm=64)),
-        Instruction("matmul.add.mxu1", MXUMatmulAccType(md=4, ms=3, ws=0, mp=5)),
+        Instruction("matmul.mxu0", MXUMatmulType(md=6, ms=7, ws=1, ea=3, eb=4)),
+        Instruction("matmul.acc.mxu1", MXUMatmulAccType(md=4, ms=3, ws=0, mp=5, ea=1, eb=2)),
         Instruction("vstore", TensorMemType(mreg=4, rs1=6, imm=96)),
     ]
 

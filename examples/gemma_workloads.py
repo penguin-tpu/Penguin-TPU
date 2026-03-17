@@ -50,8 +50,8 @@ DEFAULT_TRACE_ROOT = REPO_ROOT / "outputs" / "examples"
 DEFAULT_BUNDLE_ROOT = DEFAULT_TRACE_ROOT / "bundles"
 
 ROWS = DEFAULT_PENGUIN_CORE_CONFIG.tensor.mreg_rows
-HIDDEN = DEFAULT_PENGUIN_CORE_CONFIG.tensor.weight_tile_rows
-TILE_COLS = DEFAULT_PENGUIN_CORE_CONFIG.tensor.weight_tile_cols_fp8
+HIDDEN = DEFAULT_PENGUIN_CORE_CONFIG.mreg_bf16_cols
+TILE_COLS = DEFAULT_PENGUIN_CORE_CONFIG.mreg_bf16_cols
 ATTENTION_KEYS = TILE_COLS
 
 
@@ -448,7 +448,7 @@ def _run_linear_stage(
     )
     stage_bundles[stage_name] = loaded.bundle.root
     _run_loaded_stage(core, trace_logger, loaded)
-    return _read_matrix_symbol(core, loaded, "output", cols=2 * TILE_COLS)
+    return _read_matrix_symbol(core, loaded, "output", cols=TILE_COLS)
 
 
 def _run_mlp_gate_stage(
@@ -473,7 +473,7 @@ def _run_mlp_gate_stage(
     )
     stage_bundles[stage_name] = loaded.bundle.root
     _run_loaded_stage(core, trace_logger, loaded)
-    return _read_matrix_symbol(core, loaded, "output", cols=2 * TILE_COLS)
+    return _read_matrix_symbol(core, loaded, "output", cols=TILE_COLS)
 
 
 def _run_vadd_stage(
@@ -497,7 +497,7 @@ def _run_vadd_stage(
     )
     stage_bundles[stage_name] = loaded.bundle.root
     _run_loaded_stage(core, trace_logger, loaded)
-    return _read_matrix_symbol(core, loaded, "output", cols=2 * TILE_COLS)
+    return _read_matrix_symbol(core, loaded, "output", cols=TILE_COLS)
 
 
 def _run_softmax_stage(
@@ -537,7 +537,7 @@ def _run_transpose_stage(
     )
     stage_bundles[stage_name] = loaded.bundle.root
     _run_loaded_stage(core, trace_logger, loaded)
-    return _read_transposed_matrix_symbol(core, loaded, "output", rows=2 * TILE_COLS)
+    return _read_transposed_matrix_symbol(core, loaded, "output", rows=TILE_COLS)
 
 
 def _run_attention_scores_stage(
@@ -585,7 +585,7 @@ def _run_attention_context_stage(
     )
     stage_bundles[stage_name] = loaded.bundle.root
     _run_loaded_stage(core, trace_logger, loaded)
-    return _read_matrix_symbol(core, loaded, "output", cols=2 * TILE_COLS)
+    return _read_matrix_symbol(core, loaded, "output", cols=TILE_COLS)
 
 
 def _prepare_stage_bundle(
@@ -689,20 +689,28 @@ def _read_transposed_matrix_symbol(
 
 
 def _pack_activation_matrix(matrix: torch.Tensor) -> torch.Tensor:
-    cols_per_tile = DEFAULT_PENGUIN_CORE_CONFIG.tensor.mreg_row_bytes
-    if matrix.shape[0] != ROWS or matrix.shape[1] % cols_per_tile != 0:
-        raise ValueError(f"Activation matrix must have shape (64, N*32), got {tuple(matrix.shape)}")
+    cols_per_tile = DEFAULT_PENGUIN_CORE_CONFIG.mreg_fp8_cols
+    if matrix.shape[0] != ROWS or matrix.shape[1] % TILE_COLS != 0:
+        raise ValueError(f"Activation matrix must have shape (64, N*{TILE_COLS}), got {tuple(matrix.shape)}")
     return torch.cat(
         [
-            fp8_tile_to_bytes(matrix[:, start : start + cols_per_tile])
-            for start in range(0, matrix.shape[1], cols_per_tile)
+            fp8_tile_to_bytes(
+                torch.cat(
+                    [
+                        matrix[:, start : start + TILE_COLS],
+                        torch.zeros((ROWS, cols_per_tile - TILE_COLS), dtype=torch.float32),
+                    ],
+                    dim=1,
+                )
+            )
+            for start in range(0, matrix.shape[1], TILE_COLS)
         ]
     )
 
 
 def _pack_bf16_matrix(matrix: torch.Tensor) -> torch.Tensor:
     if matrix.shape[0] != ROWS or matrix.shape[1] % TILE_COLS != 0:
-        raise ValueError(f"BF16 matrix must have shape (64, N*16), got {tuple(matrix.shape)}")
+        raise ValueError(f"BF16 matrix must have shape (64, N*{TILE_COLS}), got {tuple(matrix.shape)}")
     return torch.cat(
         [
             bf16_tile_to_bytes(matrix[:, start : start + TILE_COLS])
@@ -725,48 +733,45 @@ def _pad_attention_probabilities(probabilities: torch.Tensor) -> torch.Tensor:
             f"Attention probabilities must have shape ({ROWS}, {ATTENTION_KEYS}), "
             f"got {tuple(probabilities.shape)}"
         )
-    first_chunk = torch.cat(
-        [
-            probabilities.to(torch.float32),
-            torch.zeros((ROWS, TILE_COLS), dtype=torch.float32),
-        ],
-        dim=1,
-    )
-    return torch.cat(
-        [
-            first_chunk,
-            torch.zeros((ROWS, 2 * TILE_COLS), dtype=torch.float32),
-        ],
-        dim=1,
-    )
+    return probabilities.to(torch.float32)
 
 
 def _pad_attention_values(values: torch.Tensor) -> torch.Tensor:
-    if tuple(values.shape) != (ROWS, 2 * TILE_COLS):
+    if tuple(values.shape) != (ROWS, TILE_COLS):
         raise ValueError(
-            f"Attention values must have shape ({ROWS}, {2 * TILE_COLS}), "
+            f"Attention values must have shape ({ROWS}, {TILE_COLS}), "
             f"got {tuple(values.shape)}"
         )
-    key_slice = values[:ATTENTION_KEYS, :].to(torch.float32)
-    first_chunk = torch.cat(
-        [
-            key_slice,
-            torch.zeros((HIDDEN - ATTENTION_KEYS, 2 * TILE_COLS), dtype=torch.float32),
-        ],
-        dim=0,
-    )
-    second_chunk = torch.zeros((HIDDEN, 2 * TILE_COLS), dtype=torch.float32)
-    return torch.cat([first_chunk, second_chunk], dim=0)
+    return values[:ATTENTION_KEYS, :].to(torch.float32)
 
 
 def _pack_weight_matrix(matrix: torch.Tensor) -> torch.Tensor:
     row_tile = DEFAULT_PENGUIN_CORE_CONFIG.tensor.weight_tile_rows
-    if matrix.shape[0] % row_tile != 0 or matrix.shape[1] % TILE_COLS != 0:
-        raise ValueError(f"Weight matrix must have shape (N*32, M*16), got {tuple(matrix.shape)}")
+    col_tile = DEFAULT_PENGUIN_CORE_CONFIG.tensor.weight_tile_cols_fp8
+    if matrix.shape[0] > row_tile or matrix.shape[1] % TILE_COLS != 0:
+        raise ValueError(
+            f"Weight matrix must have shape (<= {row_tile}, N*{TILE_COLS}), got {tuple(matrix.shape)}"
+        )
     chunks = []
-    for row_start in range(0, matrix.shape[0], row_tile):
-        for col_start in range(0, matrix.shape[1], TILE_COLS):
-            chunks.append(weight_tile_to_bytes(matrix[row_start : row_start + row_tile, col_start : col_start + TILE_COLS]))
+    padded_rows = matrix.to(torch.float32)
+    if padded_rows.shape[0] < row_tile:
+        padded_rows = torch.cat(
+            [
+                padded_rows,
+                torch.zeros((row_tile - padded_rows.shape[0], padded_rows.shape[1]), dtype=torch.float32),
+            ],
+            dim=0,
+        )
+    for col_start in range(0, padded_rows.shape[1], TILE_COLS):
+        logical_chunk = padded_rows[:, col_start : col_start + TILE_COLS]
+        padded_chunk = torch.cat(
+            [
+                logical_chunk,
+                torch.zeros((row_tile, col_tile - TILE_COLS), dtype=torch.float32),
+            ],
+            dim=1,
+        )
+        chunks.append(weight_tile_to_bytes(padded_chunk))
     return torch.cat(chunks)
 
 
@@ -777,11 +782,7 @@ def _quantize_fp8(values: torch.Tensor) -> torch.Tensor:
 def _bf16_reference_matmul(activation: torch.Tensor, weights: torch.Tensor) -> torch.Tensor:
     activation_fp8 = _quantize_fp8(activation)
     weight_fp8 = _quantize_fp8(weights)
-    acc = torch.zeros((activation_fp8.shape[0], weight_fp8.shape[1]), dtype=BF16_DTYPE)
-    for inner in range(weight_fp8.shape[0]):
-        product = activation_fp8[:, inner].unsqueeze(1) * weight_fp8[inner, :].unsqueeze(0)
-        acc = (acc.to(torch.float32) + product).to(BF16_DTYPE)
-    return acc
+    return (activation_fp8 @ weight_fp8).to(BF16_DTYPE)
 
 
 def _gemma_attention_reference(

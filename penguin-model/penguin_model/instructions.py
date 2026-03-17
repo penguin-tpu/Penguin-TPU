@@ -75,6 +75,23 @@ class DMAType:
 
 
 @dataclass(frozen=True, slots=True)
+class ScaleImmType:
+    """Scale-register immediate load form."""
+
+    ed: int
+    imm: int
+
+
+@dataclass(frozen=True, slots=True)
+class ScaleMemType:
+    """Scale-register load from one VMEM byte."""
+
+    ed: int
+    rs1: int
+    imm: int = 0
+
+
+@dataclass(frozen=True, slots=True)
 class TensorMemType:
     """Tensor register plus scalar-register-indirect VMEM address."""
 
@@ -99,6 +116,8 @@ class MXUMatmulType:
     md: int
     ms: int
     ws: int
+    ea: int
+    eb: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -109,6 +128,8 @@ class MXUMatmulAccType:
     ms: int
     ws: int
     mp: int
+    ea: int
+    eb: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -145,6 +166,8 @@ InstructionParams: TypeAlias = (
     | JType
     | EmptyType
     | DMAType
+    | ScaleImmType
+    | ScaleMemType
     | TensorMemType
     | WeightMemType
     | MXUMatmulType
@@ -222,6 +245,8 @@ __all__ = [
     "MXUMatmulAccType",
     "MXUMatmulType",
     "RType",
+    "ScaleImmType",
+    "ScaleMemType",
     "SType",
     "TENSOR_INSTRUCTION_SPECS",
     "TensorMemType",

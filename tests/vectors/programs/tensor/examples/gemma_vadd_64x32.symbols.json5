@@ -16,7 +16,7 @@
       kind: "program",
       region: "imem",
       address: 0x00100000,
-      size_bytes: 180,
+      size_bytes: 152,
       file: "gemma_vadd_64x32.S",
     },
     rhs: {

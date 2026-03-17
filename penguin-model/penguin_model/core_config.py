@@ -36,6 +36,17 @@ class ScalarCoreConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class ScaleConfig:
+    """Configuration of the architectural scale-register file."""
+
+    num_ereg: int = 32
+    """The number of architectural exponent/scale registers."""
+
+    ereg_bits: int = 8
+    """The width of one scale register in bits."""
+
+
+@dataclass(frozen=True, slots=True)
 class MemoryMapConfig:
     """Top-level architectural memory map."""
 
@@ -122,7 +133,7 @@ class TensorCoreConfig:
     mreg_rows: int = 64
     """The number of rows stored in one tensor register."""
 
-    mreg_row_bytes: int = 32
+    mreg_row_bytes: int = 64
     """The number of raw bytes stored in one tensor-register row."""
 
     mxu_count: int = 2
@@ -131,10 +142,10 @@ class TensorCoreConfig:
     weight_slots_per_mxu: int = 2
     """The number of architected weight slots per MXU."""
 
-    weight_tile_rows: int = 32
+    weight_tile_rows: int = 64
     """The number of rows in one MXU weight tile."""
 
-    weight_tile_cols_fp8: int = 16
+    weight_tile_cols_fp8: int = 64
     """The number of FP8 columns stored in one MXU weight tile."""
 
     vmem_alignment_bytes: int = 32
@@ -220,6 +231,9 @@ class PenguinCoreConfig:
     scalar: ScalarCoreConfig = field(default_factory=ScalarCoreConfig)
     """The scalar-core architectural configuration."""
 
+    scale: ScaleConfig = field(default_factory=ScaleConfig)
+    """The architectural scale-register configuration."""
+
     memory_map: MemoryMapConfig = field(default_factory=MemoryMapConfig)
     """The architectural memory-map configuration."""
 
@@ -252,6 +266,10 @@ class PenguinCoreConfig:
             raise ValueError("scalar.xreg_count must be positive")
         if self.scalar.control_flow_delay_slots < 0:
             raise ValueError("scalar.control_flow_delay_slots must be non-negative")
+        if self.scale.num_ereg <= 0:
+            raise ValueError("scale.num_ereg must be positive")
+        if self.scale.ereg_bits <= 0:
+            raise ValueError("scale.ereg_bits must be positive")
         if self.dma.channel_count <= 0:
             raise ValueError("dma.channel_count must be positive")
         if self.dma.alignment_bytes <= 0:
@@ -315,10 +333,48 @@ class PenguinCoreConfig:
         return self.tensor.mreg_rows * self.tensor.mreg_row_bytes
 
     @property
+    def mreg_fp8_cols(self) -> int:
+        """Number of FP8 elements in one tensor-register row."""
+
+        return self.tensor.mreg_row_bytes
+
+    @property
+    def mreg_bf16_cols(self) -> int:
+        """Number of BF16 elements in one tensor-register row."""
+
+        return self.tensor.mreg_row_bytes // 2
+
+    @property
     def weight_slot_bytes(self) -> int:
         """Total byte count stored in one MXU weight slot."""
 
         return self.tensor.weight_tile_rows * self.tensor.weight_tile_cols_fp8
+
+    @property
+    def matmul_result_rows(self) -> int:
+        """Number of rows in one MXU result tile."""
+
+        return self.tensor.mreg_rows
+
+    @property
+    def matmul_result_cols(self) -> int:
+        """Number of BF16 columns in one full MXU result tile."""
+
+        return self.tensor.weight_tile_cols_fp8
+
+    @property
+    def matmul_result_bytes(self) -> int:
+        """Total byte count in one full BF16 MXU result tile."""
+
+        return self.matmul_result_rows * self.matmul_result_cols * 2
+
+    @property
+    def matmul_result_registers(self) -> int:
+        """Number of architectural tensor registers used by one BF16 MXU result tile."""
+
+        if self.matmul_result_bytes % self.mreg_bytes != 0:
+            raise ValueError("matmul result does not map to an integer number of tensor registers")
+        return self.matmul_result_bytes // self.mreg_bytes
 
     @property
     def vload_latency_cycles(self) -> int:
@@ -424,6 +480,7 @@ __all__ = [
     "MemoryMapConfig",
     "MemoryRegionConfig",
     "PenguinCoreConfig",
+    "ScaleConfig",
     "ScalarCoreConfig",
     "TensorCoreConfig",
     "TraceConfig",

@@ -34,18 +34,11 @@
     saddi x31, x0, 0
 
     li x1, VMEM_BASE + 0x0000
-    li x2, VMEM_BASE + 0x0800
     li x3, VMEM_BASE + 0x1000
-    li x4, VMEM_BASE + 0x1800
     li x20, VMEM_BASE + 0x2000
-    li x21, VMEM_BASE + 0x2800
 
     vload m1, 0(x1)
-    vload m2, 0(x2)
     vload m3, 0(x3)
-    vload m4, 0(x4)
 
     vadd m5, m1, m3
     vstore m5, 0(x20)
-    vadd m6, m2, m4
-    vstore m6, 0(x21)

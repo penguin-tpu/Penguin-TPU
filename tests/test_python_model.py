@@ -62,6 +62,8 @@ EXPECTED_BASE_MNEMONICS = {
     "sbltu",
     "sbgeu",
     "sld",
+    "seli",
+    "seld",
     "sst",
     "saddi",
     "sslti",

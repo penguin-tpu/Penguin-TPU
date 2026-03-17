@@ -21,10 +21,10 @@ def test_matmul_example_matches_pytorch_and_emits_trace(tmp_path) -> None:
     )
 
     assert result.trace_path.exists()
-    assert tuple(result.output.shape) == (64, 16)
+    assert tuple(result.output.shape) == (64, 64)
     assert torch.equal(result.output, result.golden)
-    assert result.perf.instructions == 38
-    assert result.perf.cycles == 323
+    assert result.perf.instructions == 41
+    assert result.perf.cycles == 1_061
 
 
 def test_linear_example_matches_pytorch_and_emits_trace(tmp_path) -> None:
@@ -34,10 +34,10 @@ def test_linear_example_matches_pytorch_and_emits_trace(tmp_path) -> None:
     )
 
     assert result.trace_path.exists()
-    assert tuple(result.output.shape) == (128, 32)
+    assert tuple(result.output.shape) == (128, 128)
     assert torch.equal(result.output, result.golden)
-    assert result.perf.instructions == 59
-    assert result.perf.cycles == 1_137
+    assert result.perf.instructions == 71
+    assert result.perf.cycles == 4_155
 
 
 def test_large_matmul_example_matches_pytorch_and_emits_trace(tmp_path) -> None:
@@ -47,12 +47,12 @@ def test_large_matmul_example_matches_pytorch_and_emits_trace(tmp_path) -> None:
     )
 
     assert result.trace_path.exists()
-    assert tuple(result.output.shape) == (128, 32)
+    assert tuple(result.output.shape) == (128, 128)
     assert torch.equal(result.output, result.golden)
-    assert result.perf.instructions == 223
-    assert result.perf.cycles == 14_291
-    assert result.perf.bytes_read == 49_152
-    assert result.perf.bytes_written == 36_864
+    assert result.perf.instructions == 229
+    assert result.perf.cycles == 39_141
+    assert result.perf.bytes_read == 163_840
+    assert result.perf.bytes_written == 131_072
     assert result.perf.instructions_by_opcode["sbeq"] > 0
     assert result.perf.instructions_by_opcode["sbne"] > 0
     assert result.perf.instructions_by_opcode["sjal"] > 0
@@ -65,12 +65,12 @@ def test_large_linear_example_matches_pytorch_and_emits_trace(tmp_path) -> None:
     )
 
     assert result.trace_path.exists()
-    assert tuple(result.output.shape) == (192, 48)
+    assert tuple(result.output.shape) == (192, 192)
     assert torch.equal(result.output, result.golden)
-    assert result.perf.instructions == 468
-    assert result.perf.cycles == 33_264
-    assert result.perf.bytes_read == 129_024
-    assert result.perf.bytes_written == 82_944
+    assert result.perf.instructions == 497
+    assert result.perf.cycles == 92_648
+    assert result.perf.bytes_read == 442_368
+    assert result.perf.bytes_written == 294_912
     assert result.perf.instructions_by_opcode["sbeq"] > 0
     assert result.perf.instructions_by_opcode["sbne"] > 0
     assert result.perf.instructions_by_opcode["sjal"] > 0

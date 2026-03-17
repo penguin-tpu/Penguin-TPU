@@ -40,6 +40,7 @@ class StopReason(str, Enum):
     DMA_MISALIGNED_ADDRESS = "dma_misaligned_address"
     DMA_MISALIGNED_SIZE = "dma_misaligned_size"
     TENSOR_MEMORY_MISALIGNED = "tensor_memory_misaligned"
+    ILLEGAL_TENSOR_REGISTER_PAIR = "illegal_tensor_register_pair"
     STEP_LIMIT = "step_limit"
 
 
@@ -72,6 +73,7 @@ class ArchState:
     config: PenguinCoreConfig = field(default_factory=lambda: DEFAULT_PENGUIN_CORE_CONFIG)
     mreg: torch.Tensor | None = None
     mxu_weight: torch.Tensor | None = None
+    ereg: list[int] | None = None
     xreg: list[int] | None = None
     pc: int = 0
     mem_base: int = 0
@@ -97,6 +99,12 @@ class ArchState:
             self.mreg = make_tensor_register_file_for_config(self.config)
         if self.mxu_weight is None:
             self.mxu_weight = make_weight_slot_file_for_config(self.config)
+        if self.ereg is None:
+            self.ereg = [0] * self.config.scale.num_ereg
+        elif len(self.ereg) != self.config.scale.num_ereg:
+            raise ValueError(
+                f"ereg file expects {self.config.scale.num_ereg} entries, got {len(self.ereg)}"
+            )
 
     def _initial_xreg_file(self) -> list[int]:
         if not self.config.initialization.randomize_scalar_registers:
@@ -181,6 +189,22 @@ class ArchState:
                     cycle=self.trace_end_cycle,
                 )
 
+    def read_ereg(self, index: int) -> int:
+        assert self.ereg is not None
+        return self.ereg[index] & 0xFF
+
+    def write_ereg(self, index: int, value: int) -> None:
+        assert self.ereg is not None
+        value &= 0xFF
+        self.ereg[index] = value
+        if self.trace_logger is not None:
+            self.trace_logger.log_arch_value(
+                "erf",
+                index,
+                value,
+                cycle=self.trace_end_cycle,
+            )
+
     def stop(self, reason: StopReason) -> None:
         if self.stop_reason is None:
             self.stop_reason = reason
@@ -253,6 +277,12 @@ class ArchState:
         self._log_memory_access("vmem", "load", address, value, size=4)
         return value
 
+    def load_vmem_u8(self, address: int) -> int:
+        value = int(self.vmem.read(address, 1)[0].item())
+        self.perf.bytes_read += 1
+        self._log_memory_access("vmem", "load", address, value, size=1)
+        return value
+
     def store_vmem_u32(self, address: int, value: int) -> bool:
         if address % 4 != 0:
             self.stop(StopReason.MISALIGNED_STORE)
@@ -288,6 +318,12 @@ class ArchState:
         self.mxu_weight[mxu, slot] = raw.reshape(self.config.weight_slot_bytes).to(
             torch.uint8
         )
+
+    def check_mreg_pair_base(self, index: int) -> bool:
+        if index < 0 or index + self.config.matmul_result_registers > self.config.tensor.num_mreg:
+            self.stop(StopReason.ILLEGAL_TENSOR_REGISTER_PAIR)
+            return False
+        return True
 
     def _check_tensor_alignment(self, address: int) -> bool:
         if address % self.config.tensor.vmem_alignment_bytes != 0:

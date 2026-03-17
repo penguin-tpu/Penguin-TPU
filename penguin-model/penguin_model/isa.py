@@ -12,6 +12,8 @@ from .instructions import (
     EmptyType,
     IType,
     JType,
+    ScaleImmType,
+    ScaleMemType,
     MXUMatmulAccType,
     MXUMatmulType,
     RType,
@@ -81,6 +83,19 @@ def _dma_operands(state: ArchState, params: DMAType) -> tuple[int, int, int]:
     )
 
 
+def _load_mreg_pair(state: ArchState, base: int) -> tuple[object, object] | None:
+    if not state.check_mreg_pair_base(base):
+        return None
+    return (state.load_mreg(base), state.load_mreg(base + 1))
+
+
+def _store_mreg_pair(state: ArchState, base: int, lo: object, hi: object) -> None:
+    if not state.check_mreg_pair_base(base):
+        return
+    state.store_mreg(base, lo)
+    state.store_mreg(base + 1, hi)
+
+
 @instruction(mnemonic="slui", params_type=UType, latency=1)
 def slui(state: ArchState, params: UType) -> None:
     state.write_xreg(params.rd, params.imm << 12)
@@ -140,6 +155,17 @@ def sld(state: ArchState, params: IType) -> None:
     value = state.load_vmem_u32(address)
     if value is not None:
         state.write_xreg(params.rd, value)
+
+
+@instruction(mnemonic="seli", params_type=ScaleImmType, latency=1)
+def seli(state: ArchState, params: ScaleImmType) -> None:
+    state.write_ereg(params.ed, params.imm)
+
+
+@instruction(mnemonic="seld", params_type=ScaleMemType, latency=1)
+def seld(state: ArchState, params: ScaleMemType) -> None:
+    address = _u32(state.read_xreg(params.rs1) + params.imm)
+    state.write_ereg(params.ed, state.load_vmem_u8(address))
 
 
 @instruction(mnemonic="sst", params_type=SType, latency=1)
@@ -326,23 +352,29 @@ def _matmul_result(
     dest: int,
     src: int,
     slot: int,
+    scale_a: int,
+    scale_b: int,
     partial: int | None = None,
 ) -> None:
+    if not state.check_mreg_pair_base(dest):
+        return
     activation = state.load_mreg(src)
     weights = state.load_weight_slot(mxu, slot)
-    partial_raw = None if partial is None else state.load_mreg(partial)
+    partial_raw = None if partial is None else _load_mreg_pair(state, partial)
+    if partial is not None and partial_raw is None:
+        return
     state.instruction_extra_cycles = (
         state.config.matmul_latency_cycles - MATMUL_LATENCY_CYCLES
     )
-    state.store_mreg(
-        dest,
-        compute_bf16_matmul(
-            activation,
-            weights,
-            partial_raw,
-            config=state.config,
-        ),
+    result_lo, result_hi = compute_bf16_matmul(
+        activation,
+        weights,
+        state.read_ereg(scale_a),
+        state.read_ereg(scale_b),
+        partial_raw,
+        config=state.config,
     )
+    _store_mreg_pair(state, dest, result_lo, result_hi)
 
 
 def _apply_vpu_simple_latency(state: ArchState) -> None:
@@ -397,7 +429,15 @@ def _apply_xlu_transpose_latency(state: ArchState) -> None:
     registry=TENSOR_INSTRUCTION_SPECS,
 )
 def matmul_mxu0(state: ArchState, params: MXUMatmulType) -> None:
-    _matmul_result(state, mxu=0, dest=params.md, src=params.ms, slot=params.ws)
+    _matmul_result(
+        state,
+        mxu=0,
+        dest=params.md,
+        src=params.ms,
+        slot=params.ws,
+        scale_a=params.ea,
+        scale_b=params.eb,
+    )
 
 
 @instruction(
@@ -407,16 +447,24 @@ def matmul_mxu0(state: ArchState, params: MXUMatmulType) -> None:
     registry=TENSOR_INSTRUCTION_SPECS,
 )
 def matmul_mxu1(state: ArchState, params: MXUMatmulType) -> None:
-    _matmul_result(state, mxu=1, dest=params.md, src=params.ms, slot=params.ws)
+    _matmul_result(
+        state,
+        mxu=1,
+        dest=params.md,
+        src=params.ms,
+        slot=params.ws,
+        scale_a=params.ea,
+        scale_b=params.eb,
+    )
 
 
 @instruction(
-    mnemonic="matmul.add.mxu0",
+    mnemonic="matmul.acc.mxu0",
     params_type=MXUMatmulAccType,
     latency=MATMUL_LATENCY_CYCLES,
     registry=TENSOR_INSTRUCTION_SPECS,
 )
-def matmul_add_mxu0(state: ArchState, params: MXUMatmulAccType) -> None:
+def matmul_acc_mxu0(state: ArchState, params: MXUMatmulAccType) -> None:
     _matmul_result(
         state,
         mxu=0,
@@ -424,16 +472,18 @@ def matmul_add_mxu0(state: ArchState, params: MXUMatmulAccType) -> None:
         src=params.ms,
         slot=params.ws,
         partial=params.mp,
+        scale_a=params.ea,
+        scale_b=params.eb,
     )
 
 
 @instruction(
-    mnemonic="matmul.add.mxu1",
+    mnemonic="matmul.acc.mxu1",
     params_type=MXUMatmulAccType,
     latency=MATMUL_LATENCY_CYCLES,
     registry=TENSOR_INSTRUCTION_SPECS,
 )
-def matmul_add_mxu1(state: ArchState, params: MXUMatmulAccType) -> None:
+def matmul_acc_mxu1(state: ArchState, params: MXUMatmulAccType) -> None:
     _matmul_result(
         state,
         mxu=1,
@@ -441,6 +491,8 @@ def matmul_add_mxu1(state: ArchState, params: MXUMatmulAccType) -> None:
         src=params.ms,
         slot=params.ws,
         partial=params.mp,
+        scale_a=params.ea,
+        scale_b=params.eb,
     )
 
 
@@ -747,13 +799,15 @@ __all__ = [
     "sbne",
     "sebreak",
     "secall",
+    "seld",
+    "seli",
     "sfence",
     "sjal",
     "sjalr",
     "sld",
     "slui",
-    "matmul_add_mxu0",
-    "matmul_add_mxu1",
+    "matmul_acc_mxu0",
+    "matmul_acc_mxu1",
     "matmul_mxu0",
     "matmul_mxu1",
     "mxu_push_mxu0",

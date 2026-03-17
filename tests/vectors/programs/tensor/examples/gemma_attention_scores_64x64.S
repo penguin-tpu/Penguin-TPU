@@ -35,26 +35,17 @@
 
     li x1, VMEM_BASE + 0x0000
     li x10, VMEM_BASE + 0x1000
-    li x11, VMEM_BASE + 0x1200
-    li x12, VMEM_BASE + 0x1400
-    li x13, VMEM_BASE + 0x1600
-    li x20, VMEM_BASE + 0x2000
-    li x21, VMEM_BASE + 0x2800
-    li x22, VMEM_BASE + 0x3000
-    li x23, VMEM_BASE + 0x3800
+    li x11, VMEM_BASE + 0x2000
+    li x20, VMEM_BASE + 0x3000
+    li x21, VMEM_BASE + 0x4000
 
+    seli e0, 0
+    seli e1, 0
     vload m1, 0(x1)
     mxu.push.mxu0 w0, 0(x10)
     mxu.push.mxu0 w1, 0(x11)
 
-    matmul.mxu0 m2, m1, w0
+    matmul.mxu0 m2, m1, w0, e0, e1
     vstore m2, 0(x20)
-    matmul.mxu0 m3, m1, w1
-    vstore m3, 0(x21)
-
-    mxu.push.mxu0 w0, 0(x12)
-    mxu.push.mxu0 w1, 0(x13)
-    matmul.mxu0 m4, m1, w0
-    vstore m4, 0(x22)
-    matmul.mxu0 m5, m1, w1
-    vstore m5, 0(x23)
+    matmul.mxu0 m4, m1, w1, e0, e1
+    vstore m4, 0(x21)

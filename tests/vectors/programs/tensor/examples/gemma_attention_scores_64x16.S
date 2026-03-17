@@ -1,4 +1,4 @@
-# Fixed-shape Gemma attention score tile: 64x32 FP8 query @ 32x16 FP8 key^T -> 64x16 BF16 scores.
+# Fixed-shape Gemma attention score tile: 64x32 FP8 query @ 32x32 FP8 key^T -> 64x32 BF16 scores.
 
     # Startup scalar-register scrub: software must not assume power-on register contents.
     saddi x1, x0, 0
@@ -37,7 +37,9 @@
     li x10, VMEM_BASE + 0x1000
     li x20, VMEM_BASE + 0x2000
 
+    seli e0, 0
+    seli e1, 0
     vload m1, 0(x1)
     mxu.push.mxu0 w0, 0(x10)
-    matmul.mxu0 m2, m1, w0
+    matmul.mxu0 m2, m1, w0, e0, e1
     vstore m2, 0(x20)

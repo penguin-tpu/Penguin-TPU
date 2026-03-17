@@ -1,15 +1,12 @@
-"""Specification-driven MXU tests for the Penguin functional model."""
+"""Specification-driven MXU and scale-register tests for the Penguin model."""
 
 from __future__ import annotations
 
-from dataclasses import MISSING, fields, is_dataclass
-from typing import Any
+from dataclasses import replace
 
-import pytest
 import torch
 
 from penguin_model import (
-    ALL_INSTRUCTION_SPECS,
     INSTRUCTION_LATENCY,
     MATMUL_LATENCY_CYCLES,
     MXU_PUSH_LATENCY_CYCLES,
@@ -17,550 +14,298 @@ from penguin_model import (
     VLOAD_LATENCY_CYCLES,
     VSTORE_LATENCY_CYCLES,
     ArchState,
-    IType,
     Instruction,
+    MXUMatmulAccType,
+    MXUMatmulType,
     PenguinCore,
+    ScaleImmType,
+    ScaleMemType,
     StopReason,
     TensorMemType,
+    WeightMemType,
 )
-from penguin_model.testbench import (
-    DRAM_BASE,
-    TEST_CORE_CONFIG,
-    TEST_DRAM_SIZE,
-    TEST_IMEM_SIZE,
-    TEST_VMEM_SIZE,
-    VMEM_BASE,
+from penguin_model.tensor import (
+    BF16_DTYPE,
+    FP8_DTYPE,
+    MREG_BF16_COLS,
+    MREG_BYTES,
+    MREG_FP8_COLS,
+    MREG_ROWS,
+    WEIGHT_SLOT_BYTES,
+    WEIGHT_TILE_COLS_FP8,
+    WEIGHT_TILE_ROWS,
+    bf16_tile_pair_from_bytes,
+    bf16_tile_pair_to_bytes,
+    fp8_tile_to_bytes,
+    weight_tile_to_bytes,
 )
-
-MREG_ROWS = 64
-MREG_ROW_BYTES = 32
-MREG_FP8_COLS = 32
-MREG_BF16_COLS = 16
-MREG_BYTES = 2048
-WEIGHT_TILE_ROWS = 32
-WEIGHT_TILE_COLS = 16
-WEIGHT_SLOT_BYTES = 512
+from penguin_model.testbench import TEST_CORE_CONFIG, VMEM_BASE
 
 REQUIRED_MXU_MNEMONICS = {
     "mxu.push.mxu0",
     "mxu.push.mxu1",
     "matmul.mxu0",
     "matmul.mxu1",
-    "matmul.add.mxu0",
-    "matmul.add.mxu1",
+    "matmul.acc.mxu0",
+    "matmul.acc.mxu1",
 }
 
 
-def _fresh_state() -> ArchState:
-    return ArchState.from_config(TEST_CORE_CONFIG)
+def _fresh_state(config=TEST_CORE_CONFIG) -> ArchState:
+    return ArchState.from_config(config)
 
 
-def _fresh_core() -> PenguinCore:
-    return PenguinCore(config=TEST_CORE_CONFIG)
+def _fresh_core(config=TEST_CORE_CONFIG) -> PenguinCore:
+    return PenguinCore(config=config)
 
 
-def _require_mxu_support() -> None:
-    missing = sorted(REQUIRED_MXU_MNEMONICS - set(TENSOR_INSTRUCTION_SPECS))
-    if missing:
-        pytest.xfail(f"MXU mnemonics are not registered yet: {', '.join(missing)}")
-
-
-def _require_fp8_dtype() -> torch.dtype:
-    dtype = getattr(torch, "float8_e4m3fn", None)
-    if dtype is None:
-        pytest.xfail("PyTorch float8_e4m3fn support is required for MXU reference vectors")
-    return dtype
-
-
-def _field_type_name(field: Any) -> str:
-    field_type = field.type
-    return field_type if isinstance(field_type, str) else getattr(field_type, "__name__", "")
-
-
-def _register_operand(field: Any, register_name: str) -> Any:
-    type_name = _field_type_name(field)
-    if type_name == "str" or isinstance(field.default, str):
-        return register_name
-    return int(register_name[1:])
-
-
-def _weight_slot_operand(field: Any, slot_name: str) -> Any:
-    type_name = _field_type_name(field)
-    if type_name == "str" or isinstance(field.default, str):
-        return slot_name
-    return int(slot_name[1:])
-
-
-def _build_mxu_params(mnemonic: str, **operands: Any) -> Any:
-    params_type = ALL_INSTRUCTION_SPECS[mnemonic].params_type
-    if not is_dataclass(params_type):
-        pytest.xfail(f"{mnemonic} params type is not a dataclass: {params_type!r}")
-
-    values: dict[str, Any] = {}
-    for field in fields(params_type):
-        name = field.name
-        if name in {"rd", "md", "mdst", "dest", "dest_mreg", "m_dest", "mrd"}:
-            values[name] = _register_operand(field, operands["dest"])
-        elif name in {"rs", "ms", "msrc", "src", "src_mreg", "m_src", "mra", "lhs"}:
-            values[name] = _register_operand(field, operands["src"])
-        elif name in {"mpartial", "partial", "partial_mreg", "m_partial", "acc", "accum", "mp"}:
-            values[name] = _register_operand(field, operands["partial"])
-        elif name in {"wsel", "wsrc", "slot", "weight_slot", "wslot", "ws"}:
-            values[name] = _weight_slot_operand(field, operands["slot"])
-        elif name in {"rs1", "base", "addr_rs", "vmem_rs", "base_rs", "address_rs"}:
-            values[name] = operands["rs1"]
-        elif name in {"imm", "offset"}:
-            values[name] = operands.get("imm", 0)
-        elif field.default is not MISSING:
-            continue
-        else:
-            pytest.xfail(f"Unrecognized {mnemonic} operand field {name!r}")
-
-    return params_type(**values)
-
-
-def _make_instruction(mnemonic: str, **operands: Any) -> Instruction:
-    _require_mxu_support()
-    return Instruction(mnemonic, _build_mxu_params(mnemonic, **operands))
-
-
-def _as_byte_tensor(data: bytes) -> torch.Tensor:
-    return torch.tensor(list(data), dtype=torch.uint8)
-
-
-def _value_to_bytes(value: Any) -> bytes:
-    if isinstance(value, bytes):
-        return value
-    if isinstance(value, bytearray):
-        return bytes(value)
-    if isinstance(value, torch.Tensor):
-        return bytes(int(item) for item in value.flatten().tolist())
-    if isinstance(value, list):
-        return bytes(int(item) & 0xFF for item in value)
-    if isinstance(value, tuple):
-        return bytes(int(item) & 0xFF for item in value)
-    pytest.xfail(f"Unsupported tensor-register storage value type: {type(value)!r}")
-
-
-def _tensor_register_container(state: ArchState) -> Any:
-    for name in ("tensor_regs", "tensor_registers", "mregs", "mreg"):
-        container = getattr(state, name, None)
-        if container is not None:
-            return container
-    pytest.xfail("Tensor register file is not exposed on the architectural state yet")
-
-
-def _write_mreg_bytes(state: ArchState, index: int, data: bytes) -> None:
-    if len(data) != MREG_BYTES:
-        raise ValueError(f"Tensor register image must be {MREG_BYTES} bytes")
-
-    for name in ("write_mreg_bytes", "set_mreg_bytes", "store_mreg_bytes"):
-        method = getattr(state, name, None)
-        if method is not None:
-            method(index, data)
-            return
-
-    container = _tensor_register_container(state)
-    key_options = (index, f"m{index}")
-    for key in key_options:
-        try:
-            current = container[key]
-        except Exception:
-            continue
-
-        if isinstance(current, torch.Tensor):
-            byte_tensor = _as_byte_tensor(data)
-            if current.shape == byte_tensor.shape:
-                current.copy_(byte_tensor)
-            else:
-                container[key] = byte_tensor
-            return
-        if isinstance(current, (bytes, bytearray, list, tuple)):
-            container[key] = type(current)(data)
-            return
-        container[key] = data
-        return
-
-    pytest.xfail("Tensor register file exists but tests cannot write tensor-register bytes yet")
-
-
-def _read_mreg_bytes(state: ArchState, index: int) -> bytes:
-    for name in ("read_mreg_bytes", "get_mreg_bytes", "load_mreg_bytes"):
-        method = getattr(state, name, None)
-        if method is not None:
-            return _value_to_bytes(method(index))
-
-    container = _tensor_register_container(state)
-    for key in (index, f"m{index}"):
-        try:
-            return _value_to_bytes(container[key])
-        except Exception:
-            continue
-
-    pytest.xfail("Tensor register file exists but tests cannot read tensor-register bytes yet")
-
-
-def _pack_fp8_tile(values: torch.Tensor) -> bytes:
-    fp8_dtype = _require_fp8_dtype()
-    if tuple(values.shape) != (MREG_ROWS, MREG_FP8_COLS):
-        raise ValueError("Activation tile must be 64x32 FP8 elements")
-    packed = values.to(dtype=fp8_dtype).contiguous().view(torch.uint8)
-    return bytes(int(item) for item in packed.flatten().tolist())
-
-
-def _pack_weight_tile(values: torch.Tensor) -> bytes:
-    fp8_dtype = _require_fp8_dtype()
-    if tuple(values.shape) != (WEIGHT_TILE_ROWS, WEIGHT_TILE_COLS):
-        raise ValueError("Weight tile must be 32x16 FP8 elements")
-    packed = values.to(dtype=fp8_dtype).contiguous().view(torch.uint8)
-    return bytes(int(item) for item in packed.flatten().tolist())
-
-
-def _pack_bf16_tile(values: torch.Tensor) -> bytes:
-    if tuple(values.shape) != (MREG_ROWS, MREG_BF16_COLS):
-        raise ValueError("Result tile must be 64x16 BF16 elements")
-    packed = values.to(dtype=torch.bfloat16).contiguous().view(torch.uint8)
-    return bytes(int(item) for item in packed.flatten().tolist())
-
-
-def _reference_matmul(activation_tile: torch.Tensor, weight_tile: torch.Tensor) -> torch.Tensor:
-    fp8_dtype = _require_fp8_dtype()
-    activation_fp8 = activation_tile.to(dtype=fp8_dtype).to(dtype=torch.float32)
-    weight_fp8 = weight_tile.to(dtype=fp8_dtype).to(dtype=torch.float32)
-    return (activation_fp8 @ weight_fp8).to(dtype=torch.bfloat16)
-
-
-def _small_activation_tile() -> torch.Tensor:
+def _fp8_tile(values: list[list[float]]) -> torch.Tensor:
     tile = torch.zeros((MREG_ROWS, MREG_FP8_COLS), dtype=torch.float32)
-    tile[:2, :3] = torch.tensor(
-        [
-            [1.0, 2.0, -1.0],
-            [0.5, -2.0, 3.0],
-        ],
-        dtype=torch.float32,
-    )
+    value_tensor = torch.tensor(values, dtype=torch.float32)
+    tile[: value_tensor.shape[0], : value_tensor.shape[1]] = value_tensor
     return tile
 
 
-def _weight_tile_a() -> torch.Tensor:
-    tile = torch.zeros((WEIGHT_TILE_ROWS, WEIGHT_TILE_COLS), dtype=torch.float32)
-    tile[:3, :2] = torch.tensor(
-        [
-            [1.0, -1.0],
-            [0.5, 2.0],
-            [-3.0, 0.25],
-        ],
-        dtype=torch.float32,
-    )
+def _weight_tile(values: list[list[float]]) -> torch.Tensor:
+    tile = torch.zeros((WEIGHT_TILE_ROWS, WEIGHT_TILE_COLS_FP8), dtype=torch.float32)
+    value_tensor = torch.tensor(values, dtype=torch.float32)
+    tile[: value_tensor.shape[0], : value_tensor.shape[1]] = value_tensor
     return tile
 
 
-def _weight_tile_b() -> torch.Tensor:
-    tile = torch.zeros((WEIGHT_TILE_ROWS, WEIGHT_TILE_COLS), dtype=torch.float32)
-    tile[:3, :2] = torch.tensor(
-        [
-            [2.0, 1.0],
-            [-1.5, 0.5],
-            [0.25, -2.0],
-        ],
-        dtype=torch.float32,
-    )
-    return tile
+def _bf16_result_tile(values: list[list[float]]) -> torch.Tensor:
+    tile = torch.zeros((MREG_ROWS, WEIGHT_TILE_COLS_FP8), dtype=torch.float32)
+    value_tensor = torch.tensor(values, dtype=torch.float32)
+    tile[: value_tensor.shape[0], : value_tensor.shape[1]] = value_tensor
+    return tile.to(BF16_DTYPE)
 
 
-def _partial_tile() -> torch.Tensor:
-    tile = torch.zeros((MREG_ROWS, MREG_BF16_COLS), dtype=torch.float32)
-    tile[:2, :2] = torch.tensor(
-        [
-            [1.0, -2.0],
-            [0.5, 3.0],
-        ],
-        dtype=torch.float32,
-    )
-    return tile.to(dtype=torch.bfloat16)
+def _store_activation(state: ArchState, index: int, tile: torch.Tensor) -> None:
+    state.store_mreg(index, fp8_tile_to_bytes(tile, config=state.config))
 
 
-def _assert_program_completed(core: PenguinCore, perf: Any, *, instructions: int) -> None:
-    assert core.state.stop_reason == StopReason.PROGRAM_END
-    assert perf.instructions == instructions
+def _store_weight(state: ArchState, mxu: int, slot: int, tile: torch.Tensor) -> None:
+    state.store_weight_slot(mxu, slot, weight_tile_to_bytes(tile, config=state.config))
 
 
-def test_mxu_instruction_family_registers_once_support_lands() -> None:
-    _require_mxu_support()
+def _store_partial_pair(state: ArchState, index: int, tile: torch.Tensor) -> None:
+    raw_lo, raw_hi = bf16_tile_pair_to_bytes(tile, config=state.config)
+    state.store_mreg(index, raw_lo)
+    state.store_mreg(index + 1, raw_hi)
+
+
+def _read_result_pair(state: ArchState, index: int) -> torch.Tensor:
+    return bf16_tile_pair_from_bytes(
+        state.load_mreg(index),
+        state.load_mreg(index + 1),
+        config=state.config,
+    ).to(torch.float32)
+
+
+def _reference_scaled_matmul(
+    activation: torch.Tensor,
+    weights: torch.Tensor,
+    *,
+    scale_a_exp: int = 0,
+    scale_b_exp: int = 0,
+    partial: torch.Tensor | None = None,
+) -> torch.Tensor:
+    activation_fp8 = activation.to(dtype=FP8_DTYPE).to(dtype=torch.float32)
+    weight_fp8 = weights.to(dtype=FP8_DTYPE).to(dtype=torch.float32)
+    result = activation_fp8 @ weight_fp8
+    result *= float(2.0**scale_a_exp) * float(2.0**scale_b_exp)
+    if partial is not None:
+        result = result + partial.to(torch.float32)
+    return result.to(dtype=BF16_DTYPE).to(dtype=torch.float32)
+
+
+def test_mxu_instruction_family_registers_with_expected_latency_classes() -> None:
     assert REQUIRED_MXU_MNEMONICS <= set(TENSOR_INSTRUCTION_SPECS)
-
-
-def test_tensor_instruction_latency_view_exposes_tensor_ops() -> None:
-    _require_mxu_support()
     assert INSTRUCTION_LATENCY["vload"] == VLOAD_LATENCY_CYCLES
     assert INSTRUCTION_LATENCY["vstore"] == VSTORE_LATENCY_CYCLES
     assert INSTRUCTION_LATENCY["mxu.push.mxu0"] == MXU_PUSH_LATENCY_CYCLES
+    assert INSTRUCTION_LATENCY["mxu.push.mxu1"] == MXU_PUSH_LATENCY_CYCLES
+    assert INSTRUCTION_LATENCY["matmul.mxu0"] == MATMUL_LATENCY_CYCLES
     assert INSTRUCTION_LATENCY["matmul.mxu1"] == MATMUL_LATENCY_CYCLES
+    assert INSTRUCTION_LATENCY["matmul.acc.mxu0"] == MATMUL_LATENCY_CYCLES
+    assert INSTRUCTION_LATENCY["matmul.acc.mxu1"] == MATMUL_LATENCY_CYCLES
 
 
-def test_vload_and_vstore_round_trip_tensor_image_and_perf_counters() -> None:
-    _require_mxu_support()
-    core = _fresh_core()
-    image = bytes(((index * 17) + 3) & 0xFF for index in range(MREG_BYTES))
-
-    core.state.vmem.write(VMEM_BASE + 0x80, _as_byte_tensor(image))
-    core.state.write_xreg(1, VMEM_BASE + 0x80)
-    core.state.write_xreg(2, VMEM_BASE + 0x800)
+def test_scale_register_instructions_write_expected_raw_payloads() -> None:
+    state = _fresh_state()
+    state.vmem.write(VMEM_BASE + 0x40, torch.tensor([0xFF], dtype=torch.uint8))
+    core = PenguinCore(state=state)
 
     perf = core.execute(
         [
-            Instruction("vload", TensorMemType(mreg=5, rs1=1, imm=0)),
-            Instruction("vstore", TensorMemType(mreg=5, rs1=2, imm=0)),
+            Instruction("seli", ScaleImmType(ed=1, imm=0x05)),
+            Instruction("seld", ScaleMemType(ed=2, rs1=0, imm=VMEM_BASE + 0x40)),
         ]
     )
 
-    _assert_program_completed(core, perf, instructions=2)
-    assert _read_mreg_bytes(core.state, 5) == image
-    assert bytes(core.state.vmem.read(VMEM_BASE + 0x800, MREG_BYTES).tolist()) == image
-    assert perf.cycles == VLOAD_LATENCY_CYCLES + VSTORE_LATENCY_CYCLES
-    assert perf.bytes_read == MREG_BYTES
-    assert perf.bytes_written == MREG_BYTES
-    assert perf.instructions_by_opcode == {"vload": 1, "vstore": 1}
-
-
-def test_mxu0_push_and_matmul_produce_expected_bf16_tile() -> None:
-    _require_mxu_support()
-    core = _fresh_core()
-    activation = _small_activation_tile()
-    weights = _weight_tile_a()
-    expected = _pack_bf16_tile(_reference_matmul(activation, weights))
-
-    _write_mreg_bytes(core.state, 1, _pack_fp8_tile(activation))
-    core.state.vmem.write(VMEM_BASE + 0x100, _as_byte_tensor(_pack_weight_tile(weights)))
-    core.state.write_xreg(1, VMEM_BASE + 0x100)
-
-    perf = core.execute(
-        [
-            _make_instruction("mxu.push.mxu0", slot="w0", rs1=1, imm=0),
-            _make_instruction("matmul.mxu0", dest="m2", src="m1", slot="w0"),
-        ]
-    )
-
-    _assert_program_completed(core, perf, instructions=2)
-    assert _read_mreg_bytes(core.state, 2) == expected
-
-
-def test_scalar_issue_overlaps_inflight_mxu_latency() -> None:
-    _require_mxu_support()
-    core = _fresh_core()
-    activation = _small_activation_tile()
-    weights = _weight_tile_a()
-
-    _write_mreg_bytes(core.state, 1, _pack_fp8_tile(activation))
-    core.state.vmem.write(VMEM_BASE + 0x120, _as_byte_tensor(_pack_weight_tile(weights)))
-    core.state.write_xreg(1, VMEM_BASE + 0x120)
-
-    perf = core.execute(
-        [
-            _make_instruction("mxu.push.mxu0", slot="w0", rs1=1, imm=0),
-            _make_instruction("matmul.mxu0", dest="m2", src="m1", slot="w0"),
-            Instruction("saddi", IType(rd=10, rs1=0, imm=1)),
-            Instruction("saddi", IType(rd=11, rs1=0, imm=2)),
-            Instruction("saddi", IType(rd=12, rs1=0, imm=3)),
-        ]
-    )
-
-    _assert_program_completed(core, perf, instructions=5)
-    assert core.state.read_xreg(10) == 1
-    assert core.state.read_xreg(11) == 2
-    assert core.state.read_xreg(12) == 3
-    assert perf.cycles == MXU_PUSH_LATENCY_CYCLES + MATMUL_LATENCY_CYCLES
-
-
-def test_matmul_add_uses_explicit_partial_tensor_operand() -> None:
-    _require_mxu_support()
-    core = _fresh_core()
-    activation = _small_activation_tile()
-    weights = _weight_tile_a()
-    partial = _partial_tile()
-    expected = _pack_bf16_tile(_reference_matmul(activation, weights) + partial)
-
-    _write_mreg_bytes(core.state, 1, _pack_fp8_tile(activation))
-    _write_mreg_bytes(core.state, 3, _pack_bf16_tile(partial))
-    _write_mreg_bytes(core.state, 4, _pack_bf16_tile(torch.full((MREG_ROWS, MREG_BF16_COLS), 7.0)))
-    core.state.vmem.write(VMEM_BASE + 0x140, _as_byte_tensor(_pack_weight_tile(weights)))
-    core.state.write_xreg(1, VMEM_BASE + 0x140)
-
-    perf = core.execute(
-        [
-            _make_instruction("mxu.push.mxu0", slot="w0", rs1=1, imm=0),
-            _make_instruction("matmul.add.mxu0", dest="m4", src="m1", slot="w0", partial="m3"),
-        ]
-    )
-
-    _assert_program_completed(core, perf, instructions=2)
-    assert _read_mreg_bytes(core.state, 4) == expected
-
-
-def test_fresh_matmul_overwrites_destination_tile() -> None:
-    _require_mxu_support()
-    core = _fresh_core()
-    activation = _small_activation_tile()
-    weights = _weight_tile_a()
-    expected = _pack_bf16_tile(_reference_matmul(activation, weights))
-
-    _write_mreg_bytes(core.state, 1, _pack_fp8_tile(activation))
-    _write_mreg_bytes(core.state, 2, _pack_bf16_tile(torch.full((MREG_ROWS, MREG_BF16_COLS), 5.0)))
-    core.state.vmem.write(VMEM_BASE + 0x180, _as_byte_tensor(_pack_weight_tile(weights)))
-    core.state.write_xreg(1, VMEM_BASE + 0x180)
-
-    perf = core.execute(
-        [
-            _make_instruction("mxu.push.mxu0", slot="w0", rs1=1, imm=0),
-            _make_instruction("matmul.mxu0", dest="m2", src="m1", slot="w0"),
-        ]
-    )
-
-    _assert_program_completed(core, perf, instructions=2)
-    assert _read_mreg_bytes(core.state, 2) == expected
-
-
-def test_mxu_weight_slots_w0_and_w1_are_independent() -> None:
-    _require_mxu_support()
-    core = _fresh_core()
-    activation = _small_activation_tile()
-    weights_w0 = _weight_tile_a()
-    weights_w1 = _weight_tile_b()
-    expected_w0 = _pack_bf16_tile(_reference_matmul(activation, weights_w0))
-    expected_w1 = _pack_bf16_tile(_reference_matmul(activation, weights_w1))
-
-    _write_mreg_bytes(core.state, 1, _pack_fp8_tile(activation))
-    core.state.vmem.write(VMEM_BASE + 0x200, _as_byte_tensor(_pack_weight_tile(weights_w0)))
-    core.state.vmem.write(VMEM_BASE + 0x240, _as_byte_tensor(_pack_weight_tile(weights_w1)))
-    core.state.write_xreg(1, VMEM_BASE + 0x200)
-    core.state.write_xreg(2, VMEM_BASE + 0x240)
-
-    perf = core.execute(
-        [
-            _make_instruction("mxu.push.mxu0", slot="w0", rs1=1, imm=0),
-            _make_instruction("mxu.push.mxu0", slot="w1", rs1=2, imm=0),
-            _make_instruction("matmul.mxu0", dest="m2", src="m1", slot="w0"),
-            _make_instruction("matmul.mxu0", dest="m3", src="m1", slot="w1"),
-        ]
-    )
-
-    _assert_program_completed(core, perf, instructions=4)
-    assert _read_mreg_bytes(core.state, 2) == expected_w0
-    assert _read_mreg_bytes(core.state, 3) == expected_w1
-    assert expected_w0 != expected_w1
-
-
-def test_mxu0_and_mxu1_keep_distinct_weight_state() -> None:
-    _require_mxu_support()
-    core = _fresh_core()
-    activation = _small_activation_tile()
-    weights_mxu0 = _weight_tile_a()
-    weights_mxu1 = _weight_tile_b()
-    expected_mxu0 = _pack_bf16_tile(_reference_matmul(activation, weights_mxu0))
-    expected_mxu1 = _pack_bf16_tile(_reference_matmul(activation, weights_mxu1))
-
-    _write_mreg_bytes(core.state, 1, _pack_fp8_tile(activation))
-    core.state.vmem.write(VMEM_BASE + 0x280, _as_byte_tensor(_pack_weight_tile(weights_mxu0)))
-    core.state.vmem.write(VMEM_BASE + 0x2C0, _as_byte_tensor(_pack_weight_tile(weights_mxu1)))
-    core.state.write_xreg(1, VMEM_BASE + 0x280)
-    core.state.write_xreg(2, VMEM_BASE + 0x2C0)
-
-    perf = core.execute(
-        [
-            _make_instruction("mxu.push.mxu0", slot="w0", rs1=1, imm=0),
-            _make_instruction("mxu.push.mxu1", slot="w0", rs1=2, imm=0),
-            _make_instruction("matmul.mxu0", dest="m2", src="m1", slot="w0"),
-            _make_instruction("matmul.mxu1", dest="m3", src="m1", slot="w0"),
-        ]
-    )
-
-    _assert_program_completed(core, perf, instructions=4)
-    assert _read_mreg_bytes(core.state, 2) == expected_mxu0
-    assert _read_mreg_bytes(core.state, 3) == expected_mxu1
-    assert expected_mxu0 != expected_mxu1
-
-
-def test_mxu_push_uses_vmem_not_dram_as_weight_source() -> None:
-    _require_mxu_support()
-    core = _fresh_core()
-    activation = _small_activation_tile()
-    weights_vmem = _weight_tile_a()
-    weights_dram = _weight_tile_b()
-    expected_vmem = _pack_bf16_tile(_reference_matmul(activation, weights_vmem))
-
-    _write_mreg_bytes(core.state, 1, _pack_fp8_tile(activation))
-    core.state.vmem.write(VMEM_BASE + 0x300, _as_byte_tensor(_pack_weight_tile(weights_vmem)))
-    core.state.dram.write(DRAM_BASE + 0x300, _as_byte_tensor(_pack_weight_tile(weights_dram)))
-    core.state.write_xreg(1, VMEM_BASE + 0x300)
-
-    perf = core.execute(
-        [
-            _make_instruction("mxu.push.mxu0", slot="w0", rs1=1, imm=0),
-            _make_instruction("matmul.mxu0", dest="m2", src="m1", slot="w0"),
-        ]
-    )
-
-    _assert_program_completed(core, perf, instructions=2)
-    assert _read_mreg_bytes(core.state, 2) == expected_vmem
-
-
-def test_mxu_push_rejects_misaligned_vmem_address() -> None:
-    _require_mxu_support()
-    core = _fresh_core()
-    activation = _small_activation_tile()
-
-    _write_mreg_bytes(core.state, 1, _pack_fp8_tile(activation))
-    _write_mreg_bytes(core.state, 2, _pack_bf16_tile(torch.zeros((MREG_ROWS, MREG_BF16_COLS))))
-    core.state.write_xreg(1, VMEM_BASE + 0x101)
-
-    perf = core.execute(
-        [
-            _make_instruction("mxu.push.mxu0", slot="w0", rs1=1, imm=0),
-            _make_instruction("matmul.mxu0", dest="m2", src="m1", slot="w0"),
-        ]
-    )
-
-    assert perf.instructions >= 1
-    assert core.state.stop_reason is not None
-    assert _read_mreg_bytes(core.state, 2) == _pack_bf16_tile(
-        torch.zeros((MREG_ROWS, MREG_BF16_COLS))
-    )
-
-
-def test_vload_rejects_misaligned_vmem_address_without_mutating_destination() -> None:
-    _require_mxu_support()
-    core = _fresh_core()
-    original = bytes(((index * 5) + 1) & 0xFF for index in range(MREG_BYTES))
-
-    _write_mreg_bytes(core.state, 7, original)
-    core.state.write_xreg(1, VMEM_BASE + 0x81)
-
-    perf = core.execute([Instruction("vload", TensorMemType(mreg=7, rs1=1, imm=0))])
-
-    assert perf.instructions == 1
-    assert core.state.stop_reason == StopReason.TENSOR_MEMORY_MISALIGNED
-    assert _read_mreg_bytes(core.state, 7) == original
-
-
-def test_mxu_perf_counters_track_tensor_latencies_and_opcode_histogram() -> None:
-    _require_mxu_support()
-    core = _fresh_core()
-    activation = _small_activation_tile()
-    weights = _weight_tile_a()
-
-    _write_mreg_bytes(core.state, 1, _pack_fp8_tile(activation))
-    core.state.vmem.write(VMEM_BASE + 0x340, _as_byte_tensor(_pack_weight_tile(weights)))
-    core.state.write_xreg(1, VMEM_BASE + 0x340)
-
-    perf = core.execute(
-        [
-            _make_instruction("mxu.push.mxu1", slot="w1", rs1=1, imm=0),
-            _make_instruction("matmul.mxu1", dest="m2", src="m1", slot="w1"),
-        ]
-    )
-
-    _assert_program_completed(core, perf, instructions=2)
-    assert perf.cycles == MXU_PUSH_LATENCY_CYCLES + MATMUL_LATENCY_CYCLES
-    assert perf.bytes_read == WEIGHT_SLOT_BYTES
+    assert state.read_ereg(1) == 0x05
+    assert state.read_ereg(2) == 0xFF
+    assert perf.instructions_by_opcode == {"seli": 1, "seld": 1}
+    assert perf.bytes_read == 1
     assert perf.bytes_written == 0
-    assert perf.instructions_by_opcode == {"mxu.push.mxu1": 1, "matmul.mxu1": 1}
+
+
+@torch.no_grad()
+def test_vload_push_and_vstore_use_whole_tensor_and_weight_images() -> None:
+    activation = _fp8_tile([[1.0, 2.0, 3.0], [-4.0, 0.5, 1.5]])
+    weights = _weight_tile([[1.0, -1.0], [2.0, 0.25], [0.5, 4.0]])
+    result_tile = _bf16_result_tile([[7.0, 8.0], [9.0, 10.0]])
+    result_lo, _ = bf16_tile_pair_to_bytes(result_tile, config=TEST_CORE_CONFIG)
+
+    state = _fresh_state()
+    act_addr = VMEM_BASE + 0x0000
+    weight_addr = VMEM_BASE + 0x2000
+    store_addr = VMEM_BASE + 0x4000
+    state.vmem.write(act_addr, fp8_tile_to_bytes(activation, config=state.config))
+    state.vmem.write(weight_addr, weight_tile_to_bytes(weights, config=state.config))
+    state.store_mreg(5, result_lo)
+    core = PenguinCore(state=state)
+
+    perf = core.execute(
+        [
+            Instruction("vload", TensorMemType(mreg=1, rs1=0, imm=act_addr)),
+            Instruction("mxu.push.mxu0", WeightMemType(slot=0, rs1=0, imm=weight_addr)),
+            Instruction("vstore", TensorMemType(mreg=5, rs1=0, imm=store_addr)),
+        ]
+    )
+
+    assert torch.equal(state.load_mreg(1), fp8_tile_to_bytes(activation, config=state.config))
+    assert torch.equal(
+        state.load_weight_slot(0, 0),
+        weight_tile_to_bytes(weights, config=state.config),
+    )
+    assert torch.equal(state.vmem.read(store_addr, MREG_BYTES), result_lo)
+    assert perf.instructions == 3
+    assert perf.bytes_read == MREG_BYTES + WEIGHT_SLOT_BYTES
+    assert perf.bytes_written == MREG_BYTES
+
+
+@torch.no_grad()
+def test_matmul_writes_paired_bf16_result_registers() -> None:
+    activation = _fp8_tile([[1.0, 2.0, -1.0], [0.5, -2.0, 3.0]])
+    weights = _weight_tile([[1.0, -1.0], [0.5, 2.0], [-3.0, 0.25]])
+    state = _fresh_state()
+    _store_activation(state, 1, activation)
+    _store_weight(state, 0, 0, weights)
+    core = PenguinCore(state=state)
+
+    perf = core.execute(
+        [
+            Instruction("seli", ScaleImmType(ed=0, imm=0)),
+            Instruction("seli", ScaleImmType(ed=1, imm=0)),
+            Instruction("matmul.mxu0", MXUMatmulType(md=2, ms=1, ws=0, ea=0, eb=1)),
+        ]
+    )
+
+    expected = _reference_scaled_matmul(activation, weights)
+    assert torch.equal(_read_result_pair(state, 2), expected)
+    assert perf.instructions_by_opcode == {"seli": 2, "matmul.mxu0": 1}
+    assert perf.cycles == 2 + TEST_CORE_CONFIG.tensor.matmul_latency_cycles
+
+
+@torch.no_grad()
+def test_matmul_acc_uses_paired_partial_and_scale_operands() -> None:
+    activation = _fp8_tile([[1.0, 2.0], [3.0, 4.0]])
+    weights = _weight_tile([[0.5, 1.0], [-2.0, 0.25]])
+    partial = _bf16_result_tile([[10.0, -3.0], [1.5, 2.5]])
+    state = _fresh_state()
+    _store_activation(state, 1, activation)
+    _store_weight(state, 0, 0, weights)
+    _store_partial_pair(state, 8, partial)
+    core = PenguinCore(state=state)
+
+    perf = core.execute(
+        [
+            Instruction("seli", ScaleImmType(ed=0, imm=1)),
+            Instruction("seli", ScaleImmType(ed=1, imm=0xFF)),
+            Instruction(
+                "matmul.acc.mxu0",
+                MXUMatmulAccType(md=4, ms=1, ws=0, mp=8, ea=0, eb=1),
+            ),
+        ]
+    )
+
+    expected = _reference_scaled_matmul(
+        activation,
+        weights,
+        scale_a_exp=1,
+        scale_b_exp=-1,
+        partial=partial,
+    )
+    assert torch.equal(_read_result_pair(state, 4), expected)
+    assert perf.instructions_by_opcode == {"seli": 2, "matmul.acc.mxu0": 1}
+
+
+@torch.no_grad()
+def test_scale_registers_loaded_from_immediate_and_memory_affect_matmul() -> None:
+    activation = _fp8_tile([[1.0, 0.0], [0.0, 1.0]])
+    weights = _weight_tile([[2.0, 0.0], [0.0, 4.0]])
+    state = _fresh_state()
+    _store_activation(state, 1, activation)
+    _store_weight(state, 0, 0, weights)
+    state.vmem.write(VMEM_BASE + 0x80, torch.tensor([0xFF], dtype=torch.uint8))
+    core = PenguinCore(state=state)
+
+    perf = core.execute(
+        [
+            Instruction("seli", ScaleImmType(ed=0, imm=1)),
+            Instruction("seld", ScaleMemType(ed=1, rs1=0, imm=VMEM_BASE + 0x80)),
+            Instruction("matmul.mxu0", MXUMatmulType(md=6, ms=1, ws=0, ea=0, eb=1)),
+        ]
+    )
+
+    expected = _reference_scaled_matmul(
+        activation,
+        weights,
+        scale_a_exp=1,
+        scale_b_exp=-1,
+    )
+    assert torch.equal(_read_result_pair(state, 6), expected)
+    assert perf.bytes_read == 1
+
+
+def test_matmul_rejects_illegal_paired_destination_base() -> None:
+    activation = _fp8_tile([[1.0]])
+    weights = _weight_tile([[1.0]])
+    state = _fresh_state()
+    _store_activation(state, 1, activation)
+    _store_weight(state, 0, 0, weights)
+    core = PenguinCore(state=state)
+
+    perf = core.execute(
+        [
+            Instruction("seli", ScaleImmType(ed=0, imm=0)),
+            Instruction("seli", ScaleImmType(ed=1, imm=0)),
+            Instruction("matmul.mxu0", MXUMatmulType(md=63, ms=1, ws=0, ea=0, eb=1)),
+        ]
+    )
+
+    assert state.stop_reason == StopReason.ILLEGAL_TENSOR_REGISTER_PAIR
+    assert perf.instructions == 3
+
+
+def test_matmul_perf_model_uses_configured_latency() -> None:
+    config = replace(
+        TEST_CORE_CONFIG,
+        tensor=replace(TEST_CORE_CONFIG.tensor, matmul_latency_cycles=17),
+    )
+    state = _fresh_state(config)
+    _store_activation(state, 1, _fp8_tile([[1.0]]))
+    _store_weight(state, 0, 0, _weight_tile([[1.0]]))
+    core = PenguinCore(state=state, config=config)
+
+    perf = core.execute(
+        [
+            Instruction("seli", ScaleImmType(ed=0, imm=0)),
+            Instruction("seli", ScaleImmType(ed=1, imm=0)),
+            Instruction("matmul.mxu0", MXUMatmulType(md=2, ms=1, ws=0, ea=0, eb=1)),
+        ]
+    )
+
+    assert perf.instructions == 3
+    assert perf.cycles == 19

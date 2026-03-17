@@ -11,8 +11,8 @@ from .bundle import load_mapped_program
 from .core_config import DEFAULT_PENGUIN_CORE_CONFIG, PenguinCoreConfig
 from .core import PenguinCore
 
-TEST_DRAM_SIZE = 4 * 1024
-TEST_VMEM_SIZE = 4 * 1024
+TEST_DRAM_SIZE = 256 * 1024
+TEST_VMEM_SIZE = 256 * 1024
 TEST_IMEM_SIZE = 1 * 1024
 TEST_PROGRAM_ROOT = Path(__file__).resolve().parents[2] / "tests" / "vectors" / "programs"
 TEST_CORE_CONFIG = DEFAULT_PENGUIN_CORE_CONFIG.with_memory_sizes(

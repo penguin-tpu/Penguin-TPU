@@ -674,3 +674,19 @@ Open follow-up for the next FPGA step:
     - the wrapper retry path succeeded on the second attempt without any design
       changes
     - UART validation on `/dev/ttyUSB0` captured repeated `vadd=4040`
+- aligned the software-visible tensor stack with the new square-MXU baseline:
+  - `penguin-model` now models `32` architectural `e` registers, `seli` / `seld`,
+    `64 x 64` FP8 MXU tiles, `matmul.acc.*`, and paired-register BF16 MXU results
+  - tensor helpers now explicitly split/join full BF16 MXU outputs across two `m`
+    registers, and the model interprets `e` payloads as unbiased signed power-of-two
+    exponents so `seli eN, 0` is unity scale
+  - checked-in tensor example programs, Gemma-inspired stage programs, and generated
+    symbol tables were updated to the new contract; the Gemma logical workloads remain
+    `64 x 32` / `64 x 16` visible kernels and are zero-padded into the larger `64 x 64`
+    MXU tiles in software
+  - the large DMA-backed tensor examples also had their DRAM weight-stride bugs fixed to
+    match the `(k, n)` tile layout now used by the software staging helpers
+  - tensor/perf/roofline tests were refreshed to the new geometry and current workload
+    counts
+  - full software verification now passes again with `uv run pytest` reporting
+    `283 passed`

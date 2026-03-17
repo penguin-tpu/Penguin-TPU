@@ -22,6 +22,8 @@ from .instructions import (
     MXUMatmulAccType,
     MXUMatmulType,
     RType,
+    ScaleImmType,
+    ScaleMemType,
     SType,
     TensorMemType,
     UType,
@@ -88,14 +90,21 @@ def _format_instruction(instruction: Instruction) -> str:
         return mnemonic
     if isinstance(params, DMAType):
         return f"{mnemonic} x{params.dram_rs}, x{params.vmem_rs}, x{params.size_rs}"
+    if isinstance(params, ScaleImmType):
+        return f"{mnemonic} e{params.ed}, {params.imm}"
+    if isinstance(params, ScaleMemType):
+        return f"{mnemonic} e{params.ed}, {params.imm}(x{params.rs1})"
     if isinstance(params, TensorMemType):
         return f"{mnemonic} m{params.mreg}, {params.imm}(x{params.rs1})"
     if isinstance(params, WeightMemType):
         return f"{mnemonic} w{params.slot}, {params.imm}(x{params.rs1})"
     if isinstance(params, MXUMatmulType):
-        return f"{mnemonic} m{params.md}, m{params.ms}, w{params.ws}"
+        return f"{mnemonic} m{params.md}, m{params.ms}, w{params.ws}, e{params.ea}, e{params.eb}"
     if isinstance(params, MXUMatmulAccType):
-        return f"{mnemonic} m{params.md}, m{params.ms}, w{params.ws}, m{params.mp}"
+        return (
+            f"{mnemonic} m{params.md}, m{params.ms}, w{params.ws}, "
+            f"m{params.mp}, e{params.ea}, e{params.eb}"
+        )
     if isinstance(params, VPUBinaryType):
         return f"{mnemonic} m{params.md}, m{params.ms1}, m{params.ms2}"
     if isinstance(params, VPUUnaryType):
@@ -226,6 +235,7 @@ class PenguinCore:
             config=self.state.config,
             mreg=self.state.mreg,
             mxu_weight=self.state.mxu_weight,
+            ereg=self.state.ereg,
             mem_base=self.state.mem_base,
         )
         self._reset_trace_pipeline()

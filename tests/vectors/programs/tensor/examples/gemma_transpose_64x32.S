@@ -1,4 +1,4 @@
-# Fixed-shape Gemma transpose tile: transpose two adjacent 64x16 BF16 tiles into 16x64 tiles.
+# Fixed-shape Gemma transpose tile: transpose one 64x32 BF16 tile into one 32x64 BF16 tile.
 
     # Startup scalar-register scrub: software must not assume power-on register contents.
     saddi x1, x0, 0
@@ -34,14 +34,8 @@
     saddi x31, x0, 0
 
     li x1, VMEM_BASE + 0x0000
-    li x2, VMEM_BASE + 0x0800
     li x20, VMEM_BASE + 0x1000
-    li x21, VMEM_BASE + 0x1800
 
     vload m1, 0(x1)
     transpose.xlu m2, m1
     vstore m2, 0(x20)
-
-    vload m3, 0(x2)
-    transpose.xlu m4, m3
-    vstore m4, 0(x21)

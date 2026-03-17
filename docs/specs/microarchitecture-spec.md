@@ -230,6 +230,7 @@ The scale register file shall hold:
 - `32` registers
 - `8` bits per register
 - one whole-tensor `FP8_E8M0` scale per register
+- one unbiased signed binary exponent payload per register, so `seli eN, 0` is unity
 
 Baseline implementation direction:
 

@@ -21,6 +21,8 @@ from .instructions import (
     MXUMatmulAccType,
     MXUMatmulType,
     RType,
+    ScaleImmType,
+    ScaleMemType,
     SType,
     TensorMemType,
     UType,
@@ -32,6 +34,7 @@ from .instructions import (
 from .memory import DRAM_BASE, IMEM_BASE, VMEM_BASE
 
 _REGISTER_RE = re.compile(r"x(?P<index>[0-9]|[1-2][0-9]|3[0-1])$")
+_EREGISTER_RE = re.compile(r"e(?P<index>[0-9]|[1-2][0-9]|3[0-1])$")
 _MREGISTER_RE = re.compile(r"m(?P<index>[0-9]|[1-5][0-9]|6[0-3])$")
 _WREGISTER_RE = re.compile(r"w(?P<index>[0-1])$")
 _LABEL_RE = re.compile(r"(?P<label>[A-Za-z_][A-Za-z0-9_]*)\s*:")
@@ -303,6 +306,62 @@ def _assemble_instruction(
             ),
         )
 
+    if spec.params_type is ScaleImmType:
+        _expect_operand_count(
+            mnemonic,
+            operands,
+            expected=2,
+            source_name=source_name,
+            line_number=line.line_number,
+        )
+        imm = _evaluate_expression(
+            operands[1],
+            labels=labels,
+            pc=pc,
+            relative_to_pc=False,
+            source_name=source_name,
+            line_number=line.line_number,
+        )
+        if imm < 0 or imm > 0xFF:
+            raise AssemblySyntaxError(
+                f"{source_name}:{line.line_number}: '{mnemonic}' immediate must be in [0, 255]"
+            )
+        return Instruction(
+            mnemonic,
+            ScaleImmType(
+                ed=_parse_eregister(
+                    operands[0], source_name=source_name, line_number=line.line_number
+                ),
+                imm=imm,
+            ),
+        )
+
+    if spec.params_type is ScaleMemType:
+        _expect_operand_count(
+            mnemonic,
+            operands,
+            expected=2,
+            source_name=source_name,
+            line_number=line.line_number,
+        )
+        rs1, imm = _parse_memory_operand(
+            operands[1],
+            labels=labels,
+            pc=pc,
+            source_name=source_name,
+            line_number=line.line_number,
+        )
+        return Instruction(
+            mnemonic,
+            ScaleMemType(
+                ed=_parse_eregister(
+                    operands[0], source_name=source_name, line_number=line.line_number
+                ),
+                rs1=rs1,
+                imm=imm,
+            ),
+        )
+
     if spec.params_type is SType:
         _expect_operand_count(
             mnemonic,
@@ -486,7 +545,7 @@ def _assemble_instruction(
         _expect_operand_count(
             mnemonic,
             operands,
-            expected=3,
+            expected=5,
             source_name=source_name,
             line_number=line.line_number,
         )
@@ -502,6 +561,12 @@ def _assemble_instruction(
                 ws=_parse_weight_selector(
                     operands[2], source_name=source_name, line_number=line.line_number
                 ),
+                ea=_parse_eregister(
+                    operands[3], source_name=source_name, line_number=line.line_number
+                ),
+                eb=_parse_eregister(
+                    operands[4], source_name=source_name, line_number=line.line_number
+                ),
             ),
         )
 
@@ -509,7 +574,7 @@ def _assemble_instruction(
         _expect_operand_count(
             mnemonic,
             operands,
-            expected=4,
+            expected=6,
             source_name=source_name,
             line_number=line.line_number,
         )
@@ -527,6 +592,12 @@ def _assemble_instruction(
                 ),
                 mp=_parse_mregister(
                     operands[3], source_name=source_name, line_number=line.line_number
+                ),
+                ea=_parse_eregister(
+                    operands[4], source_name=source_name, line_number=line.line_number
+                ),
+                eb=_parse_eregister(
+                    operands[5], source_name=source_name, line_number=line.line_number
                 ),
             ),
         )
@@ -619,6 +690,15 @@ def _parse_register(token: str, *, source_name: str, line_number: int) -> int:
     if match is None:
         raise AssemblySyntaxError(
             f"{source_name}:{line_number}: invalid register '{token}'"
+        )
+    return int(match.group("index"))
+
+
+def _parse_eregister(token: str, *, source_name: str, line_number: int) -> int:
+    match = _EREGISTER_RE.fullmatch(token.strip())
+    if match is None:
+        raise AssemblySyntaxError(
+            f"{source_name}:{line_number}: invalid scale register '{token}'"
         )
     return int(match.group("index"))
 
