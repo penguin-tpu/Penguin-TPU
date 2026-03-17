@@ -220,8 +220,8 @@ class BandwidthConfig:
 class TraceConfig:
     """Trace-generation configuration."""
 
-    ticks_per_cycle: int = 3
-    """The number of trace ticks emitted per modeled core cycle."""
+    ticks_per_cycle: int = 1
+    """The number of trace time units emitted per modeled core cycle."""
 
 
 @dataclass(frozen=True, slots=True)

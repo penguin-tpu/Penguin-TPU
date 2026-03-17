@@ -29,7 +29,7 @@ from penguin_model import (
     InitializationConfig,
     Memory,
     MREG_BYTES,
-    PenguinCore,
+    Sim,
     PenguinCoreConfig,
     RType,
     SType,
@@ -286,7 +286,7 @@ def test_branch_semantics_set_next_pc_only_when_taken(
 
 
 def test_core_executes_sjal_with_two_delay_slots_and_link_register() -> None:
-    core = PenguinCore(state=_fresh_state(), config=TEST_CORE_CONFIG)
+    core = Sim(state=_fresh_state(), config=TEST_CORE_CONFIG)
     initial_x3 = core.state.read_xreg(3)
 
     perf = core.execute(_program("core_sjal_delay_slots"))
@@ -298,11 +298,11 @@ def test_core_executes_sjal_with_two_delay_slots_and_link_register() -> None:
     assert core.state.read_xreg(5) == 55
     assert core.state.stop_reason == StopReason.PROGRAM_END
     assert perf.instructions == 4
-    assert perf.cycles == 4
+    assert perf.cycles == 7
 
 
 def test_core_executes_sjalr_with_two_delay_slots_and_clears_lsb() -> None:
-    core = PenguinCore(state=_fresh_state(), config=TEST_CORE_CONFIG)
+    core = Sim(state=_fresh_state(), config=TEST_CORE_CONFIG)
     initial_x4 = core.state.read_xreg(4)
 
     perf = core.execute(_program("core_sjalr_delay_slots"))
@@ -314,11 +314,11 @@ def test_core_executes_sjalr_with_two_delay_slots_and_clears_lsb() -> None:
     assert core.state.read_xreg(8) == 8
     assert core.state.stop_reason == StopReason.PROGRAM_END
     assert perf.instructions == 5
-    assert perf.cycles == 5
+    assert perf.cycles == 8
 
 
 def test_younger_control_transfer_in_delay_slot_replaces_older_redirect() -> None:
-    core = PenguinCore(state=_fresh_state(), config=TEST_CORE_CONFIG)
+    core = Sim(state=_fresh_state(), config=TEST_CORE_CONFIG)
     initial_x5 = core.state.read_xreg(5)
     initial_x6 = core.state.read_xreg(6)
     initial_x7 = core.state.read_xreg(7)
@@ -335,7 +335,7 @@ def test_younger_control_transfer_in_delay_slot_replaces_older_redirect() -> Non
     assert core.state.read_xreg(8) == 8
     assert core.state.stop_reason == StopReason.PROGRAM_END
     assert perf.instructions == 5
-    assert perf.cycles == 5
+    assert perf.cycles == 8
 
 
 @pytest.mark.parametrize(
@@ -369,7 +369,7 @@ def test_scalar_load_store_and_branch_loop_program_uses_vmem_only() -> None:
         state.dram.store_u32(DRAM_BASE + 0x40 + index * 4, 0xDEAD_0000 + index)
 
     initial_dram_word = state.dram.load_u32(DRAM_BASE + 0x80)
-    core = PenguinCore(state=state, config=state.config)
+    core = Sim(state=state, config=state.config)
     perf = core.execute(_program("vmem_sum_loop"))
 
     assert state.vmem.load_u32(VMEM_BASE + 0x80) == 26
@@ -377,7 +377,7 @@ def test_scalar_load_store_and_branch_loop_program_uses_vmem_only() -> None:
     assert core.state.read_xreg(3) == 26
     assert core.state.stop_reason == StopReason.PROGRAM_END
     assert perf.instructions == 32
-    assert perf.cycles == 32
+    assert perf.cycles == 35
     assert perf.bytes_read == 16
     assert perf.bytes_written == 4
 
@@ -386,14 +386,14 @@ def test_dma_load_wait_moves_bytes_from_dram_to_vmem() -> None:
     state = _fresh_state()
     _store_bytes(state.dram, DRAM_BASE + 0x100, list(range(0x10, 0x30)))
 
-    core = PenguinCore(state=state, config=state.config)
+    core = Sim(state=state, config=state.config)
     perf = core.execute(_program("dma_load_wait"))
 
     assert state.vmem.read(VMEM_BASE + 0x80, 32).tolist() == list(range(0x10, 0x30))
     assert state.dram.read(DRAM_BASE + 0x100, 32).tolist() == list(range(0x10, 0x30))
     assert core.state.stop_reason == StopReason.PROGRAM_END
     assert perf.instructions == 5
-    assert perf.cycles == 23
+    assert perf.cycles == 26
     assert perf.bytes_read == 32
     assert perf.bytes_written == 32
 
@@ -402,13 +402,13 @@ def test_dma_store_wait_moves_bytes_from_vmem_to_dram() -> None:
     state = _fresh_state()
     _store_bytes(state.vmem, VMEM_BASE + 0x40, list(range(1, 33)))
 
-    core = PenguinCore(state=state, config=state.config)
+    core = Sim(state=state, config=state.config)
     perf = core.execute(_program("dma_store_wait"))
 
     assert state.dram.read(DRAM_BASE + 0x180, 32).tolist() == list(range(1, 33))
     assert core.state.stop_reason == StopReason.PROGRAM_END
     assert perf.instructions == 5
-    assert perf.cycles == 23
+    assert perf.cycles == 26
     assert perf.bytes_read == 32
     assert perf.bytes_written == 32
 
@@ -418,13 +418,13 @@ def test_dma_load_requires_wait_before_vmem_sees_data() -> None:
     state.dram.store_u32(DRAM_BASE + 0x100, 0xDEAD_BEEF)
     initial_vmem_word = state.vmem.load_u32(VMEM_BASE + 0x20)
 
-    core = PenguinCore(state=state, config=state.config)
+    core = Sim(state=state, config=state.config)
     perf = core.execute(_program("dma_requires_wait"))
 
     assert core.state.read_xreg(4) == initial_vmem_word
     assert core.state.read_xreg(5) == 0xDEAD_BEEF
     assert perf.instructions == 7
-    assert perf.cycles == 24
+    assert perf.cycles == 28
     assert perf.bytes_read == 40
     assert perf.bytes_written == 32
 
@@ -433,31 +433,31 @@ def test_salu_progresses_while_dma_is_in_flight() -> None:
     state = _fresh_state()
     state.dram.store_u32(DRAM_BASE + 0x100, 0xCAFE_BABE)
 
-    core = PenguinCore(state=state, config=state.config)
+    core = Sim(state=state, config=state.config)
     perf = core.execute(_program("salu_progress_while_dma"))
 
     assert core.state.read_xreg(6) == 10
     assert core.state.read_xreg(7) == 0xCAFE_BABE
     assert perf.instructions == 16
-    assert perf.cycles == 24
+    assert perf.cycles == 28
 
 
 def test_dma_channel_busy_stops_execution() -> None:
-    core = PenguinCore(state=_fresh_state(), config=TEST_CORE_CONFIG)
+    core = Sim(state=_fresh_state(), config=TEST_CORE_CONFIG)
     perf = core.execute(_program("dma_channel_busy"))
 
     assert core.state.stop_reason == StopReason.DMA_CHANNEL_BUSY
-    assert perf.instructions == 5
+    assert perf.instructions == 4
 
 
 def test_dma_wait_without_pending_transfer_is_one_cycle_noop() -> None:
-    core = PenguinCore(state=_fresh_state(), config=TEST_CORE_CONFIG)
+    core = Sim(state=_fresh_state(), config=TEST_CORE_CONFIG)
 
     perf = core.execute(_program("dma_wait_noop"))
 
     assert core.state.stop_reason == StopReason.PROGRAM_END
     assert perf.instructions == 1
-    assert perf.cycles == 1
+    assert perf.cycles == 3
     assert perf.bytes_read == 0
     assert perf.bytes_written == 0
 
@@ -467,14 +467,14 @@ def test_dma_channels_operate_independently() -> None:
     _store_bytes(state.dram, DRAM_BASE + 0x100, list(range(1, 33)))
     _store_bytes(state.dram, DRAM_BASE + 0x120, list(range(33, 65)))
 
-    core = PenguinCore(state=state, config=state.config)
+    core = Sim(state=state, config=state.config)
     perf = core.execute(_program("dma_channels_independent"))
 
     assert state.vmem.read(VMEM_BASE + 0x40, 32).tolist() == list(range(1, 33))
     assert state.vmem.read(VMEM_BASE + 0x80, 32).tolist() == list(range(33, 65))
     assert core.state.stop_reason == StopReason.PROGRAM_END
     assert perf.instructions == 9
-    assert perf.cycles == 27
+    assert perf.cycles == 30
     assert perf.bytes_read == 64
     assert perf.bytes_written == 64
 
@@ -486,7 +486,7 @@ def test_dma_store_channels_operate_independently() -> None:
     _store_bytes(state.vmem, VMEM_BASE + 0x40, payload_a)
     _store_bytes(state.vmem, VMEM_BASE + 0x80, payload_b)
 
-    core = PenguinCore(state=state, config=state.config)
+    core = Sim(state=state, config=state.config)
     perf = core.execute(
         [
             Instruction("saddi", IType(rd=1, rs1=0, imm=DRAM_BASE + 0x100)),
@@ -505,7 +505,7 @@ def test_dma_store_channels_operate_independently() -> None:
     assert state.dram.read(DRAM_BASE + 0x120, 32).tolist() == payload_b
     assert core.state.stop_reason == StopReason.PROGRAM_END
     assert perf.instructions == 9
-    assert perf.cycles == 27
+    assert perf.cycles == 30
     assert perf.bytes_read == 64
     assert perf.bytes_written == 64
 
@@ -515,7 +515,7 @@ def test_dma_store_captures_vmem_payload_at_issue_time() -> None:
     original = list(range(1, 33))
     _store_bytes(state.vmem, VMEM_BASE + 0x40, original)
 
-    core = PenguinCore(state=state, config=state.config)
+    core = Sim(state=state, config=state.config)
     perf = core.execute(
         [
             Instruction("saddi", IType(rd=1, rs1=0, imm=DRAM_BASE + 0x100)),
@@ -533,7 +533,7 @@ def test_dma_store_captures_vmem_payload_at_issue_time() -> None:
     assert state.vmem.load_u32(VMEM_BASE + 0x40) == 0xA5A5_5A5A
     assert core.state.stop_reason == StopReason.PROGRAM_END
     assert perf.instructions == 8
-    assert perf.cycles == 23
+    assert perf.cycles == 26
     assert perf.bytes_read == 32
     assert perf.bytes_written == 36
 
@@ -545,7 +545,7 @@ def test_dma_load_captures_dram_payload_at_issue_time_before_later_store() -> No
     _store_bytes(state.dram, DRAM_BASE + 0x100, original)
     _store_bytes(state.vmem, VMEM_BASE + 0x140, replacement)
 
-    core = PenguinCore(state=state, config=state.config)
+    core = Sim(state=state, config=state.config)
     perf = core.execute(
         [
             Instruction("saddi", IType(rd=1, rs1=0, imm=DRAM_BASE + 0x100)),
@@ -564,7 +564,7 @@ def test_dma_load_captures_dram_payload_at_issue_time_before_later_store() -> No
     assert state.dram.read(DRAM_BASE + 0x100, 32).tolist() == replacement
     assert core.state.stop_reason == StopReason.PROGRAM_END
     assert perf.instructions == 9
-    assert perf.cycles == 27
+    assert perf.cycles == 30
     assert perf.bytes_read == 64
     assert perf.bytes_written == 64
 
@@ -630,7 +630,7 @@ def test_dma_store_with_misaligned_size_stops_execution() -> None:
 
 
 def test_misaligned_load_and_store_stop_execution() -> None:
-    core = PenguinCore(state=_fresh_state(), config=TEST_CORE_CONFIG)
+    core = Sim(state=_fresh_state(), config=TEST_CORE_CONFIG)
 
     perf = core.execute(_program("misaligned_load"))
 
@@ -647,7 +647,7 @@ def test_misaligned_load_and_store_stop_execution() -> None:
 
 
 def test_misaligned_jump_target_stops_execution() -> None:
-    core = PenguinCore(state=_fresh_state(), config=TEST_CORE_CONFIG)
+    core = Sim(state=_fresh_state(), config=TEST_CORE_CONFIG)
 
     perf = core.execute(_program("misaligned_jump_target"))
 
@@ -656,7 +656,7 @@ def test_misaligned_jump_target_stops_execution() -> None:
 
 
 def test_taken_branch_with_misaligned_target_stops_before_delay_slots_execute() -> None:
-    core = PenguinCore(state=_fresh_state(), config=TEST_CORE_CONFIG)
+    core = Sim(state=_fresh_state(), config=TEST_CORE_CONFIG)
     initial_x2 = core.state.read_xreg(2)
     initial_x3 = core.state.read_xreg(3)
 
@@ -672,7 +672,7 @@ def test_reset_clears_architectural_state_and_dma_but_preserves_memory() -> None
     state = _fresh_state()
     state.vmem.store_u32(VMEM_BASE + 0x20, 0x1234_5678)
     state.dram.store_u32(DRAM_BASE + 0x100, 0xCAFE_BABE)
-    core = PenguinCore(state=state, config=state.config)
+    core = Sim(state=state, config=state.config)
 
     perf = core.execute(_program("reset_dma_inflight"))
 
@@ -703,29 +703,29 @@ def test_reset_clears_architectural_state_and_dma_but_preserves_memory() -> None
 def test_environment_instructions_stop_with_explicit_status(
     mnemonic: str, expected_reason: StopReason
 ) -> None:
-    core = PenguinCore(state=_fresh_state(), config=TEST_CORE_CONFIG)
+    core = Sim(state=_fresh_state(), config=TEST_CORE_CONFIG)
 
     perf = core.execute(_program(f"env_{mnemonic}"))
 
     assert core.state.stop_reason == expected_reason
     assert perf.instructions == 1
-    assert perf.cycles == 1
+    assert perf.cycles == 4
 
 
 def test_step_limit_stops_infinite_loop() -> None:
-    core = PenguinCore(state=_fresh_state(), config=TEST_CORE_CONFIG)
+    core = Sim(state=_fresh_state(), config=TEST_CORE_CONFIG)
 
     perf = core.execute(_program("step_limit_loop"), max_instructions=6)
 
     assert core.state.stop_reason == StopReason.STEP_LIMIT
-    assert perf.instructions == 6
-    assert perf.cycles == 6
+    assert perf.instructions == 7
+    assert perf.cycles == 10
 
 
 def test_dump_json_trace_emits_region_aware_trace(tmp_path: Path) -> None:
     state = _fresh_state()
     state.dram.store_u32(DRAM_BASE + 0x20, 7)
-    core = PenguinCore(state=state, config=state.config)
+    core = Sim(state=state, config=state.config)
     trace_path = trace_output_path("python_model_trace_dma_flow.json")
 
     perf = core.dump_json_trace(_program("trace_dma_flow"), trace_path)
@@ -741,11 +741,40 @@ def test_dump_json_trace_emits_region_aware_trace(tmp_path: Path) -> None:
         for event in events
         if event.get("cat") == "fetch" and "dma.wait.ch0" in event["name"]
     )
+    wait_dispatch_event = next(
+        event
+        for event in events
+        if event.get("cat") == "dispatch" and "dma.wait.ch0" in event["name"]
+    )
+    stalled_fetch_event = next(
+        event
+        for event in events
+        if event.get("cat") == "fetch" and "sld x4, 0(x2)" in event["name"]
+    )
+    early_fetch_events = [
+        event
+        for event in events
+        if event.get("cat") == "fetch" and int(event.get("ts", -1)) < int(wait_fetch_event["ts"])
+    ]
 
     assert perf.instructions == 7
     assert state.vmem.load_u32(VMEM_BASE + 0x80) == 7
     assert state.vmem.load_u32(VMEM_BASE + 0x90) == 7
+    early_fetch_timestamps = [int(event["ts"]) for event in early_fetch_events]
+    assert early_fetch_timestamps == sorted(early_fetch_timestamps)
+    assert early_fetch_timestamps == list(
+        range(early_fetch_timestamps[0], early_fetch_timestamps[0] + len(early_fetch_timestamps))
+    )
+    assert all(int(event.get("dur", 0)) == 1 for event in early_fetch_events)
     assert wait_fetch_event["ts"] < dma_transfer_event["ts"] + dma_transfer_event["dur"]
+    assert not any(
+        event.get("cat") == "execute" and "dma.wait.ch0" in event["name"] for event in events
+    )
+    assert wait_dispatch_event["ts"] + wait_dispatch_event["dur"] <= (
+        dma_transfer_event["ts"] + dma_transfer_event["dur"]
+    )
+    assert int(stalled_fetch_event["dur"]) == 1
+    assert int(stalled_fetch_event["ts"]) == int(wait_dispatch_event["ts"])
     assert any(
         event.get("name") == "thread_name"
         and event.get("pid") == 0
@@ -793,7 +822,13 @@ def test_dump_json_trace_emits_region_aware_trace(tmp_path: Path) -> None:
     assert any(
         event.get("cat") == "transfer"
         and "dma.load.ch0" in event["name"]
-        and event.get("tid") == 3
+        for event in events
+    )
+    assert any(
+        event.get("name") == "thread_name"
+        and event.get("pid") == 0
+        and event.get("tid") == 30
+        and event["args"]["name"] == "DMA.XFER.CH0"
         for event in events
     )
     assert any(
@@ -818,6 +853,21 @@ def test_dump_json_trace_emits_region_aware_trace(tmp_path: Path) -> None:
         event.get("pid") == 1 and event.get("ph") == "C" and event["name"] == "pc"
         for event in events
     )
+    cycle_events = [
+        event
+        for event in events
+        if event.get("pid") == 1 and event.get("ph") == "C" and event["name"] == "cycle"
+    ]
+    assert cycle_events
+    assert [event["args"]["value"] for event in cycle_events] == list(range(len(cycle_events)))
+    assert cycle_events[-1]["args"]["value"] == max(
+        int(event["ts"]) + int(event.get("dur", 0)) for event in events if "ts" in event
+    )
+    assert [event["ts"] for event in cycle_events] == [
+        cycle * state.config.trace.ticks_per_cycle for cycle in range(len(cycle_events))
+    ]
+    timestamped_events = [int(event["ts"]) for event in events if "ts" in event]
+    assert timestamped_events == sorted(timestamped_events)
 
 
 def test_trace_wait_blocks_following_tensor_memory_op_until_later_dma_wait_retires(
@@ -826,7 +876,7 @@ def test_trace_wait_blocks_following_tensor_memory_op_until_later_dma_wait_retir
     state = _fresh_state()
     state.dram.write(DRAM_BASE + 0x000, torch.arange(0, 128, dtype=torch.uint8).repeat(16))
     state.dram.write(DRAM_BASE + 0x800, torch.arange(128, 256, dtype=torch.uint8).repeat(16))
-    core = PenguinCore(state=state, config=state.config)
+    core = Sim(state=state, config=state.config)
     trace_path = trace_output_path("python_model_dma_wait_blocks_vload.json")
 
     perf = core.dump_json_trace(
@@ -846,14 +896,17 @@ def test_trace_wait_blocks_following_tensor_memory_op_until_later_dma_wait_retir
     )
 
     events = json.loads(trace_path.read_text())
-    wait0_execute = next(
+    wait0_dispatch = next(
         event
         for event in events
-        if event.get("cat") == "execute" and "dma.wait.ch0" in event["name"]
+        if event.get("cat") == "dispatch" and "dma.wait.ch0" in event["name"]
     )
     vload_execute = next(
         event for event in events if event.get("cat") == "execute" and "vload" in event["name"]
     )
 
     assert perf.instructions == 10
-    assert wait0_execute["ts"] + wait0_execute["dur"] <= vload_execute["ts"]
+    assert not any(
+        event.get("cat") == "execute" and "dma.wait.ch0" in event["name"] for event in events
+    )
+    assert wait0_dispatch["ts"] + wait0_dispatch["dur"] <= vload_execute["ts"]

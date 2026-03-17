@@ -74,6 +74,24 @@ What exists now:
 - deterministic pseudo-random power-on initialization for DRAM, VMEM, scalar registers,
   tensor registers, and MXU weight-slot state in the Python model
 - initial XLU transpose functional/performance modeling for `transpose.xlu`
+- a cycle-accurate, execution-driven simulator in `penguin-model`:
+  - `Sim.tick()` now advances the model by exactly one core cycle
+  - `perf.cycles` now counts simulated core cycles rather than analytical instruction
+    latency jumps
+  - in-flight DMA, MXU, VPU, and XLU work now progresses and completes on cycle
+    boundaries
+  - long-chime operand hazards are now enforced with scoreboards over `x`, `e`, `m`, and
+    MXU weight state
+  - the simulator API is now `Sim`-only; the old `PenguinCore` compatibility surface has
+    been removed
+  - decode/issue, execute, and retirement now follow explicit cycle-boundary stage
+    progression rather than frontend-stage approximation in the trace layer
+  - frontend timing now follows the downstream-first `npu_model`-style claim contract:
+    completions become visible before same-cycle decode, IFU fetch is one cycle when
+    claimed promptly, and buffered IFU output ends its fetch stage on the first blocked
+    cycle instead of stretching across the whole stall window
+  - VMEM visibility is now scoreboarding-aware across units, which fixes `vstore` ->
+    `dma.store` ordering bugs in the strip-mined tensor examples
 - a spreadsheet-style normalized roofline model for the current machine shape, including
   DRAM and VMEM roofs, representative kernel projections, and a saved PNG plot
 - a PI0 workload roofline analysis built from external OpenPI and Understanding-PI0
@@ -154,6 +172,7 @@ Reasoning:
   - `mxu1`: inner-product-tree-based
 - both are architecturally visible
 - both can execute concurrently, but only one new instruction may issue per cycle
+- issue stalls on operand-ready hazards as well as structural conflicts
 - weight-stationary dataflow
 - each MXU has distinct `w0` and `w1` weight-slot state
 - MXU does pure matmul/partial-sum accumulation only
@@ -375,10 +394,14 @@ Implemented today:
     the instruction in the IFU matches the logged PC (fetch address). PC is emitted when
     an instruction enters the IFU, not at retire.
   - **DMA transfer bar**: the DMA transfer interval on the trace is now logged entirely in
-    trace (pipeline) time. The transfer start is logged when the load/store issues; the
-    transfer end is logged when the matching `dma.wait.chN` completes. Previously the
-    transfer end used cycle-based time, which made it look like dependent instructions
-    (e.g. `vload`) could start before the fence resolved.
+    trace (pipeline) time. The transfer start is logged when the load/store issues, and
+    the transfer end is logged at the modeled DMA ready cycle.
+  - **DMA wait trace semantics**: `dma.wait.chN` is now modeled as an IDU/decode fence
+    only. The instruction logs `fetch`, `dispatch`, and `retire`, but it never allocates
+    an execute-stage event on the DMA lane.
+  - **Trace cycle counter**: the JSON trace now exposes a dense free-running `cycle`
+    counter that increments on every trace tick. This is intentionally a simulator-time
+    counter, not the sampled `perf.cycles` architectural performance total.
   - **Delay slots**: control-flow redirects still retire two delay-slot instructions before
     the next fetch uses the target; only the PC log semantics were adjusted to reflect
     fetch-stage PC.
@@ -447,8 +470,8 @@ around it.
 - module-level constants such as `DRAM_BASE`, `MREG_BYTES`, and `DMA_CHANNEL_COUNT`
   remain as aliases of the default core configuration for compatibility, but the active
   runtime behavior now flows through `ArchState.config`
-- `PenguinCore`, `ArchState`, the example workloads, and the shared scalar testbench
-  helper now instantiate through `PenguinCoreConfig`
+- `Sim`, `ArchState`, the example workloads, and the shared scalar testbench helper now
+  instantiate through `PenguinCoreConfig`
 - the VPU model now executes BF16 whole-register elementwise operations directly from
   and to the tensor register file
 - initial VPU latency is parameterized through `config.vpu`

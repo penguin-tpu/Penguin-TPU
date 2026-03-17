@@ -19,7 +19,7 @@ from penguin_model import (
     DRAM_BASE,
     IMEM_BASE,
     ExecutableBundle,
-    PenguinCore,
+    Sim,
     StopReason,
     load_executable_bundle,
     load_mapped_program,
@@ -62,7 +62,7 @@ def test_core_executes_bundle_program_from_mapped_imem_base(tmp_path: Path) -> N
     bundle_dir = _write_sample_bundle(tmp_path)
     loaded = load_executable_bundle(ExecutableBundle.from_directory(bundle_dir))
 
-    core = PenguinCore()
+    core = Sim()
     core.execute(loaded.program)
 
     assert core.state.read_xreg(1) == IMEM_BASE + 8

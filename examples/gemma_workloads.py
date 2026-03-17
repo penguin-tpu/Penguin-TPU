@@ -31,7 +31,7 @@ from penguin_compiler import (
 from penguin_model import ExecutableBundle, load_executable_bundle, preload_loaded_bundle_symbols
 from penguin_model.arch_state import PerformanceCounters, StopReason
 from penguin_model.bundle import program_symbol_table_path
-from penguin_model.core import PenguinCore
+from penguin_model.core import Sim
 from penguin_model.core_config import DEFAULT_PENGUIN_CORE_CONFIG, PenguinCoreConfig
 from penguin_model.logging import TraceLogger, TraceLoggerConfig
 from penguin_model.tensor import (
@@ -76,7 +76,7 @@ def run_gemma_attention_example(
     weights = _attention_weights()
     golden = _gemma_attention_reference(hidden, weights)
 
-    core = PenguinCore(config=config)
+    core = Sim(config=config)
     resolved_trace_path = _resolve_trace_path(trace_path, "gemma_attention_trace.json")
     resolved_bundle_root = _resolve_bundle_root(bundle_root, "gemma_attention")
     stage_bundles: dict[str, Path] = {}
@@ -175,7 +175,7 @@ def run_gemma_mlp_example(
     weights = _mlp_weights()
     golden = _gemma_mlp_reference(hidden, weights)
 
-    core = PenguinCore(config=config)
+    core = Sim(config=config)
     resolved_trace_path = _resolve_trace_path(trace_path, "gemma_mlp_trace.json")
     resolved_bundle_root = _resolve_bundle_root(bundle_root, "gemma_mlp")
     stage_bundles: dict[str, Path] = {}
@@ -241,7 +241,7 @@ def run_gemma_decoder_example(
     mlp_weights = _mlp_weights()
     golden = _gemma_decoder_reference(hidden, attention_weights, mlp_weights)
 
-    core = PenguinCore(config=config)
+    core = Sim(config=config)
     resolved_trace_path = _resolve_trace_path(trace_path, "gemma_decoder_trace.json")
     resolved_bundle_root = _resolve_bundle_root(bundle_root, "gemma_decoder")
     stage_bundles: dict[str, Path] = {}
@@ -298,7 +298,7 @@ def run_gemma_decoder_example(
 
 
 def _run_attention_pipeline(
-    core: PenguinCore,
+    core: Sim,
     trace_logger: TraceLogger,
     bundle_root: Path,
     *,
@@ -380,7 +380,7 @@ def _run_attention_pipeline(
 
 
 def _run_mlp_pipeline(
-    core: PenguinCore,
+    core: Sim,
     trace_logger: TraceLogger,
     bundle_root: Path,
     *,
@@ -428,7 +428,7 @@ def _run_mlp_pipeline(
 
 
 def _run_linear_stage(
-    core: PenguinCore,
+    core: Sim,
     trace_logger: TraceLogger,
     bundle_root: Path,
     *,
@@ -452,7 +452,7 @@ def _run_linear_stage(
 
 
 def _run_mlp_gate_stage(
-    core: PenguinCore,
+    core: Sim,
     trace_logger: TraceLogger,
     bundle_root: Path,
     *,
@@ -477,7 +477,7 @@ def _run_mlp_gate_stage(
 
 
 def _run_vadd_stage(
-    core: PenguinCore,
+    core: Sim,
     trace_logger: TraceLogger,
     bundle_root: Path,
     *,
@@ -501,7 +501,7 @@ def _run_vadd_stage(
 
 
 def _run_softmax_stage(
-    core: PenguinCore,
+    core: Sim,
     trace_logger: TraceLogger,
     bundle_root: Path,
     *,
@@ -521,7 +521,7 @@ def _run_softmax_stage(
 
 
 def _run_transpose_stage(
-    core: PenguinCore,
+    core: Sim,
     trace_logger: TraceLogger,
     bundle_root: Path,
     *,
@@ -541,7 +541,7 @@ def _run_transpose_stage(
 
 
 def _run_attention_scores_stage(
-    core: PenguinCore,
+    core: Sim,
     trace_logger: TraceLogger,
     bundle_root: Path,
     *,
@@ -565,7 +565,7 @@ def _run_attention_scores_stage(
 
 
 def _run_attention_context_stage(
-    core: PenguinCore,
+    core: Sim,
     trace_logger: TraceLogger,
     bundle_root: Path,
     *,
@@ -643,7 +643,7 @@ def _prepare_stage_bundle(
     )
 
 
-def _run_loaded_stage(core: PenguinCore, trace_logger: TraceLogger, loaded) -> None:
+def _run_loaded_stage(core: Sim, trace_logger: TraceLogger, loaded) -> None:
     preload_loaded_bundle_symbols(core.state, loaded)
     core.execute(loaded.program, trace_logger=trace_logger)
     if core.state.stop_reason != StopReason.PROGRAM_END:
@@ -651,7 +651,7 @@ def _run_loaded_stage(core: PenguinCore, trace_logger: TraceLogger, loaded) -> N
 
 
 def _read_matrix_symbol(
-    core: PenguinCore,
+    core: Sim,
     loaded,
     symbol_name: str,
     *,
@@ -670,7 +670,7 @@ def _read_matrix_symbol(
 
 
 def _read_transposed_matrix_symbol(
-    core: PenguinCore,
+    core: Sim,
     loaded,
     symbol_name: str,
     *,

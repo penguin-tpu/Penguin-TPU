@@ -34,12 +34,14 @@ def _assert_program_passed(
     perf: Any,
     *,
     expected_instructions: int,
-    expected_cycles: int,
+    expected_cycles: int | None = None,
     expected_bytes_read: int = 0,
     expected_bytes_written: int = 0,
 ) -> str:
     context = _directed_test_context(name, core, perf)
     power_on_fail_reg = fresh_arch_state().read_xreg(FAIL_REG)
+    if expected_cycles is None:
+        expected_cycles = expected_instructions + 3
     assert core.state.stop_reason == StopReason.PROGRAM_END, context
     assert core.state.read_xreg(FAIL_REG) in {0, power_on_fail_reg}, context
     assert perf.instructions == expected_instructions, context
@@ -58,7 +60,7 @@ def _assert_program_passed(
 )
 def test_scalar_u_directed_program_case(name: str, program: str) -> None:
     core, perf = run_scalar_program(program)
-    _assert_program_passed(name, core, perf, expected_instructions=6, expected_cycles=6)
+    _assert_program_passed(name, core, perf, expected_instructions=6)
 
 
 @pytest.mark.parametrize(
@@ -78,7 +80,7 @@ def test_scalar_u_directed_program_case(name: str, program: str) -> None:
 )
 def test_scalar_rr_directed_program_case(name: str, program: str) -> None:
     core, perf = run_scalar_program(program)
-    _assert_program_passed(name, core, perf, expected_instructions=8, expected_cycles=8)
+    _assert_program_passed(name, core, perf, expected_instructions=8)
 
 
 @pytest.mark.parametrize(
@@ -97,7 +99,7 @@ def test_scalar_rr_directed_program_case(name: str, program: str) -> None:
 )
 def test_scalar_imm_directed_program_case(name: str, program: str) -> None:
     core, perf = run_scalar_program(program)
-    _assert_program_passed(name, core, perf, expected_instructions=7, expected_cycles=7)
+    _assert_program_passed(name, core, perf, expected_instructions=7)
 
 
 @pytest.mark.parametrize(
@@ -143,7 +145,7 @@ def test_scalar_imm_directed_program_case(name: str, program: str) -> None:
 )
 def test_scalar_branch_directed_program_case(name: str, program: str) -> None:
     core, perf = run_scalar_program(program)
-    _assert_program_passed(name, core, perf, expected_instructions=8, expected_cycles=8)
+    _assert_program_passed(name, core, perf, expected_instructions=8)
 
 
 @pytest.mark.parametrize(
@@ -162,7 +164,6 @@ def test_scalar_jump_directed_program_case(
         core,
         perf,
         expected_instructions=expected_instructions,
-        expected_cycles=expected_instructions,
     )
     if name == "sjal":
         assert core.state.read_xreg(10) != 0, context
@@ -177,7 +178,6 @@ def test_scalar_load_directed_program_case() -> None:
         core,
         perf,
         expected_instructions=7,
-        expected_cycles=7,
         expected_bytes_read=4,
     )
 
@@ -192,7 +192,6 @@ def test_scalar_store_directed_program_case() -> None:
         core,
         perf,
         expected_instructions=9,
-        expected_cycles=9,
         expected_bytes_read=4,
         expected_bytes_written=4,
     )
@@ -207,11 +206,10 @@ def test_scalar_x0_load_directed_program_case() -> None:
         core,
         perf,
         expected_instructions=7,
-        expected_cycles=7,
         expected_bytes_read=4,
     )
 
 
 def test_scalar_sfence_directed_program_case() -> None:
     core, perf = run_scalar_program("scalar/directed/sfence.S")
-    _assert_program_passed("sfence", core, perf, expected_instructions=4, expected_cycles=4)
+    _assert_program_passed("sfence", core, perf, expected_instructions=4)

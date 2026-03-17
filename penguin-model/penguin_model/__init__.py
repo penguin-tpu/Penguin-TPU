@@ -31,7 +31,7 @@ from .core_config import (
     XLUConfig,
     VPUConfig,
 )
-from .core import INSTRUCTION_LATENCY, PenguinCore
+from .core import INSTRUCTION_LATENCY, Sim
 from .example_workloads import (
     ExampleRunResult,
     run_large_linear_example,
@@ -229,9 +229,9 @@ __all__ = [
     "MXU_COUNT",
     "MXU_PUSH_LATENCY_CYCLES",
     "NUM_MREG",
-    "PenguinCore",
     "PenguinCoreConfig",
     "PerformanceCounters",
+    "Sim",
     "LoadedExecutableBundle",
     "RType",
     "RetireType",

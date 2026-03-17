@@ -53,10 +53,10 @@ also emit JSON traces under `outputs/tests/`.
 Load a checked-in program from source with its mapped IMEM base:
 
 ```python
-from penguin_model import PenguinCore, load_mapped_program
+from penguin_model import Sim, load_mapped_program
 
 program = load_mapped_program("tests/vectors/programs/tensor/examples/matmul_large.S")
-core = PenguinCore()
+core = Sim()
 perf = core.execute(program)
 ```
 

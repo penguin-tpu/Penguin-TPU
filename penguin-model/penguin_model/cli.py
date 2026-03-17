@@ -16,7 +16,7 @@ from .bundle import (
     preload_loaded_bundle_symbols,
     program_symbol_table_path,
 )
-from .core import PenguinCore
+from .core import Sim
 from .core_config import PenguinCoreConfig
 
 
@@ -93,7 +93,7 @@ def _load_program_and_state(
 def _print_summary(
     *,
     source_label: str,
-    core: PenguinCore,
+    core: Sim,
     perf,
     trace_path: Path | None,
     loaded_bundle: LoadedExecutableBundle | None,
@@ -123,7 +123,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = _build_parser().parse_args(list(argv) if argv is not None else None)
     config = PenguinCoreConfig()
     state, program, loaded_bundle = _load_program_and_state(args, config=config)
-    core = PenguinCore(state=state, config=config)
+    core = Sim(state=state, config=config)
 
     if args.trace is None:
         perf = core.execute(

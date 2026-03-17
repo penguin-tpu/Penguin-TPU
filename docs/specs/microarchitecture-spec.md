@@ -88,7 +88,7 @@ The following parameters are frozen for the current baseline implementation.
 | `VMEM_BUS_WIDTH_BITS` | `128` | VMEM/system-bus beat width |
 | `VMEM_BUS_CORE_CYCLES_PER_BEAT` | `1` | VMEM/system-bus beat time |
 | `VMEM_TENSOR_ALIGN` | `32` bytes | VMEM alignment for `vload`, `vstore`, `mxu.push.*` |
-| `TRACE_TICKS_PER_CYCLE` | `3` | Trace timestamp granularity |
+| `TRACE_TICKS_PER_CYCLE` | `1` | Trace timestamp granularity |
 
 ### 3.3 Software-model initialization parameters
 
@@ -129,10 +129,26 @@ The frontend baseline shall be:
 
 The frontend phase model used by the performance model and trace infrastructure is:
 
-- `IFG`: instruction-address generation and request launch
-- `IFR`: instruction return
-- `IDU`: decode and dispatch
-- `EXU`: execution-unit launch or scalar execution
+- `IFU`: fetched-instruction stage
+- `IDU`: decode and issue stage
+- `EXU`: execution-unit stage
+
+The Python performance model shall be cycle-driven:
+
+- one call to `Sim.tick()` advances the machine by exactly one core cycle
+- pipeline stage movement is resolved against cycle boundaries rather than analytical time
+  jumps
+- each tick is resolved in downstream-first order:
+  - execution-unit completions scheduled for that cycle become architecturally visible
+  - decode / issue consumes any available IFU output
+  - fetch launches a new instruction only after downstream claim state for that cycle is
+    known
+- instructions advance from fetch to decode on the next cycle and from decode to execute
+  on the following cycle
+- architectural writeback and retirement scheduled for cycle `N` become visible before
+  decode and fetch evaluate cycle `N`
+- instruction issue, execution progress, asynchronous completions, and stop conditions are
+  all resolved against that cycle-by-cycle state evolution
 
 ### 4.2 Execution-unit overlap model
 
@@ -143,7 +159,17 @@ Requirements:
 - `mxu0`, `mxu1`, `vpu`, `xlu`, and DMA transfers may be active concurrently
 - only one new instruction may issue in a cycle
 - issue stalls when the targeted unit cannot accept a new instruction
+- issue also stalls when a source operand or destination register / slot is not yet ready
 - issue does not perform dynamic reordering to bypass stalled older instructions
+
+The baseline cycle-accurate model shall enforce operand readiness with architectural
+scoreboards over:
+
+- scalar `x` registers
+- scale `e` registers
+- tensor `m` registers
+- MXU weight slots
+- VMEM architectural visibility for cross-unit memory hazards
 
 ### 4.3 Tensor access organization
 
@@ -216,10 +242,13 @@ speculation.
 
 The baseline implementation direction is:
 
-- the control block records a pending redirect and the remaining delay-slot count
-- sequential fetch continues through the two delay-slot instructions
-- once the delay-slot count reaches zero, the redirect is applied
-- a younger branch or jump in a delay slot overwrites the older pending redirect
+- the control block tracks unresolved control-flow shadows in program order
+- sequential fetch continues until the youngest resolved shadow has observed its required
+  two delay-slot fetches
+- once the youngest resolved shadow has consumed its two delay slots, its redirect is
+  applied
+- a younger branch or jump in a delay slot overwrites any older resolved redirect before
+  fetch is redirected
 
 ## 6. Scale Register File, Tensor Register File, and Local Interconnect
 
@@ -311,6 +340,14 @@ The following instructions are modeled and implemented as blocking:
 
 The baseline intent is to keep on-chip movement deterministic and simpler to verify.
 
+The cycle-accurate model shall also preserve VMEM ordering across units:
+
+- a VMEM reader shall not observe data older than the most recent completed VMEM writer
+- `dma.store` shall therefore stall behind prior `vstore` traffic until the relevant VMEM
+  contents are architecturally visible
+- the software model may conservatively enforce this with a VMEM-ready scoreboard rather
+  than fine-grained address overlap analysis
+
 ### 7.3 Asynchronous DMA
 
 DMA shall be channelized and asynchronous.
@@ -323,6 +360,15 @@ Each channel supports:
 
 The microarchitecture is free to implement the DMA channels with shared internal data
 paths or arbitration, provided the architecture-visible channel behavior is preserved.
+
+`dma.wait.chN` shall behave as a frontend fence in the decode/issue machinery:
+
+- it shall not allocate an execute-stage slot on the DMA lane
+- if channel `N` is already done when the wait instruction reaches decode, the
+  instruction shall spend that cycle in decode and retire directly
+- if channel `N` is not yet done, decode shall remain occupied until the transfer
+  completes, then the instruction shall retire directly from decode
+- younger instructions shall not issue past that decode fence until the wait retires
 
 ### 7.4 Baseline transfer formulas
 
@@ -442,7 +488,32 @@ The baseline model and trace infrastructure shall distinguish:
 - DMA execution
 - memory-region-visible traffic
 
-The current trace timestamp granularity is `3` ticks per core cycle.
+The baseline trace timestamp granularity is `1` trace time unit per modeled core cycle.
+
+For the current visualization convention used by `penguin-model`, one modeled cycle is
+annotated as `1 us` of trace time.
+
+The JSON trace shall also expose a free-running `cycle` counter stream:
+
+- the `cycle` trace counter increments by `1` on every simulator core cycle
+- it is emitted at timestamps spaced by `ticks_per_cycle`
+- it does not stall during frontend bubbles, fences, or long-latency execution
+- the final `cycle` trace value shall match the final trace timestamp horizon, which may
+  exceed the architectural `perf.cycles` total when the visualization includes explicit
+  frontend stage propagation
+
+Frontend trace annotations shall follow the cycle-driven model:
+
+- instruction fetch is annotated on every cycle where the frontend launches a new
+  instruction
+- fetch occupies exactly one modeled cycle in the trace
+- if an IFU output is not claimed on the next cycle, the fetch stage ends on that first
+  blocked cycle and the remaining stall interval is shown as a gap before decode begins
+- `dma.wait.chN` is the baseline case that may hold decode and therefore create a fetch
+  gap for younger instructions
+- a decode-resident `dma.wait.chN` may still leave one younger instruction buffered in
+  the IFU; no further fetches occur until the wait retires and the buffered IFU output is
+  claimed
 
 The baseline trace lane split is:
 

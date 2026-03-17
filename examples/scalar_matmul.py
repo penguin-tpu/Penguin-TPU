@@ -4,12 +4,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from penguin_model import PenguinCore, PenguinCoreConfig, load_mapped_program
+from penguin_model import PenguinCoreConfig, Sim, load_mapped_program
 
 
 def main() -> int:
     config = PenguinCoreConfig()
-    core = PenguinCore(config=config)
+    core = Sim(config=config)
     state = core.state
     dram_base = config.memory_map.dram.base
     vmem_base = config.memory_map.vmem.base

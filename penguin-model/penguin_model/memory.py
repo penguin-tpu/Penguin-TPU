@@ -173,9 +173,6 @@ class DMAChannel:
     """Single DMA channel state."""
 
     pending: DMATransfer | None = None
-    # Trace-only: when a load logs transfer start, store so the matching wait can log end in trace time.
-    trace_transfer_insn_id: int | None = None
-    trace_transfer_start: int | None = None
 
     @property
     def busy(self) -> bool:

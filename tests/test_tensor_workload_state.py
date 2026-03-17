@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import torch
 
-from penguin_model import ArchState, PenguinCore, StopReason, load_mapped_program
+from penguin_model import ArchState, Sim, StopReason, load_mapped_program
 from penguin_model.tensor import (
     BF16_DTYPE,
     FP8_DTYPE,
@@ -74,7 +74,7 @@ def _output_tile_address(m_tile: int, n_tile: int, *, n_tiles: int) -> int:
     return OUTPUT_DRAM_BASE + (m_tile * n_tiles + n_tile) * RESULT_TILE_BYTES
 
 
-def _preload_large_matmul_state() -> tuple[PenguinCore, torch.Tensor, torch.Tensor]:
+def _preload_large_matmul_state() -> tuple[Sim, torch.Tensor, torch.Tensor]:
     activation = _deterministic_activation(128, 128)
     weights = _deterministic_weight(128, 128)
     state = ArchState.with_memory_sizes()
@@ -103,7 +103,7 @@ def _preload_large_matmul_state() -> tuple[PenguinCore, torch.Tensor, torch.Tens
                 ),
             )
 
-    return PenguinCore(state=state), activation, weights
+    return Sim(state=state), activation, weights
 
 
 def test_large_matmul_first_partial_tile_matches_reference_and_updates_scalar_state() -> None:
@@ -118,11 +118,11 @@ def test_large_matmul_first_partial_tile_matches_reference_and_updates_scalar_st
         core.state.load_mreg(3),
     ).to(torch.float32)
 
-    assert perf.instructions == 56
+    assert perf.instructions == 58
     assert core.state.stop_reason == StopReason.STEP_LIMIT
     assert torch.equal(actual, expected)
-    assert core.state.read_xreg(10) == ACT_DRAM_BASE
-    assert core.state.read_xreg(11) == WEIGHT_DRAM_BASE
+    assert core.state.read_xreg(10) == ACT_DRAM_BASE + 0x1000
+    assert core.state.read_xreg(11) == WEIGHT_DRAM_BASE + 0x2000
 
 
 def test_large_matmul_first_output_tile_is_correct_in_tensor_and_dram_state() -> None:
@@ -136,7 +136,7 @@ def test_large_matmul_first_output_tile_is_correct_in_tensor_and_dram_state() ->
         core.state.load_mreg(2),
         core.state.load_mreg(3),
     ).to(torch.float32)
-    assert perf.instructions == 79
+    assert perf.instructions == 80
     assert core.state.stop_reason == StopReason.STEP_LIMIT
     assert torch.equal(tensor_tile, expected)
     assert core.state.read_xreg(19) == OUTPUT_DRAM_BASE

@@ -1,0 +1,77 @@
+{
+  symbols: {
+    dram_input_ch0: {
+      kind: "input",
+      region: "dram",
+      address: 0x80000100,
+      size_bytes: 96,
+    },
+    dram_input_ch1: {
+      kind: "input",
+      region: "dram",
+      address: 0x80000500,
+      size_bytes: 32,
+    },
+    dram_input_ch2: {
+      kind: "input",
+      region: "dram",
+      address: 0x80000300,
+      size_bytes: 64,
+    },
+    program: {
+      kind: "program",
+      region: "imem",
+      address: 0x00100000,
+      size_bytes: 124,
+      file: "dma_multichannel_demo.S",
+    },
+    dram_output_ch1: {
+      kind: "output",
+      region: "dram",
+      address: 0x80000400,
+      size_bytes: 32,
+    },
+    dram_output_ch2: {
+      kind: "output",
+      region: "dram",
+      address: 0x80000600,
+      size_bytes: 64,
+    },
+    vmem_stage_ch0: {
+      kind: "output",
+      region: "vmem",
+      address: 0x08000040,
+      size_bytes: 96,
+    },
+    vmem_stage_ch1: {
+      kind: "output",
+      region: "vmem",
+      address: 0x08000100,
+      size_bytes: 32,
+    },
+    vmem_store_src_ch1: {
+      kind: "input",
+      region: "vmem",
+      address: 0x08000180,
+      size_bytes: 32,
+    },
+    vmem_stage_ch2: {
+      kind: "output",
+      region: "vmem",
+      address: 0x08000200,
+      size_bytes: 64,
+    },
+    vmem_store_src_ch2: {
+      kind: "input",
+      region: "vmem",
+      address: 0x08000280,
+      size_bytes: 64,
+    },
+    vmem_wait_markers: {
+      kind: "output",
+      region: "vmem",
+      address: 0x08000300,
+      size_bytes: 12,
+    },
+  },
+}

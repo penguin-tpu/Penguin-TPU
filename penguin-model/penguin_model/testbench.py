@@ -9,7 +9,7 @@ from .arch_state import ArchState
 from .assembler import AssemblyProgram
 from .bundle import load_mapped_program
 from .core_config import DEFAULT_PENGUIN_CORE_CONFIG, PenguinCoreConfig
-from .core import PenguinCore
+from .core import Sim
 
 TEST_DRAM_SIZE = 256 * 1024
 TEST_VMEM_SIZE = 256 * 1024
@@ -54,14 +54,14 @@ def run_scalar_program(
     vmem_words: dict[int, int] | None = None,
     dram_words: dict[int, int] | None = None,
     config: PenguinCoreConfig = TEST_CORE_CONFIG,
-) -> tuple[PenguinCore, object]:
+) -> tuple[Sim, object]:
     state = fresh_arch_state(config)
     if vmem_words is not None:
         preload_words(state.vmem, vmem_words)
     if dram_words is not None:
         preload_words(state.dram, dram_words)
 
-    core = PenguinCore(state=state, config=config)
+    core = Sim(state=state, config=config)
     perf = core.execute(
         load_scalar_program(program),
         start_pc=start_pc,

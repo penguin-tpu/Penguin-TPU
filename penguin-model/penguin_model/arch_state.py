@@ -54,9 +54,8 @@ class PerformanceCounters:
     bytes_written: int = 0
     instructions_by_opcode: dict[str, int] = field(default_factory=dict)
 
-    def record_instruction(self, mnemonic: str, latency: int) -> None:
+    def record_instruction(self, mnemonic: str, latency: int = 0) -> None:
         self.instructions += 1
-        self.cycles += latency
         self.instructions_by_opcode[mnemonic] = (
             self.instructions_by_opcode.get(mnemonic, 0) + 1
         )
@@ -219,8 +218,6 @@ class ArchState:
     def clear_dma_channels(self) -> None:
         for channel in self.dma_channels:
             channel.pending = None
-            channel.trace_transfer_insn_id = None
-            channel.trace_transfer_start = None
 
     def set_next_pc(self, value: int) -> None:
         if value % 4 != 0:
@@ -432,18 +429,25 @@ class ArchState:
             size=size,
         )
 
-    def wait_dma_channel(self, channel: int) -> None:
+    def dma_wait_completion_cycle(self, channel: int, issue_cycle: int) -> int:
+        """Return the cycle when `dma.wait` may retire for the selected channel."""
+
+        transfer = self.dma_channels[channel].pending
+        if transfer is None:
+            return issue_cycle + 1
+        return max(issue_cycle + 1, transfer.ready_cycle)
+
+    def retire_dma_wait(self, channel: int, *, retire_cycle: int) -> None:
+        """Commit a completed DMA transfer when the matching wait retires."""
+
         dma_channel: DMAChannel = self.dma_channels[channel]
         transfer = dma_channel.pending
         if transfer is None:
             return
+        if retire_cycle < transfer.ready_cycle:
+            raise ValueError("dma.wait retired before the DMA transfer completed")
 
-        completion_cycle = max(self.perf.cycles + 1, transfer.ready_cycle)
-        self.instruction_extra_cycles = max(
-            self.instruction_extra_cycles,
-            completion_cycle - (self.perf.cycles + 1),
-        )
-        completion_trace_cycle = completion_cycle * 3
+        completion_trace_cycle = retire_cycle * self.config.trace.ticks_per_cycle
 
         if transfer.direction == "load":
             self.vmem.write(transfer.vmem_address, transfer.payload)
@@ -485,6 +489,14 @@ class ArchState:
         self.perf.bytes_read += transfer.size
         self.perf.bytes_written += transfer.size
         dma_channel.pending = None
+
+    def wait_dma_channel(self, channel: int) -> None:
+        completion_cycle = self.dma_wait_completion_cycle(channel, self.perf.cycles)
+        self.instruction_extra_cycles = max(
+            self.instruction_extra_cycles,
+            completion_cycle - (self.perf.cycles + 1),
+        )
+        self.retire_dma_wait(channel, retire_cycle=completion_cycle)
 
 __all__ = [
     "ArchState",

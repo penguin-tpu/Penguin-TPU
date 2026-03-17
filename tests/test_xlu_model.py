@@ -11,7 +11,7 @@ from penguin_model import (
     TENSOR_INSTRUCTION_SPECS,
     ArchState,
     Instruction,
-    PenguinCore,
+    Sim,
     XLUTransposeType,
     XLU_TRANSPOSE_LATENCY_CYCLES,
 )
@@ -27,8 +27,8 @@ def _fresh_state(config=TEST_CORE_CONFIG) -> ArchState:
     return ArchState.from_config(config)
 
 
-def _fresh_core(config=TEST_CORE_CONFIG) -> PenguinCore:
-    return PenguinCore(config=config)
+def _fresh_core(config=TEST_CORE_CONFIG) -> Sim:
+    return Sim(config=config)
 
 
 def _tile(values: list[list[float]]) -> torch.Tensor:
@@ -69,7 +69,7 @@ def test_xlu_transpose_matches_pytorch_bf16_transpose() -> None:
     assert torch.equal(actual, expected)
     assert perf.instructions == 1
     assert perf.instructions_by_opcode == {"transpose.xlu": 1}
-    assert perf.cycles == TEST_CORE_CONFIG.xlu.transpose_latency_cycles
+    assert perf.cycles == TEST_CORE_CONFIG.xlu.transpose_latency_cycles + 3
 
 
 @torch.no_grad()
@@ -99,7 +99,7 @@ def test_xlu_row_reductions_match_pytorch_bf16_reference() -> None:
     assert torch.equal(reduced_max, expected_max)
     assert torch.equal(reduced_sum, expected_sum)
     assert perf.instructions_by_opcode == {"reduce.max.xlu": 1, "reduce.sum.xlu": 1}
-    assert perf.cycles == 2 * TEST_CORE_CONFIG.xlu.transpose_latency_cycles
+    assert perf.cycles == 2 * TEST_CORE_CONFIG.xlu.transpose_latency_cycles + 3
 
 
 def test_xlu_perf_model_uses_configured_transpose_latency() -> None:
@@ -109,9 +109,9 @@ def test_xlu_perf_model_uses_configured_transpose_latency() -> None:
     )
     state = _fresh_state(config)
     state.store_mreg(1, bf16_tile_to_bytes(_tile([[1.0, 2.0], [3.0, 4.0]]), config=config))
-    core = PenguinCore(state=state, config=config)
+    core = Sim(state=state, config=config)
 
     perf = core.execute([Instruction("transpose.xlu", XLUTransposeType(md=2, ms=1))])
 
     assert perf.instructions == 1
-    assert perf.cycles == 7
+    assert perf.cycles == config.xlu.transpose_latency_cycles + 3

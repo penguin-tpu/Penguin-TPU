@@ -4,14 +4,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from penguin_model import PenguinCore, StopReason, assemble_text
+from penguin_model import Sim, StopReason, assemble_text
 from penguin_model.testbench import fresh_arch_state
 
 from trace_utils import event_end, load_trace, require_stage_event, stage_events, trace_output_path
 
 
 def _dump_trace(source: str, trace_path: Path):
-    core = PenguinCore(state=fresh_arch_state())
+    core = Sim(state=fresh_arch_state())
     perf = core.dump_json_trace(assemble_text(source), trace_path)
     events = load_trace(trace_path)
     return core, perf, events

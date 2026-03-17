@@ -15,7 +15,7 @@ def test_scalar_benchmark_dma_stage_and_reduce_perf() -> None:
 
     assert core.state.vmem.load_u32(VMEM_BASE + 0x280) == sum(values)
     assert perf.instructions == 66
-    assert perf.cycles == 84
+    assert perf.cycles == 89
     assert perf.bytes_read == 64
     assert perf.bytes_written == 36
 
@@ -25,7 +25,7 @@ def test_scalar_benchmark_address_generation_perf() -> None:
 
     assert core.state.vmem.load_u32(VMEM_BASE + 0x500) == VMEM_BASE + 0x400
     assert perf.instructions == 60
-    assert perf.cycles == 60
+    assert perf.cycles == 63
     assert perf.bytes_read == 0
     assert perf.bytes_written == 24
 
@@ -41,6 +41,6 @@ def test_scalar_benchmark_dma_overlap_hides_transfer_latency() -> None:
     )
     assert core.state.read_xreg(20) == 9
     assert perf.instructions == 15
-    assert perf.cycles == 24
+    assert perf.cycles == 27
     assert perf.bytes_read == 32
     assert perf.bytes_written == 32

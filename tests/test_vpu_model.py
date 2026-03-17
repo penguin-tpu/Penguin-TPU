@@ -11,7 +11,7 @@ from penguin_model import (
     TENSOR_INSTRUCTION_SPECS,
     ArchState,
     Instruction,
-    PenguinCore,
+    Sim,
     VPUBinaryType,
     VPUUnaryType,
     VPU_NON_PIPELINEABLE_OP_LATENCY_CYCLES,
@@ -37,8 +37,8 @@ def _fresh_state(config=TEST_CORE_CONFIG) -> ArchState:
     return ArchState.from_config(config)
 
 
-def _fresh_core(config=TEST_CORE_CONFIG) -> PenguinCore:
-    return PenguinCore(config=config)
+def _fresh_core(config=TEST_CORE_CONFIG) -> Sim:
+    return Sim(config=config)
 
 
 def _tile(values: list[list[float]]) -> torch.Tensor:
@@ -115,7 +115,7 @@ def test_vpu_binary_ops_apply_bf16_elementwise_semantics() -> None:
         "vmax": 1,
         "vmin": 1,
     }
-    assert perf.cycles == 5 * TEST_CORE_CONFIG.vpu.simple_op_latency_cycles
+    assert perf.cycles == 5 * TEST_CORE_CONFIG.vpu.simple_op_latency_cycles + 3
 
 
 @torch.no_grad()
@@ -136,7 +136,7 @@ def test_vrelu_and_vmov_operate_on_whole_bf16_registers() -> None:
     assert torch.equal(_read_bf16_tile(core.state, 6), relu_expected)
     assert torch.equal(_read_bf16_tile(core.state, 7), relu_expected)
     assert perf.instructions_by_opcode == {"vrelu": 1, "vmov": 1}
-    assert perf.cycles == 2 * TEST_CORE_CONFIG.vpu.simple_op_latency_cycles
+    assert perf.cycles == 2 * TEST_CORE_CONFIG.vpu.simple_op_latency_cycles + 3
 
 
 @torch.no_grad()
@@ -157,7 +157,7 @@ def test_vexp_and_vrecip_operate_on_whole_bf16_registers() -> None:
     assert torch.equal(_read_bf16_tile(core.state, 6), exp_expected)
     assert torch.equal(_read_bf16_tile(core.state, 7), recip_expected)
     assert perf.instructions_by_opcode == {"vexp": 1, "vrecip": 1}
-    assert perf.cycles == 2 * TEST_CORE_CONFIG.vpu.non_pipelineable_op_latency_cycles
+    assert perf.cycles == 2 * TEST_CORE_CONFIG.vpu.non_pipelineable_op_latency_cycles + 3
 
 
 @torch.no_grad()
@@ -197,7 +197,7 @@ def test_vpu_perf_model_uses_configured_simple_latency() -> None:
     state = _fresh_state(config)
     _write_bf16_tile(state, 1, _tile([[1.0, 2.0], [3.0, 4.0]]))
     _write_bf16_tile(state, 2, _tile([[5.0, 6.0], [7.0, 8.0]]))
-    core = PenguinCore(state=state, config=config)
+    core = Sim(state=state, config=config)
 
     perf = core.execute(
         [
@@ -207,7 +207,7 @@ def test_vpu_perf_model_uses_configured_simple_latency() -> None:
     )
 
     assert perf.instructions == 2
-    assert perf.cycles == 10
+    assert perf.cycles == 2 * config.vpu.simple_op_latency_cycles + 3
     assert perf.instructions_by_opcode == {"vadd": 1, "vrelu": 1}
 
 
@@ -218,7 +218,7 @@ def test_vpu_perf_model_uses_configured_non_pipelineable_latency() -> None:
     )
     state = _fresh_state(config)
     _write_bf16_tile(state, 1, _tile([[1.0, 2.0], [3.0, 4.0]]))
-    core = PenguinCore(state=state, config=config)
+    core = Sim(state=state, config=config)
 
     perf = core.execute(
         [
@@ -228,5 +228,5 @@ def test_vpu_perf_model_uses_configured_non_pipelineable_latency() -> None:
     )
 
     assert perf.instructions == 2
-    assert perf.cycles == 22
+    assert perf.cycles == 2 * config.vpu.non_pipelineable_op_latency_cycles + 3
     assert perf.instructions_by_opcode == {"vexp": 1, "vrecip": 1}

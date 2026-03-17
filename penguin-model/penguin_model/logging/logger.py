@@ -20,6 +20,7 @@ class TraceLoggerConfig:
     """Output configuration for JSON trace dumping."""
 
     filename: str = "trace.json"
+    ticks_per_cycle: int = 3
 
 
 class TraceLogger:
@@ -44,9 +45,10 @@ class TraceLogger:
     ) -> None:
         self.config = config
         self.file = open(config.filename, "w", encoding="utf-8")
-        self.first_event = True
+        self.events: list[dict[str, Any]] = []
         self.insn_labels: dict[int, str] = {}
         self.active: dict[tuple[int, str, int], int] = {}
+        self.max_timestamp = 0
         self.lane_names = lane_names or {
             0: "IFU",
             1: "IDU",
@@ -57,11 +59,18 @@ class TraceLogger:
             6: "EXU.MXU1",
             7: "EXU.VPU",
             8: "EXU.XLU",
+            30: "DMA.XFER.CH0",
+            31: "DMA.XFER.CH1",
+            32: "DMA.XFER.CH2",
+            33: "DMA.XFER.CH3",
+            34: "DMA.XFER.CH4",
+            35: "DMA.XFER.CH5",
+            36: "DMA.XFER.CH6",
+            37: "DMA.XFER.CH7",
         }
         self.arch_threads: dict[tuple[str, int], tuple[int, str]] = {}
         self.ts = 0
 
-        self.file.write("[")
         self._write_event(
             {
                 "name": "process_name",
@@ -117,15 +126,18 @@ class TraceLogger:
 
     def close(self) -> None:
         """Close the trace file."""
-        self.file.write("]\n")
+        self._emit_free_running_cycle_counter()
+        ordered_events = self._ordered_events()
+        self.file.write(json.dumps(ordered_events, separators=(",", ":")))
+        self.file.write("\n")
         self.file.close()
 
     def _write_event(self, event: dict[str, Any]) -> None:
-        if not self.first_event:
-            self.file.write(",\n")
-        else:
-            self.first_event = False
-        self.file.write(json.dumps(event, separators=(",", ":")))
+        timestamp = event.get("ts")
+        if isinstance(timestamp, int):
+            duration = int(event.get("dur", 0))
+            self.max_timestamp = max(self.max_timestamp, timestamp + max(0, duration))
+        self.events.append(event)
 
     def _timestamp(self, cycle: int | None) -> int:
         return self.ts if cycle is None else cycle
@@ -211,14 +223,7 @@ class TraceLogger:
             }
         )
 
-    def log_arch_value(
-        self,
-        regfile: str,
-        index: int,
-        value: int,
-        *,
-        cycle: int | None = None,
-    ) -> None:
+    def _ensure_arch_thread(self, regfile: str, index: int) -> tuple[int, str]:
         key = (regfile, index)
         if key not in self.arch_threads:
             if regfile == "xrf":
@@ -227,6 +232,9 @@ class TraceLogger:
             elif regfile == "pc":
                 tid = 1000
                 name = "pc"
+            elif regfile == "cycle":
+                tid = 1001
+                name = "cycle"
             else:
                 tid = 2000 + index
                 name = f"{regfile}[{index:02d}]"
@@ -240,8 +248,17 @@ class TraceLogger:
                     "args": {"name": name},
                 }
             )
+        return self.arch_threads[key]
 
-        tid, name = self.arch_threads[key]
+    def log_arch_value(
+        self,
+        regfile: str,
+        index: int,
+        value: int,
+        *,
+        cycle: int | None = None,
+    ) -> None:
+        tid, name = self._ensure_arch_thread(regfile, index)
         self._write_event(
             {
                 "name": name,
@@ -252,6 +269,33 @@ class TraceLogger:
                 "args": {"value": value},
             }
         )
+
+    def _emit_free_running_cycle_counter(self) -> None:
+        tid, name = self._ensure_arch_thread("cycle", 0)
+        ticks_per_cycle = max(1, self.config.ticks_per_cycle)
+        final_cycle = (self.max_timestamp + ticks_per_cycle - 1) // ticks_per_cycle
+        for cycle in range(final_cycle + 1):
+            self.events.append(
+                {
+                    "name": name,
+                    "ph": "C",
+                    "pid": TraceLogger.ARCH_PID,
+                    "tid": tid,
+                    "ts": cycle * ticks_per_cycle,
+                    "args": {"value": cycle},
+                }
+            )
+
+    def _ordered_events(self) -> list[dict[str, Any]]:
+        indexed_events = list(enumerate(self.events))
+        indexed_events.sort(
+            key=lambda item: (
+                0 if "ts" not in item[1] else 1,
+                int(item[1].get("ts", 0)),
+                item[0],
+            )
+        )
+        return [event for _, event in indexed_events]
 
     def log_memory_access(
         self,

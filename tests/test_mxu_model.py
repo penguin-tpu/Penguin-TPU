@@ -17,7 +17,7 @@ from penguin_model import (
     Instruction,
     MXUMatmulAccType,
     MXUMatmulType,
-    PenguinCore,
+    Sim,
     ScaleImmType,
     ScaleMemType,
     StopReason,
@@ -55,8 +55,8 @@ def _fresh_state(config=TEST_CORE_CONFIG) -> ArchState:
     return ArchState.from_config(config)
 
 
-def _fresh_core(config=TEST_CORE_CONFIG) -> PenguinCore:
-    return PenguinCore(config=config)
+def _fresh_core(config=TEST_CORE_CONFIG) -> Sim:
+    return Sim(config=config)
 
 
 def _fp8_tile(values: list[list[float]]) -> torch.Tensor:
@@ -134,7 +134,7 @@ def test_mxu_instruction_family_registers_with_expected_latency_classes() -> Non
 def test_scale_register_instructions_write_expected_raw_payloads() -> None:
     state = _fresh_state()
     state.vmem.write(VMEM_BASE + 0x40, torch.tensor([0xFF], dtype=torch.uint8))
-    core = PenguinCore(state=state)
+    core = Sim(state=state)
 
     perf = core.execute(
         [
@@ -164,7 +164,7 @@ def test_vload_push_and_vstore_use_whole_tensor_and_weight_images() -> None:
     state.vmem.write(act_addr, fp8_tile_to_bytes(activation, config=state.config))
     state.vmem.write(weight_addr, weight_tile_to_bytes(weights, config=state.config))
     state.store_mreg(5, result_lo)
-    core = PenguinCore(state=state)
+    core = Sim(state=state)
 
     perf = core.execute(
         [
@@ -192,7 +192,7 @@ def test_matmul_writes_paired_bf16_result_registers() -> None:
     state = _fresh_state()
     _store_activation(state, 1, activation)
     _store_weight(state, 0, 0, weights)
-    core = PenguinCore(state=state)
+    core = Sim(state=state)
 
     perf = core.execute(
         [
@@ -205,7 +205,7 @@ def test_matmul_writes_paired_bf16_result_registers() -> None:
     expected = _reference_scaled_matmul(activation, weights)
     assert torch.equal(_read_result_pair(state, 2), expected)
     assert perf.instructions_by_opcode == {"seli": 2, "matmul.mxu0": 1}
-    assert perf.cycles == 2 + TEST_CORE_CONFIG.tensor.matmul_latency_cycles
+    assert perf.cycles == TEST_CORE_CONFIG.tensor.matmul_latency_cycles + 5
 
 
 @torch.no_grad()
@@ -217,7 +217,7 @@ def test_matmul_acc_uses_paired_partial_and_scale_operands() -> None:
     _store_activation(state, 1, activation)
     _store_weight(state, 0, 0, weights)
     _store_partial_pair(state, 8, partial)
-    core = PenguinCore(state=state)
+    core = Sim(state=state)
 
     perf = core.execute(
         [
@@ -249,7 +249,7 @@ def test_scale_registers_loaded_from_immediate_and_memory_affect_matmul() -> Non
     _store_activation(state, 1, activation)
     _store_weight(state, 0, 0, weights)
     state.vmem.write(VMEM_BASE + 0x80, torch.tensor([0xFF], dtype=torch.uint8))
-    core = PenguinCore(state=state)
+    core = Sim(state=state)
 
     perf = core.execute(
         [
@@ -275,7 +275,7 @@ def test_matmul_rejects_illegal_paired_destination_base() -> None:
     state = _fresh_state()
     _store_activation(state, 1, activation)
     _store_weight(state, 0, 0, weights)
-    core = PenguinCore(state=state)
+    core = Sim(state=state)
 
     perf = core.execute(
         [
@@ -286,7 +286,7 @@ def test_matmul_rejects_illegal_paired_destination_base() -> None:
     )
 
     assert state.stop_reason == StopReason.ILLEGAL_TENSOR_REGISTER_PAIR
-    assert perf.instructions == 3
+    assert perf.instructions == 2
 
 
 def test_matmul_perf_model_uses_configured_latency() -> None:
@@ -297,7 +297,7 @@ def test_matmul_perf_model_uses_configured_latency() -> None:
     state = _fresh_state(config)
     _store_activation(state, 1, _fp8_tile([[1.0]]))
     _store_weight(state, 0, 0, _weight_tile([[1.0]]))
-    core = PenguinCore(state=state, config=config)
+    core = Sim(state=state, config=config)
 
     perf = core.execute(
         [
@@ -308,4 +308,4 @@ def test_matmul_perf_model_uses_configured_latency() -> None:
     )
 
     assert perf.instructions == 3
-    assert perf.cycles == 19
+    assert perf.cycles == config.tensor.matmul_latency_cycles + 5

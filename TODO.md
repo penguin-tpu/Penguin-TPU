@@ -38,8 +38,8 @@ repo-level TODO tracking. Keep historical context and completed-change notes in
 
 - Add manifest-driven runtime staging for `constants.bin` once the bundle contract defines
   its memory mapping.
-- Refine long-chime tensor execution timing and overlap semantics for MXU, VPU, and XLU
-  work.
+- Refine the cycle-accurate tensor hazard / overlap model beyond the current architectural
+  scoreboard if RTL-visible pipeline details require it.
 - Decide whether `mem_base` is architecturally a high-bits extension
   `(mem_base << 32) | low32` or some other shared address-offset encoding.
 

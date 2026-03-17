@@ -85,6 +85,8 @@ The baseline Penguin execution model shall satisfy the following rules:
 - instructions are fixed-width `32`-bit words
 - instructions conceptually retire in program order
 - the scalar frontend issues at most one new instruction per cycle
+- issue shall stall on structural conflicts and on architecturally visible source or
+  destination operand hazards
 - long-chime tensor instructions may remain active for multiple cycles after issue
 - different execution units may be active concurrently
 - architectural completion order remains defined by the instruction semantics, not by
@@ -535,7 +537,11 @@ Architectural rules:
 - the channel must be idle before a new `dma.load` or `dma.store` is issued
 - DMA moves raw unit-stride bytes only
 - completion order across channels is not ordered by issue order
-- `dma.wait.chN` completes immediately if the channel is already idle
+- `dma.wait.chN` is an instruction-decode fence, not an execute-stage operation
+- if channel `N` is already idle when `dma.wait.chN` reaches decode, the instruction remains
+  in decode for that cycle and retires directly without entering execute
+- if channel `N` is still busy, `dma.wait.chN` shall remain in decode until that transfer
+  completes, then retire directly without entering execute
 
 #### 8.5.3 `TMEM-I` format
 

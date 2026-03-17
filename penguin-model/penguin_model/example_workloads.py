@@ -9,7 +9,7 @@ import torch
 from .arch_state import ArchState, PerformanceCounters, StopReason
 from .bundle import load_mapped_program
 from .core_config import DEFAULT_PENGUIN_CORE_CONFIG, PenguinCoreConfig
-from .core import PenguinCore
+from .core import Sim
 from .tensor import (
     BF16_DTYPE,
     FP8_DTYPE,
@@ -64,7 +64,7 @@ def run_matmul_example(
     weights = _deterministic_weight(cols=config.tensor.weight_tile_cols_fp8, config=config)
     golden = _bf16_reference_matmul(activation, weights)
 
-    core = PenguinCore(config=config)
+    core = Sim(config=config)
     state = core.state
     state.vmem.write(addresses.activation0, fp8_tile_to_bytes(activation, config=config))
     state.vmem.write(addresses.weight0, weight_tile_to_bytes(weights, config=config))
@@ -98,7 +98,7 @@ def run_linear_example(
     bias = _deterministic_bias(cols=config.tensor.weight_tile_cols_fp8 * 2)
     golden = _bf16_reference_linear(inputs, weight_matrix, bias)
 
-    core = PenguinCore(config=config)
+    core = Sim(config=config)
     state = core.state
     rows = config.tensor.mreg_rows
     cols = config.tensor.weight_tile_cols_fp8
@@ -507,7 +507,7 @@ def _run_dma_stripmined_example(
         ).to(BF16_DTYPE)
     )
 
-    core = PenguinCore(config=config)
+    core = Sim(config=config)
     state = core.state
     _write_tiled_inputs_to_dram(
         state,
@@ -551,7 +551,7 @@ def _run_dma_stripmined_example(
     )
 
 
-def _require_program_end(core: PenguinCore) -> None:
+def _require_program_end(core: Sim) -> None:
     if core.state.stop_reason != StopReason.PROGRAM_END:
         raise RuntimeError(f"example stopped with {core.state.stop_reason!r}")
 
