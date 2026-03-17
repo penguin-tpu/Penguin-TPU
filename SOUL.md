@@ -16,6 +16,10 @@ What exists now:
   label-resolved self-checking programs inspired by `riscv-tests` `rv32ui`
 - a GitHub Actions CI workflow that installs the `uv` workspace and runs
   the full Python test suite on pushes and pull requests
+- a GitHub Actions `Codex Auto-Fix CI` workflow that listens for failed `CI` runs on
+  in-repo branches, provisions the same `uv` + Verilator test environment, invokes
+  `openai/codex-action`, reruns `uv run pytest`, and opens an auto-fix pull request when
+  the repair passes
 - initial VPU elementwise functional/performance modeling for `vadd`, `vsub`, `vmul`,
   `vmax`, `vmin`, `vrelu`, `vmov`, `vexp`, and `vrecip`
 - executable-package manifest/symbol-table support on both sides of the software

@@ -1,0 +1,102 @@
+name: Codex Auto-Fix CI
+
+on:
+  workflow_run:
+    workflows:
+      - CI
+    types:
+      - completed
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: codex-auto-fix-${{ github.event.workflow_run.id }}
+  cancel-in-progress: true
+
+jobs:
+  auto-fix:
+    if: >-
+      ${{
+        github.event.workflow_run.conclusion == 'failure' &&
+        github.event.workflow_run.head_repository.full_name == github.repository &&
+        !startsWith(github.event.workflow_run.head_branch, 'codex/auto-fix-')
+      }}
+    runs-on: ubuntu-latest
+    env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      FAILED_WORKFLOW_NAME: ${{ github.event.workflow_run.name }}
+      FAILED_RUN_URL: ${{ github.event.workflow_run.html_url }}
+      FAILED_HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+      FAILED_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+
+    steps:
+      - name: Check OpenAI API key is configured
+        run: |
+          if [ -z "$OPENAI_API_KEY" ]; then
+            echo "OPENAI_API_KEY secret is not set. Configure it in Actions secrets before using this workflow." >&2
+            exit 1
+          fi
+
+      - name: Check out failing ref
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ env.FAILED_HEAD_SHA }}
+          fetch-depth: 0
+
+      - name: Install Verilator
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y verilator
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version-file: pyproject.toml
+
+      - name: Sync workspace dependencies
+        run: uv sync --dev
+
+      - name: Run Codex
+        id: codex
+        uses: openai/codex-action@v1
+        with:
+          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+          prompt: |
+            You are working in the Penguin-TPU repository, a `uv`-managed Python and RTL workspace.
+
+            Read `AGENTS.md` and follow the repository rules.
+            Investigate the failing GitHub Actions run at `${{ env.FAILED_RUN_URL }}` by reproducing the repository's CI checks from the checked-out commit.
+            This repository's CI currently expects:
+            - `uv sync --dev`
+            - `uv run pytest`
+
+            Identify the smallest safe change that makes the monitored `CI` workflow pass, implement only that change, and stop.
+            Keep unrelated user changes intact. Do not create commits, branches, or broad refactors.
+            Update tests or docs only when they are required for the fix itself.
+          sandbox: workspace-write
+
+      - name: Verify full test suite
+        run: uv run pytest
+
+      - name: Create pull request with fixes
+        if: success()
+        uses: peter-evans/create-pull-request@v6
+        with:
+          commit-message: "fix(ci): auto-fix failing tests via Codex"
+          branch: codex/auto-fix-${{ github.event.workflow_run.id }}
+          base: ${{ env.FAILED_HEAD_BRANCH }}
+          title: "Auto-fix failing CI via Codex"
+          body: |
+            Codex automatically generated this PR in response to a failed `${{ env.FAILED_WORKFLOW_NAME }}` run.
+
+            Failed run: ${{ env.FAILED_RUN_URL }}
+            Head branch: `${{ env.FAILED_HEAD_BRANCH }}`
+
+            This PR contains the smallest change Codex found that made `uv run pytest` pass on the failing commit.

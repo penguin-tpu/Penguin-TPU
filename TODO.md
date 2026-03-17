@@ -9,6 +9,9 @@ repo-level TODO tracking. Keep historical context and completed-change notes in
 - Keep `TODO.md` as the only place for active TODOs, pending tasks, and to-be-decided
   items. Other docs may reference this file, but should not maintain their own open-work
   lists.
+- Configure the repo or org `OPENAI_API_KEY` Actions secret and allow GitHub Actions to
+  create pull requests so `.github/workflows/codex-autofix-ci.yml` can open CI repair
+  PRs.
 - Define the formal tensor layout and packing specification, including padding and
   tail-handling rules.
 - Define the 32-bit binary/text assembly encoding specification used across compiler,
