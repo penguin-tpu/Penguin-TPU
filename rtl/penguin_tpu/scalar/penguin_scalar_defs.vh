@@ -85,4 +85,8 @@
 `define PENGUIN_HALT_ECALL              4'd5
 `define PENGUIN_HALT_EBREAK             4'd6
 
+// Preliminary VPU custom encodings
+`define PENGUIN_VPU_FUNCT7_BINARY       7'b0000000
+`define PENGUIN_VPU_FUNCT3_VADD         3'b000
+
 `endif

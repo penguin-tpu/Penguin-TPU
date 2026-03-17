@@ -23,6 +23,7 @@ module PenguinScalarDecoder (
     output reg         is_fence,
     output reg         is_ecall,
     output reg         is_ebreak,
+    output reg         is_vadd,
     output reg         is_reserved_custom
 );
 
@@ -74,6 +75,7 @@ module PenguinScalarDecoder (
         is_fence = 1'b0;
         is_ecall = 1'b0;
         is_ebreak = 1'b0;
+        is_vadd = 1'b0;
         is_reserved_custom = 1'b0;
 
         case (opcode)
@@ -266,7 +268,19 @@ module PenguinScalarDecoder (
                     illegal = 1'b1;
                 end
             end
-            `PENGUIN_OPCODE_CUSTOM_0,
+            `PENGUIN_OPCODE_CUSTOM_0: begin
+                format_class = `PENGUIN_FMT_R;
+                if ((funct7 == `PENGUIN_VPU_FUNCT7_BINARY) && (funct3 == `PENGUIN_VPU_FUNCT3_VADD)) begin
+                    is_vadd = 1'b1;
+                    reads_rs1 = 1'b1;
+                    reads_rs2 = 1'b1;
+                end
+                else begin
+                    format_class = `PENGUIN_FMT_RESERVED;
+                    is_reserved_custom = 1'b1;
+                    illegal = 1'b1;
+                end
+            end
             `PENGUIN_OPCODE_CUSTOM_1,
             `PENGUIN_OPCODE_CUSTOM_2,
             `PENGUIN_OPCODE_CUSTOM_3: begin

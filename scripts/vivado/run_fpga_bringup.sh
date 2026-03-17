@@ -56,10 +56,10 @@ case "${TARGET}" in
         MAX_PERIOD=1.10
         ;;
     scalar_core)
-        EXPECT_MESSAGE="hello, this is penguin"
-        MIN_OCCURRENCES=1
-        MIN_PERIOD=""
-        MAX_PERIOD=""
+        EXPECT_MESSAGE="vadd=4040"
+        MIN_OCCURRENCES=2
+        MIN_PERIOD=0.90
+        MAX_PERIOD=1.10
         ;;
     *)
         echo "unsupported target: ${TARGET}" >&2

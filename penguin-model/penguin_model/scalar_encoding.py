@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from .instructions import BType, EmptyType, IType, Instruction, JType, RType, SType, UType
+from .instructions import BType, EmptyType, IType, Instruction, JType, RType, SType, UType, VPUBinaryType
 
 OPCODE_LOAD = 0b0000011
 OPCODE_MISC_MEM = 0b0001111
@@ -15,6 +15,7 @@ OPCODE_BRANCH = 0b1100011
 OPCODE_JALR = 0b1100111
 OPCODE_JAL = 0b1101111
 OPCODE_SYSTEM = 0b1110011
+OPCODE_CUSTOM_0 = 0b0001011
 
 
 def _mask_u32(value: int) -> int:
@@ -192,6 +193,20 @@ def encode_scalar_instruction(instruction: Instruction) -> int:
         }[mnemonic]
         funct7 = 0b0100000 if mnemonic in {"ssub", "ssra"} else 0b0000000
         return _mask_u32(_encode_r_type(OPCODE_OP, funct3, funct7, params))
+
+    if mnemonic == "vadd":
+        if not isinstance(params, VPUBinaryType):
+            raise TypeError("vadd expects VPUBinaryType operands")
+        if params.md > 31 or params.ms1 > 31 or params.ms2 > 31:
+            raise ValueError("preliminary RTL VPU only supports m0-m31")
+        return _mask_u32(
+            _encode_r_type(
+                OPCODE_CUSTOM_0,
+                0b000,
+                0b0000000,
+                RType(rd=params.md, rs1=params.ms1, rs2=params.ms2),
+            )
+        )
 
     if mnemonic == "sfence":
         if not isinstance(params, EmptyType):

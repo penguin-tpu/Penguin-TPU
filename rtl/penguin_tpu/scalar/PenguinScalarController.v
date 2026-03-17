@@ -14,6 +14,7 @@ module PenguinScalarController #
     input  wire        current_pc_misaligned,
     input  wire        load_misaligned,
     input  wire        store_misaligned,
+    input  wire        hold,
     input  wire        redirect_valid,
     input  wire [31:0] redirect_target,
     input  wire        redirect_misaligned,
@@ -84,6 +85,11 @@ module PenguinScalarController #
             end else if (is_ebreak) begin
                 halted <= 1'b1;
                 halt_reason <= `PENGUIN_HALT_EBREAK;
+            end else if (hold) begin
+                pc <= pc;
+                pending_redirect_valid <= pending_redirect_valid;
+                pending_redirect_target <= pending_redirect_target;
+                pending_redirect_count <= pending_redirect_count;
             end else begin
                 pc <= next_pc;
                 pending_redirect_valid <= next_pending_valid;

@@ -7,30 +7,12 @@ from pathlib import Path
 
 import pytest
 
-
+from .verilog_sources import RTL_DIR, SCALAR_DIR, scalar_uart_top_verilog_sources
 ROOT = Path(__file__).resolve().parents[2]
-RTL_DIR = ROOT / "rtl" / "penguin_tpu"
-SCALAR_DIR = RTL_DIR / "scalar"
-COCOTB_DIR = ROOT / "tests" / "cocotb"
 
 
 @pytest.mark.skipif(shutil.which("verilator") is None, reason="verilator not installed")
 def test_scalar_mmio_cycle_counter_cocotb() -> None:
-    verilog_sources = [
-        COCOTB_DIR / "ClockingWizard.v",
-        SCALAR_DIR / "PenguinScalarDecoder.v",
-        SCALAR_DIR / "PenguinScalarRegfile.v",
-        SCALAR_DIR / "PenguinScalarAlu.v",
-        SCALAR_DIR / "PenguinScalarBranchUnit.v",
-        SCALAR_DIR / "PenguinScalarLsu.v",
-        SCALAR_DIR / "PenguinScalarController.v",
-        SCALAR_DIR / "PenguinScalarCore.v",
-        RTL_DIR / "UartTx.v",
-        RTL_DIR / "UartRx.v",
-        RTL_DIR / "Uart.v",
-        RTL_DIR / "PenguinScalarUartHelloTop.v",
-    ]
-
     parameters = {
         "clk_freq_hz": 4_000,
         "baud_rate": 200,
@@ -59,7 +41,7 @@ def test_scalar_mmio_cycle_counter_cocotb() -> None:
             "TOPLEVEL_LANG": "verilog",
             "TOPLEVEL": "PenguinScalarUartHelloTop",
             "MODULE": "tb_scalar_mmio_counter",
-            "VERILOG_SOURCES": " ".join(str(path) for path in verilog_sources),
+            "VERILOG_SOURCES": " ".join(str(path) for path in scalar_uart_top_verilog_sources()),
             "SIM_BUILD": str(sim_build),
             "COCOTB_RESULTS_FILE": str(sim_build / "results.xml"),
             "COCOTB_HDL_TIMEUNIT": "1ns",

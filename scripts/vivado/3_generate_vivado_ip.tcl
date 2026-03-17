@@ -32,7 +32,10 @@ generate_target all $clock_wiz_xci
 # Floating Point IP
 # ==============================================================================
 
-create_ip -name floating_point -vendor xilinx.com -library ip -version 7.1 -module_name Bf16Adder
+if {[llength [get_ips -quiet Bf16Adder]] == 0} {
+    create_ip -name floating_point -vendor xilinx.com -library ip -version 7.1 -module_name Bf16Adder
+}
+
 set_property -dict [list \
   CONFIG.A_Precision_Type {Custom} \
   CONFIG.Add_Sub_Value {Add} \
@@ -52,8 +55,10 @@ set_property -dict [list \
   CONFIG.Result_Precision_Type {Custom} \
 ] [get_ips Bf16Adder]
 
-generate_target {instantiation_template} [get_files /home/tk/Desktop/Penguin-TPU/VivadoProject/VivadoProject.srcs/sources_1/ip/Bf16Adder/Bf16Adder.xci]
-generate_target all [get_files  /home/tk/Desktop/Penguin-TPU/VivadoProject/VivadoProject.srcs/sources_1/ip/Bf16Adder/Bf16Adder.xci]
+set bf16_adder_xci [get_files /home/tk/Desktop/Penguin-TPU/VivadoProject/VivadoProject.srcs/sources_1/ip/Bf16Adder/Bf16Adder.xci]
+
+generate_target {instantiation_template} $bf16_adder_xci
+generate_target all $bf16_adder_xci
 
 
 # Update Compile Order

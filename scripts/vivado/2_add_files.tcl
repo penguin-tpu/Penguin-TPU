@@ -48,8 +48,9 @@ add_files -fileset $sources_fs { \
   /home/tk/Desktop/Penguin-TPU/rtl/penguin_tpu/scalar/PenguinScalarBranchUnit.v \
   /home/tk/Desktop/Penguin-TPU/rtl/penguin_tpu/scalar/PenguinScalarLsu.v \
   /home/tk/Desktop/Penguin-TPU/rtl/penguin_tpu/scalar/PenguinScalarController.v \
+  /home/tk/Desktop/Penguin-TPU/rtl/penguin_tpu/scalar/PenguinPreliminaryVpu.v \
   /home/tk/Desktop/Penguin-TPU/rtl/penguin_tpu/scalar/PenguinScalarCore.v \
-  /home/tk/Desktop/Penguin-TPU/rtl/penguin_tpu/scalar/penguin_scalar_uart_hello_program_init.vh \
+  /home/tk/Desktop/Penguin-TPU/rtl/penguin_tpu/scalar/penguin_scalar_uart_vadd_program_init.vh \
   /home/tk/Desktop/Penguin-TPU/rtl/penguin_tpu/scalar/penguin_scalar_defs.vh \
 }
 

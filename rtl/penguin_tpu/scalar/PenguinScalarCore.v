@@ -43,6 +43,7 @@ module PenguinScalarCore #
     wire        is_fence;
     wire        is_ecall;
     wire        is_ebreak;
+    wire        is_vadd;
     wire        is_reserved_custom;
 
     wire [31:0] current_pc;
@@ -64,9 +65,17 @@ module PenguinScalarCore #
     wire        dmem_write_int;
     wire [31:0] dmem_addr_int;
     wire [31:0] dmem_wdata_int;
+    wire [31:0] lsu_dmem_rdata;
     wire [31:0] lsu_load_data;
     wire        load_misaligned;
     wire        store_misaligned;
+    wire        vpu_mmio_selected;
+    wire [31:0] vpu_mmio_rdata;
+    wire        vpu_execute_stall;
+    wire        dmem_targets_vpu_mmio;
+    wire        internal_load_selected;
+    wire        external_dmem_valid;
+    wire        external_dmem_write;
 
     wire current_pc_misaligned = (current_pc[1:0] != 2'b00);
     wire instruction_illegal = decode_illegal || is_reserved_custom || !decode_valid;
@@ -103,6 +112,7 @@ module PenguinScalarCore #
         .is_fence(is_fence),
         .is_ecall(is_ecall),
         .is_ebreak(is_ebreak),
+        .is_vadd(is_vadd),
         .is_reserved_custom(is_reserved_custom)
     );
 
@@ -147,7 +157,7 @@ module PenguinScalarCore #
         .imm32(decode_imm32),
         .is_load(is_load),
         .is_store(is_store),
-        .dmem_rdata(dmem_rdata),
+        .dmem_rdata(lsu_dmem_rdata),
         .dmem_valid(dmem_valid_int),
         .dmem_write(dmem_write_int),
         .dmem_addr(dmem_addr_int),
@@ -167,6 +177,7 @@ module PenguinScalarCore #
         .current_pc_misaligned(current_pc_misaligned),
         .load_misaligned(load_misaligned),
         .store_misaligned(store_misaligned),
+        .hold(vpu_execute_stall),
         .redirect_valid(branch_redirect_valid),
         .redirect_target(branch_redirect_target),
         .redirect_misaligned(branch_target_misaligned),
@@ -180,10 +191,31 @@ module PenguinScalarCore #
         .pending_redirect_count(pending_redirect_count_unused)
     );
 
+    PenguinPreliminaryVpu preliminary_vpu_inst (
+        .clock(clock),
+        .reset(reset),
+        .execute_vadd(is_vadd && !instruction_halts),
+        .execute_md(decode_rd),
+        .execute_ms1(decode_rs1),
+        .execute_ms2(decode_rs2),
+        .mmio_valid(dmem_valid_int && !instruction_halts),
+        .mmio_write(dmem_write_int),
+        .mmio_addr(dmem_addr_int),
+        .mmio_wdata(dmem_wdata_int),
+        .mmio_rdata(vpu_mmio_rdata),
+        .mmio_selected(vpu_mmio_selected),
+        .execute_stall(vpu_execute_stall)
+    );
+
     assign imem_addr = current_pc;
     assign debug_pc = current_pc;
-    assign dmem_valid = dmem_valid_int && !instruction_halts;
-    assign dmem_write = dmem_write_int && !instruction_halts;
+    assign dmem_targets_vpu_mmio = dmem_valid_int && vpu_mmio_selected;
+    assign internal_load_selected = dmem_targets_vpu_mmio && !dmem_write_int;
+    assign lsu_dmem_rdata = internal_load_selected ? vpu_mmio_rdata : dmem_rdata;
+    assign external_dmem_valid = dmem_valid_int && !instruction_halts && !dmem_targets_vpu_mmio;
+    assign external_dmem_write = dmem_write_int && !instruction_halts && !dmem_targets_vpu_mmio;
+    assign dmem_valid = external_dmem_valid;
+    assign dmem_write = external_dmem_write;
     assign dmem_addr = dmem_addr_int;
     assign dmem_wdata = dmem_wdata_int;
 

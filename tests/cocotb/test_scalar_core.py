@@ -7,9 +7,9 @@ from pathlib import Path
 
 import pytest
 
+from .verilog_sources import SCALAR_DIR, scalar_core_verilog_sources
 
 ROOT = Path(__file__).resolve().parents[2]
-RTL_DIR = ROOT / "rtl" / "penguin_tpu" / "scalar"
 
 
 @pytest.mark.skipif(shutil.which("verilator") is None, reason="verilator not installed")
@@ -29,16 +29,6 @@ def test_scalar_core_cocotb() -> None:
     if existing_pythonpath:
         pythonpath = pythonpath + os.pathsep + existing_pythonpath
 
-    verilog_sources = [
-        RTL_DIR / "PenguinScalarDecoder.v",
-        RTL_DIR / "PenguinScalarRegfile.v",
-        RTL_DIR / "PenguinScalarAlu.v",
-        RTL_DIR / "PenguinScalarBranchUnit.v",
-        RTL_DIR / "PenguinScalarLsu.v",
-        RTL_DIR / "PenguinScalarController.v",
-        RTL_DIR / "PenguinScalarCore.v",
-    ]
-
     env = os.environ.copy()
     env.update(
         {
@@ -46,8 +36,8 @@ def test_scalar_core_cocotb() -> None:
             "TOPLEVEL_LANG": "verilog",
             "TOPLEVEL": "PenguinScalarCore",
             "MODULE": "tb_scalar_core",
-            "VERILOG_SOURCES": " ".join(str(path) for path in verilog_sources),
-            "COMPILE_ARGS": f"-I{RTL_DIR}",
+            "VERILOG_SOURCES": " ".join(str(path) for path in scalar_core_verilog_sources()),
+            "COMPILE_ARGS": f"-I{SCALAR_DIR}",
             "SIM_BUILD": str(sim_build),
             "COCOTB_RESULTS_FILE": str(sim_build / "results.xml"),
             "COCOTB_HDL_TIMEUNIT": "1ns",

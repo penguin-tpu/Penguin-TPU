@@ -132,3 +132,17 @@ async def core_executes_arithmetic_load_store_and_delay_slots(dut) -> None:
     await run_program(dut, misaligned_load_program)
     assert await read_reg(dut, 2) == 0
     assert int(dut.halt_reason.value) == HALT_LOAD_MISALIGNED
+
+    vadd_program = """
+        li x1, 0x200
+        li x2, 0x3F80
+        sst x2, 0(x1)
+        li x2, 0x4000
+        sst x2, 4(x1)
+        vadd m2, m0, m1
+        sld x3, 8(x1)
+        sebreak
+    """
+    await run_program(dut, vadd_program, max_cycles=96)
+    assert await read_reg(dut, 3) == 0x4040
+    assert int(dut.halt_reason.value) == HALT_EBREAK

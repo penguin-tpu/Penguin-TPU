@@ -5,7 +5,7 @@ from dataclasses import dataclass
 import cocotb
 from cocotb.triggers import Timer
 
-from penguin_model import BType, EmptyType, IType, Instruction, JType, RType, SType, UType
+from penguin_model import BType, EmptyType, IType, Instruction, JType, RType, SType, UType, VPUBinaryType
 from penguin_model.scalar_encoding import encode_scalar_instruction
 
 
@@ -65,6 +65,7 @@ class DecodeExpectation:
     is_fence: int = 0
     is_ecall: int = 0
     is_ebreak: int = 0
+    is_vadd: int = 0
     is_reserved_custom: int = 0
     illegal: int = 0
 
@@ -92,6 +93,7 @@ async def check_decode(dut, instruction_word: int, expected: DecodeExpectation) 
     assert int(dut.is_fence.value) == expected.is_fence
     assert int(dut.is_ecall.value) == expected.is_ecall
     assert int(dut.is_ebreak.value) == expected.is_ebreak
+    assert int(dut.is_vadd.value) == expected.is_vadd
     assert int(dut.is_reserved_custom.value) == expected.is_reserved_custom
 
 
@@ -138,6 +140,21 @@ async def decoder_handles_scalar_formats_and_reserved_custom(dut) -> None:
             Instruction("sebreak", EmptyType()),
             DecodeExpectation(FMT_SYSTEM, OP_SYSTEM, ALU_ADD, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1),
         ),
+        (
+            Instruction("vadd", VPUBinaryType(md=2, ms1=0, ms2=1)),
+            DecodeExpectation(
+                FMT_R,
+                OP_ALU_IMM,
+                ALU_ADD,
+                2,
+                0,
+                1,
+                0,
+                reads_rs1=1,
+                reads_rs2=1,
+                is_vadd=1,
+            ),
+        ),
     ]
 
     for instruction, expected in cases:
@@ -154,4 +171,3 @@ async def decoder_handles_scalar_formats_and_reserved_custom(dut) -> None:
         0xFFFFFFFF,
         DecodeExpectation(FMT_RESERVED, OP_ALU_IMM, ALU_ADD, 31, 31, 31, 0, illegal=1, is_reserved_custom=1),
     )
-

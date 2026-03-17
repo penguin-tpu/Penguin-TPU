@@ -7,19 +7,15 @@ from pathlib import Path
 
 import pytest
 
-from .verilog_sources import RTL_DIR, SCALAR_DIR, scalar_uart_top_verilog_sources
+
 ROOT = Path(__file__).resolve().parents[2]
+COCOTB_DIR = ROOT / "tests" / "cocotb"
+RTL_DIR = ROOT / "rtl" / "penguin_tpu" / "scalar"
 
 
 @pytest.mark.skipif(shutil.which("verilator") is None, reason="verilator not installed")
-def test_scalar_uart_hello_cocotb() -> None:
-    parameters = {
-        "clk_freq_hz": 4_000,
-        "baud_rate": 200,
-        "cycle_counter_increment": 25_000,
-    }
-
-    sim_build = ROOT / ".pytest_sim_build" / "scalar_uart_hello_verilator"
+def test_preliminary_vpu_cocotb() -> None:
+    sim_build = ROOT / ".pytest_sim_build" / "preliminary_vpu_verilator"
     shutil.rmtree(sim_build, ignore_errors=True)
     sim_build.mkdir(parents=True, exist_ok=True)
 
@@ -39,20 +35,23 @@ def test_scalar_uart_hello_cocotb() -> None:
         {
             "SIM": "verilator",
             "TOPLEVEL_LANG": "verilog",
-            "TOPLEVEL": "PenguinScalarUartHelloTop",
-            "MODULE": "tb_scalar_uart_hello",
-            "VERILOG_SOURCES": " ".join(str(path) for path in scalar_uart_top_verilog_sources()),
+            "TOPLEVEL": "PenguinPreliminaryVpu",
+            "MODULE": "tb_preliminary_vpu",
+            "VERILOG_SOURCES": " ".join(
+                str(path)
+                for path in [
+                    COCOTB_DIR / "Bf16Adder.v",
+                    RTL_DIR / "PenguinPreliminaryVpu.v",
+                ]
+            ),
+            "COMPILE_ARGS": f"-I{RTL_DIR}",
             "SIM_BUILD": str(sim_build),
             "COCOTB_RESULTS_FILE": str(sim_build / "results.xml"),
             "COCOTB_HDL_TIMEUNIT": "1ns",
             "COCOTB_HDL_TIMEPRECISION": "1ps",
-            "COMPILE_ARGS": " ".join(
-                [f"-I{RTL_DIR}", f"-I{SCALAR_DIR}"] + [f"-G{name}={value}" for name, value in parameters.items()]
-            ),
             "PYTHONPATH": pythonpath,
         }
     )
-    env.update({f"PARAM_{name}": str(value) for name, value in parameters.items()})
 
     subprocess.run(
         ["make", "-f", str(Path(makefiles_dir) / "Makefile.sim")],
@@ -60,3 +59,4 @@ def test_scalar_uart_hello_cocotb() -> None:
         env=env,
         check=True,
     )
+

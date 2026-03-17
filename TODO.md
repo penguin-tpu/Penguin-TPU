@@ -53,6 +53,11 @@ repo-level TODO tracking. Keep historical context and completed-change notes in
   by the software stack.
 - Connect compiler- or vector-generated assembly/bundle artifacts into cocotb-based RTL
   regression runs.
-- Move from FPGA hello-world bring-up into actual Penguin-core bring-up and validation.
 - Reuse the same executable-package artifacts for on-hardware FPGA validation after RTL
   execution is in place.
+- Grow the preliminary BF16 VPU RTL beyond the current single-lane `vadd` slice:
+  - replace the MMIO-seeded one-lane mreg file with architecturally meaningful tensor
+    register storage
+  - decide whether the first real hardware VPU register view is BF16-only or shared with
+    FP8-oriented tensor paths
+  - add additional VPU ops only after the `vadd` path and encoding are stabilized

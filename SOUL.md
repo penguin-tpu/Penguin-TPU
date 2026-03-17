@@ -44,6 +44,9 @@ What exists now:
   - [microarchitecture-spec.md](/home/tk/Desktop/Penguin-TPU/docs/specs/microarchitecture-spec.md)
   - `architecture-spec.md` now also carries a first concrete tensor/DMA custom-opcode
     encoding draft aligned to the scalar RV32I-style field-discipline approach
+- [tensor-arch-decision-study.md](/home/tk/Desktop/Penguin-TPU/docs/reviews/tensor-arch-decision-study.md)
+  now captures the current research-backed recommendations on vector-register scope,
+  scaled-matmul scale storage, and square-vs-rectangular MXU geometry
 - fixed-shape Gemma-inspired examples now exist under `examples/` and run as staged
   executable-package flows over checked-in tensor assembly:
   - `examples/gemma_attention.py`
@@ -628,3 +631,35 @@ Open follow-up for the next FPGA step:
   - added `penguin-compile rtl-rom --program ... --output ...`
   - the checked-in scalar UART hello ROM include can now be regenerated through
     the compiler instead of via an ad hoc `python -c` command
+- added a preliminary BF16 VPU slice backed by Vivado floating-point IP:
+  - `scripts/vivado/3_generate_vivado_ip.tcl` now also creates/configures the
+    `Bf16Adder` IP and does so idempotently like `ClockingWizard`
+  - `PenguinScalarCore` now recognizes a custom-0 `vadd` encoding for
+    `vadd mD, mS1, mS2`, stalls while the BF16 IP runs, and exposes a tiny
+    MMIO-backed BF16 mreg window through an internal `PenguinPreliminaryVpu`
+    block
+  - the current preliminary VPU scope is intentionally narrow:
+    - only `m0` through `m31` are encodable in RTL
+    - each mreg currently stores one BF16 lane via MMIO, not a full tensor tile
+    - only `vadd` is wired in hardware so far
+  - added cocotb coverage at two levels:
+    - block-level `PenguinPreliminaryVpu` integration against a local
+      simulation `Bf16Adder` stub
+    - end-to-end scalar-core UART validation through
+      `PenguinScalarUartHelloTop`
+  - replaced the scalar-core FPGA ROM program with a VPU validation image that:
+    - seeds BF16 operands through the preliminary VPU MMIO window
+    - executes `vadd m2, m0, m1`
+    - reads the BF16 result back and prints `vadd=4040`
+  - reran `uv run pytest tests/test_scalar_encoding.py tests/cocotb` on
+    March 16, 2026 and got `23 passed`
+  - reran the full FPGA flow for `scalar_core` on March 16, 2026:
+    - project creation, IP generation, synthesis, implementation, and
+      bitstream generation all succeeded
+    - routed timing remained positive with Vivado reporting post-route
+      `WNS=1.361 ns`
+    - the first hardware-programming attempt again hit the intermittent
+      "No devices detected" failure
+    - the wrapper retry path succeeded on the second attempt without any design
+      changes
+    - UART validation on `/dev/ttyUSB0` captured repeated `vadd=4040`

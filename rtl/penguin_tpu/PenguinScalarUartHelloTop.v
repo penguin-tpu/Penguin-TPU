@@ -82,17 +82,6 @@ module PenguinScalarUartHelloTop #(
         .clk_in1(sys_clk_i)
     );
     
-    Bf16Adder bf16_adder (
-      .aclk(clock),
-      .s_axis_a_tvalid(operand_1_valid),
-      .s_axis_a_tdata(operand_1_data),
-      .s_axis_b_tvalid(operand_2_valid),
-      .s_axis_b_tdata(operand_2_data),
-      .m_axis_result_tvalid(result_valid),
-      .m_axis_result_tdata(result_data)
-    );
-    
-
     //------------------------------------------------------------------------------
     //  Core logic: program ROM initialization
     //------------------------------------------------------------------------------
@@ -102,7 +91,7 @@ module PenguinScalarUartHelloTop #(
             imem[imem_index] = 32'h0010_0073;
         end
 
-        `include "scalar/penguin_scalar_uart_hello_program_init.vh"
+        `include "scalar/penguin_scalar_uart_vadd_program_init.vh"
     end
 
     //------------------------------------------------------------------------------
