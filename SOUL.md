@@ -761,3 +761,13 @@ Open follow-up for the next FPGA step:
     - generated scalar directed vectors still encode control flow in delay slots
   - current top-level software regression remains green under the new contract:
     `uv run pytest tests/test_*.py -q` -> `294 passed, 84 skipped`
+- restored the DDR UART hello ROM after temporary FPGA-debug bring-up experiments:
+  - regenerated
+    `rtl/penguin_tpu/scalar/penguin_scalar_uart_dram_hello_program_init.vh`
+    from the checked-in `uart_mmio_dram_hello.S` source so the DDR-integrated scalar
+    UART top again matches the cocotb expectation
+  - this removes the stale debug ROM mismatch that was causing
+    `tests/cocotb/test_scalar_uart_hello.py` to wait forever for
+    `Hello World\r\n`
+  - reran `uv run pytest tests/cocotb -q` on March 18, 2026 and got
+    `10 passed`
