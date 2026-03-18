@@ -26,7 +26,11 @@ def scalar_core_verilog_sources() -> list[Path]:
 def scalar_uart_top_verilog_sources() -> list[Path]:
     return [
         COCOTB_DIR / "ClockingWizard.v",
+        COCOTB_DIR / "BUFG.v",
+        COCOTB_DIR / "Mig7Series.v",
         *scalar_core_verilog_sources(),
+        RTL_DIR / "PenguinDramClockCrossing.v",
+        RTL_DIR / "PenguinDramAxiBridge.v",
         RTL_DIR / "UartTx.v",
         RTL_DIR / "UartRx.v",
         RTL_DIR / "Uart.v",

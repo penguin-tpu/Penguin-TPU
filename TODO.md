@@ -38,6 +38,12 @@ repo-level TODO tracking. Keep historical context and completed-change notes in
 
 - Add manifest-driven runtime staging for `constants.bin` once the bundle contract defines
   its memory mapping.
+- Update the functional model, assembler/program loaders, and scalar verification suite
+  to match the new full-`RV32I` scalar baseline, including `lb` / `lh` / `lbu` / `lhu`
+  and `sb` / `sh` semantics against `VMEM`.
+- Lock down the post-refactor performance baselines of the cycle-accurate
+  `penguin-model` simulator now that the code is split into `simulation.py`,
+  `core.py`, `ifu.py`, `idu.py`, `stage_data.py`, and unit-local EXU modules.
 - Refine the cycle-accurate tensor hazard / overlap model beyond the current architectural
   scoreboard if RTL-visible pipeline details require it.
 - Decide whether `mem_base` is architecturally a high-bits extension

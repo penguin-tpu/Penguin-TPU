@@ -834,13 +834,17 @@ def test_dump_json_trace_emits_region_aware_trace(tmp_path: Path) -> None:
     assert any(
         event.get("cat") == "memory"
         and event["args"]["region"] == "dram"
-        and event["name"] == "dma-read"
+        and event["args"]["access_type"] == "dma-read"
+        and str(event["name"]).startswith("dma-read ")
+        and "0x" in str(event["name"])
         for event in events
     )
     assert any(
         event.get("cat") == "memory"
         and event["args"]["region"] == "vmem"
-        and event["name"] == "dma-write"
+        and event["args"]["access_type"] == "dma-write"
+        and str(event["name"]).startswith("dma-write ")
+        and "0x" in str(event["name"])
         for event in events
     )
     assert any(
@@ -849,10 +853,11 @@ def test_dump_json_trace_emits_region_aware_trace(tmp_path: Path) -> None:
         and event["name"] == "load"
         for event in events
     )
-    assert any(
-        event.get("pid") == 1 and event.get("ph") == "C" and event["name"] == "pc"
-        for event in events
-    )
+    pc_events = [
+        event for event in events if event.get("pid") == 1 and event.get("ph") == "C" and event["name"] == "pc"
+    ]
+    assert pc_events
+    assert pc_events[0]["args"]["value"] == 0
     cycle_events = [
         event
         for event in events

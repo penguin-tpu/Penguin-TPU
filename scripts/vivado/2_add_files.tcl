@@ -34,12 +34,18 @@ if {[llength $existing_constraint_files] > 0} {
 
 # constraint file
 add_files -fileset $constrs_fs -norecurse /home/tk/Desktop/Penguin-TPU/rtl/constraints/NexysVideo_Master.xdc
+if {$target_name eq "scalar_core"} {
+    add_files -fileset $constrs_fs -norecurse /home/tk/Desktop/Penguin-TPU/rtl/constraints/PenguinScalarUartHelloTop.xdc
+    set_property used_in_synthesis false [get_files /home/tk/Desktop/Penguin-TPU/rtl/constraints/PenguinScalarUartHelloTop.xdc]
+}
 
 # design sources
 add_files -fileset $sources_fs { \
   /home/tk/Desktop/Penguin-TPU/rtl/penguin_tpu/Uart.v \
   /home/tk/Desktop/Penguin-TPU/rtl/penguin_tpu/UartRx.v \
   /home/tk/Desktop/Penguin-TPU/rtl/penguin_tpu/UartTx.v \
+  /home/tk/Desktop/Penguin-TPU/rtl/penguin_tpu/PenguinDramClockCrossing.v \
+  /home/tk/Desktop/Penguin-TPU/rtl/penguin_tpu/PenguinDramAxiBridge.v \
   /home/tk/Desktop/Penguin-TPU/rtl/penguin_tpu/PenguinUartHelloTop.v \
   /home/tk/Desktop/Penguin-TPU/rtl/penguin_tpu/PenguinScalarUartHelloTop.v \
   /home/tk/Desktop/Penguin-TPU/rtl/penguin_tpu/scalar/PenguinScalarDecoder.v \
@@ -50,7 +56,7 @@ add_files -fileset $sources_fs { \
   /home/tk/Desktop/Penguin-TPU/rtl/penguin_tpu/scalar/PenguinScalarController.v \
   /home/tk/Desktop/Penguin-TPU/rtl/penguin_tpu/scalar/PenguinPreliminaryVpu.v \
   /home/tk/Desktop/Penguin-TPU/rtl/penguin_tpu/scalar/PenguinScalarCore.v \
-  /home/tk/Desktop/Penguin-TPU/rtl/penguin_tpu/scalar/penguin_scalar_uart_vadd_program_init.vh \
+  /home/tk/Desktop/Penguin-TPU/rtl/penguin_tpu/scalar/penguin_scalar_uart_dram_hello_program_init.vh \
   /home/tk/Desktop/Penguin-TPU/rtl/penguin_tpu/scalar/penguin_scalar_defs.vh \
 }
 

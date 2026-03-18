@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from enum import Enum
+from pathlib import Path
 from typing import Any
 
 
@@ -21,6 +22,8 @@ class TraceLoggerConfig:
 
     filename: str = "trace.json"
     ticks_per_cycle: int = 3
+    normalize_pc_to_base: bool = True
+    pc_base_address: int = 0
 
 
 class TraceLogger:
@@ -44,11 +47,14 @@ class TraceLogger:
         lane_names: dict[int, str] | None = None,
     ) -> None:
         self.config = config
-        self.file = open(config.filename, "w", encoding="utf-8")
+        trace_path = Path(config.filename)
+        trace_path.parent.mkdir(parents=True, exist_ok=True)
+        self.file = open(trace_path, "w", encoding="utf-8")
         self.events: list[dict[str, Any]] = []
         self.insn_labels: dict[int, str] = {}
         self.active: dict[tuple[int, str, int], int] = {}
         self.max_timestamp = 0
+        self.pc_base_address = int(config.pc_base_address)
         self.lane_names = lane_names or {
             0: "IFU",
             1: "IDU",
@@ -144,6 +150,9 @@ class TraceLogger:
 
     def log_cycle(self, elapsed: int) -> None:
         self.ts += elapsed
+
+    def set_pc_base_address(self, base_address: int) -> None:
+        self.pc_base_address = int(base_address)
 
     def log_insn(self, insn_id: int, label: str) -> None:
         self.insn_labels[insn_id] = f"{insn_id}: {label}"
@@ -258,6 +267,8 @@ class TraceLogger:
         *,
         cycle: int | None = None,
     ) -> None:
+        if regfile == "pc" and self.config.normalize_pc_to_base:
+            value = int(value) - self.pc_base_address
         tid, name = self._ensure_arch_thread(regfile, index)
         self._write_event(
             {
@@ -307,9 +318,12 @@ class TraceLogger:
         size: int,
         cycle: int | None = None,
     ) -> None:
+        event_name = access_type
+        if access_type in {"dma-read", "dma-write"}:
+            event_name = f"{access_type} 0x{address:X} {size}B"
         self._write_event(
             {
-                "name": access_type,
+                "name": event_name,
                 "cat": "memory",
                 "ph": "i",
                 "s": "t",
@@ -317,9 +331,12 @@ class TraceLogger:
                 "tid": TraceLogger.MEM_TID,
                 "ts": self._timestamp(cycle),
                 "args": {
+                    "access_type": access_type,
                     "region": region,
                     "address": address,
                     "size": size,
+                    "transfer_address": address,
+                    "transfer_size_bytes": size,
                     "value": value & 0xFFFF_FFFF,
                 },
             }

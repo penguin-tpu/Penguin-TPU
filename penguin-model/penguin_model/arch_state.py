@@ -235,7 +235,7 @@ class ArchState:
 
     @property
     def bandwidth(self):
-        """Backward-compatible access to the bandwidth fragment of the core config."""
+        """Access the bandwidth fragment of the core config."""
 
         return self.config.bandwidth
 

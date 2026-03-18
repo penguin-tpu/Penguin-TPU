@@ -18,6 +18,8 @@ async def mmio_cycle_counter_resets_and_increments(dut) -> None:
     assert int(dut.cycle_counter_reg.value) == 0
 
     dut.cpu_resetn.value = 1
+    while int(dut.reset.value) != 0:
+        await RisingEdge(dut.clock)
     await RisingEdge(dut.clock)
     assert int(dut.cycle_counter_reg.value) == 7
     await RisingEdge(dut.clock)
@@ -38,6 +40,8 @@ async def mmio_cycle_counter_wraps_modulo_32_bits(dut) -> None:
     dut.uart_tx_in.value = 1
     await ClockCycles(dut.sys_clk_i, 2)
     dut.cpu_resetn.value = 1
+    while int(dut.reset.value) != 0:
+        await RisingEdge(dut.clock)
     await RisingEdge(dut.clock)
 
     dut.cycle_counter_reg.value = 0xFFFF_FFFC

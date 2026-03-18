@@ -12,23 +12,8 @@ module ClockingWizard (
     //  Logic declarations
     //------------------------------------------------------------------------------
 
-    reg clk_out2_reg;
-
-    //------------------------------------------------------------------------------
-    //  Core logic
-    //------------------------------------------------------------------------------
-
     assign clk_out1 = clk_in1;
-    assign clk_out2 = clk_out2_reg;
+    assign clk_out2 = clk_in1;
     assign locked = resetn;
-
-    always @(posedge clk_in1) begin
-        if (!resetn) begin
-            clk_out2_reg <= 1'b0;
-        end
-        else begin
-            clk_out2_reg <= ~clk_out2_reg;
-        end
-    end
 
 endmodule

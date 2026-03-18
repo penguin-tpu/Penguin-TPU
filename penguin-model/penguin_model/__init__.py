@@ -2,7 +2,6 @@
 
 from .assembler import AssemblyProgram, AssemblySyntaxError, assemble_file, assemble_text
 from .arch_state import ArchState, PerformanceCounters, StopReason
-from .bandwidth import BandwidthParameters, DEFAULT_BANDWIDTH_PARAMETERS
 from .bundle import (
     BundleManifest,
     BundleSymbol,
@@ -186,7 +185,6 @@ __all__ = [
     "AssemblySyntaxError",
     "BType",
     "BandwidthConfig",
-    "BandwidthParameters",
     "DEFAULT_PENGUIN_CORE_CONFIG",
     "DMA_ALIGNMENT_BYTES",
     "DMAChannel",
@@ -194,7 +192,6 @@ __all__ = [
     "DMAType",
     "DMATransfer",
     "DMA_CHANNEL_COUNT",
-    "DEFAULT_BANDWIDTH_PARAMETERS",
     "DRAM_BASE",
     "DRAM_SIZE",
     "EmptyType",

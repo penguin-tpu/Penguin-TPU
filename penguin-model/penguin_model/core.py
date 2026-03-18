@@ -1,17 +1,23 @@
-"""Core execution model for the Penguin scalar integer subset."""
+"""Cycle-accurate Penguin core wiring and scheduling."""
 
 from __future__ import annotations
 
 from collections.abc import Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
-import os
-from os import PathLike
-from pathlib import Path
-import re
 from typing import TYPE_CHECKING, Callable
 
 from .arch_state import ArchState, PerformanceCounters, StopReason
 from .core_config import DEFAULT_PENGUIN_CORE_CONFIG, PenguinCoreConfig
+from .exu import (
+    DmaExecutionUnit,
+    MatrixExecutionUnit,
+    ScalarExecutionUnit,
+    TensorMemoryExecutionUnit,
+    VectorExecutionUnit,
+    XLUExecutionUnit,
+)
+from .idu import InstructionDecode
+from .ifu import InstructionFetch
 from .instructions import (
     ALL_INSTRUCTION_SPECS,
     BType,
@@ -28,10 +34,10 @@ from .instructions import (
     SType,
     TensorMemType,
     UType,
-    XLUTransposeType,
     VPUBinaryType,
     VPUUnaryType,
     WeightMemType,
+    XLUTransposeType,
 )
 from .memory import Memory
 from .tensor import (
@@ -49,6 +55,7 @@ from .tensor import (
     compute_bf16_vsub,
     compute_bf16_vmul,
 )
+from .uop import PipelineUop
 
 if TYPE_CHECKING:
     from .logging import TraceLogger
@@ -69,7 +76,6 @@ class _InstructionLatencyView(Mapping[str, int]):
 
 INSTRUCTION_LATENCY: Mapping[str, int] = _InstructionLatencyView()
 
-TRACE_TICKS_PER_CYCLE = DEFAULT_PENGUIN_CORE_CONFIG.trace.ticks_per_cycle
 FETCH_LANE = 0
 DISPATCH_LANE = 1
 SALU_LANE = 2
@@ -80,7 +86,25 @@ MXU1_LANE = 6
 VPU_LANE = 7
 XLU_LANE = 8
 DMA_TRANSFER_LANE_BASE = 30
-_AUTO_TRACE_COUNTERS: dict[str, int] = {}
+
+_UNIT_LANES = {
+    "salu": SALU_LANE,
+    "dma": DMA_LANE,
+    "tmem": TMEM_LANE,
+    "mxu0": MXU0_LANE,
+    "mxu1": MXU1_LANE,
+    "vpu": VPU_LANE,
+    "xlu": XLU_LANE,
+}
+_UNIT_CLASSES = {
+    "salu": ScalarExecutionUnit,
+    "dma": DmaExecutionUnit,
+    "tmem": TensorMemoryExecutionUnit,
+    "mxu0": MatrixExecutionUnit,
+    "mxu1": MatrixExecutionUnit,
+    "vpu": VectorExecutionUnit,
+    "xlu": XLUExecutionUnit,
+}
 
 
 def _format_instruction(instruction: Instruction) -> str:
@@ -147,6 +171,14 @@ def _execute_lane_for_instruction(instruction: Instruction) -> int:
     return SALU_LANE
 
 
+def _unit_key_for_instruction(instruction: Instruction) -> str:
+    lane = _execute_lane_for_instruction(instruction)
+    for unit_key, unit_lane in _UNIT_LANES.items():
+        if unit_lane == lane:
+            return unit_key
+    raise KeyError(f"No execution unit for lane {lane}")
+
+
 def _dma_channel_for_instruction(instruction: Instruction) -> int | None:
     parts = instruction.mnemonic.split(".")
     if len(parts) != 3 or parts[0] != "dma":
@@ -166,16 +198,6 @@ def _dma_transfer_lane(channel: int) -> int:
 
 def _is_async_tensor_lane(lane: int) -> bool:
     return lane in {MXU0_LANE, MXU1_LANE, VPU_LANE, XLU_LANE}
-
-
-def _frontend_latency_cycles(instruction: Instruction, execute_lane: int, total_latency: int) -> int:
-    if _is_async_tensor_lane(execute_lane):
-        return 1
-    if _is_dma_wait_instruction(instruction):
-        return total_latency
-    if execute_lane == DMA_LANE:
-        return 1
-    return total_latency
 
 
 def _lane_occupancy_cycles(instruction: Instruction, execute_lane: int, total_latency: int) -> int:
@@ -211,22 +233,6 @@ def _instruction_latency_cycles(
 
 
 @dataclass(slots=True)
-class _ScheduledAction:
-    cycle: int
-    order: int
-    callback: Callable[[], None]
-
-
-@dataclass(slots=True)
-class _PipelineSlot:
-    pc: int
-    instruction: Instruction
-    insn_id: int
-    dispatch_start_cycle: int | None = None
-    fetch_stage_open: bool = True
-
-
-@dataclass(slots=True)
 class _ControlShadow:
     insn_id: int
     delay_slots_seen: int
@@ -238,8 +244,8 @@ def _is_control_transfer_instruction(instruction: Instruction) -> bool:
     return isinstance(instruction.params, (BType, JType)) or instruction.mnemonic == "sjalr"
 
 
-class Sim:
-    """Cycle-driven Penguin simulator with claim-based frontend timing."""
+class Core:
+    """Cycle-accurate Penguin core built from explicit IFU/IDU/EXU blocks."""
 
     def __init__(
         self,
@@ -263,7 +269,9 @@ class Sim:
                 state = ArchState.from_config(config)
         else:
             config = state.config
+
         self.state = state
+        self._program_loaded = False
         self._program: Sequence[Instruction] = ()
         self._program_base = 0
         self._program_end = 0
@@ -271,15 +279,21 @@ class Sim:
         self._start_count = 0
         self._step_limit_reached = False
         self._stop_logged = False
-        self._next_insn_id = 0
-        self._fetch_pc = 0
-        self._if_slot: _PipelineSlot | None = None
-        self._id_slot: _PipelineSlot | None = None
         self._control_shadows: list[_ControlShadow] = []
-        self._pending_actions: dict[int, list[_ScheduledAction]] = {}
-        self._next_action_order = 0
+
+        self._ifu = InstructionFetch()
+        self._idu = InstructionDecode(tuple(_UNIT_LANES))
+        self._exus = {
+            unit_key: _UNIT_CLASSES[unit_key](
+                name=unit_key.upper(),
+                lane_id=lane,
+                logger=None,
+            )
+            for unit_key, lane in _UNIT_LANES.items()
+        }
+
         self._reset_scoreboards(self.state.perf.cycles)
-        self._reset_lane_state()
+        self._reset_pipeline_state(self.state.perf.cycles)
 
     @property
     def config(self) -> PenguinCoreConfig:
@@ -293,24 +307,17 @@ class Sim:
     def perf(self) -> PerformanceCounters:
         return self.state.perf
 
-    def _reset_lane_state(self) -> None:
-        self._cycle_exu_ready = {
-            SALU_LANE: 0,
-            DMA_LANE: 0,
-            TMEM_LANE: 0,
-            MXU0_LANE: 0,
-            MXU1_LANE: 0,
-            VPU_LANE: 0,
-            XLU_LANE: 0,
-        }
-        self._pending_actions = {}
-        self._next_action_order = 0
-        self._if_slot = None
-        self._id_slot = None
+    def _reset_pipeline_state(self, base_cycle: int) -> None:
         self._control_shadows = []
-        self._vmem_ready_cycle = 0
-        self._next_insn_id = 0
+        self._step_limit_reached = False
         self._stop_logged = False
+        self._unit_next_available_cycle = {unit_key: base_cycle for unit_key in _UNIT_LANES}
+        self._dma_scheduled_ready_cycle = [0] * self.state.config.dma.channel_count
+        self._dma_scheduled_valid = [False] * self.state.config.dma.channel_count
+        self._ifu.reset()
+        self._idu.reset()
+        for exu in self._exus.values():
+            exu.reset()
 
     def _reset_scoreboards(self, base_cycle: int) -> None:
         self._xreg_ready = [base_cycle] * self.state.config.scalar.xreg_count
@@ -322,6 +329,11 @@ class Sim:
         ]
         self._vmem_ready_cycle = base_cycle
         self._xreg_ready[0] = base_cycle
+
+    def _set_trace_logger(self, trace_logger: TraceLogger | None) -> None:
+        self.state.trace_logger = trace_logger
+        for exu in self._exus.values():
+            exu.logger = trace_logger
 
     def reset(self) -> None:
         self.state.clear_dma_channels()
@@ -336,27 +348,15 @@ class Sim:
             ereg=self.state.ereg,
             mem_base=self.state.mem_base,
         )
+        self._program_loaded = False
         self._program = ()
         self._program_base = 0
         self._program_end = 0
         self._max_instructions = None
         self._start_count = 0
-        self._step_limit_reached = False
         self._reset_scoreboards(self.state.perf.cycles)
-        self._reset_lane_state()
-
-    def _schedule_action(self, cycle: int, callback: Callable[[], None]) -> None:
-        action = _ScheduledAction(cycle=cycle, order=self._next_action_order, callback=callback)
-        self._next_action_order += 1
-        self._pending_actions.setdefault(cycle, []).append(action)
-
-    def _run_actions_for_cycle(self, cycle: int) -> None:
-        actions = self._pending_actions.pop(cycle, ())
-        for action in sorted(actions, key=lambda item: item.order):
-            action.callback()
-
-    def _has_pending_actions(self) -> bool:
-        return any(self._pending_actions.values())
+        self._reset_pipeline_state(self.state.perf.cycles)
+        self._set_trace_logger(None)
 
     def _trace_cycle(self, cycle: int) -> int:
         return cycle * self.state.config.trace.ticks_per_cycle
@@ -370,14 +370,15 @@ class Sim:
     def _set_execute_pc(self, pc: int, *, trace_cycle: int) -> int:
         saved_pc = self.state.pc
         self.state.pc = pc
-        self.state.trace_end_cycle = self._trace_cycle(trace_cycle)
-        self.state.trace_start_cycle = self._trace_cycle(trace_cycle)
+        trace_ts = self._trace_cycle(trace_cycle)
+        self.state.trace_start_cycle = trace_ts
+        self.state.trace_end_cycle = trace_ts
         self.state.control_transfer_set = False
         return saved_pc
 
     def _restore_fetch_pc(self, saved_pc: int) -> None:
         del saved_pc
-        self.state.pc = self._fetch_pc
+        self.state.pc = self._ifu.fetch_pc
 
     def _refresh_fetch_redirect(self) -> None:
         if not self._control_shadows:
@@ -387,7 +388,7 @@ class Sim:
             return
         if youngest.delay_slots_seen < self.state.config.scalar.control_flow_delay_slots:
             return
-        self._fetch_pc = youngest.target
+        self._ifu.set_fetch_pc(youngest.target)
         self._control_shadows.clear()
 
     def _consume_control_transfer(self, insn_id: int) -> None:
@@ -414,178 +415,51 @@ class Sim:
         self.state.next_pc = None
         self.state.delay_slots_remaining = 0
 
-    def _log_fetch_start(self, slot: _PipelineSlot, cycle: int) -> None:
-        logger = self.state.trace_logger
-        if logger is None:
-            return
-        trace_cycle = self._trace_cycle(cycle)
-        logger.log_insn(slot.insn_id, _format_instruction(slot.instruction))
-        logger.log_arch_value("pc", 0, slot.pc, cycle=trace_cycle)
-        logger.log_stage_start(slot.insn_id, "fetch", lane=FETCH_LANE, cycle=trace_cycle)
-
-    def _advance_fetch_pc_after_fetch(self, fetched_pc: int) -> None:
-        self._fetch_pc = (fetched_pc + 4) & 0xFFFF_FFFF
-        self._refresh_fetch_redirect()
-
-    def _fetch_instruction(self, cycle: int) -> _PipelineSlot | None:
-        if self._step_limit_reached:
-            return
-        if self._fetch_pc % 4 != 0:
-            self.state.stop(StopReason.INSTRUCTION_ADDRESS_MISALIGNED)
-            return None
-        if self._fetch_pc < self._program_base or self._fetch_pc >= self._program_end:
-            return None
-        instruction_index = (self._fetch_pc - self._program_base) // 4
-        slot = _PipelineSlot(
-            pc=self._fetch_pc,
-            instruction=self._program[instruction_index],
-            insn_id=self._next_insn_id,
-        )
-        self._next_insn_id += 1
+    def _on_fetch(self, uop: PipelineUop, cycle: int) -> None:
         for shadow in self._control_shadows:
             shadow.delay_slots_seen = min(
                 shadow.delay_slots_seen + 1,
                 self.state.config.scalar.control_flow_delay_slots,
             )
-        if _is_control_transfer_instruction(slot.instruction):
-            self._control_shadows.append(_ControlShadow(insn_id=slot.insn_id, delay_slots_seen=0))
-        self._log_fetch_start(slot, cycle)
-        self._advance_fetch_pc_after_fetch(slot.pc)
-        self.state.pc = self._fetch_pc
-        return slot
+        if _is_control_transfer_instruction(uop.instruction):
+            self._control_shadows.append(_ControlShadow(insn_id=uop.insn_id, delay_slots_seen=0))
 
-    def _advance_if_to_id(self, slot: _PipelineSlot, cycle: int) -> _PipelineSlot:
-        slot.dispatch_start_cycle = cycle
         logger = self.state.trace_logger
-        if logger is not None:
-            trace_cycle = self._trace_cycle(cycle)
-            if slot.fetch_stage_open:
-                logger.log_stage_end(slot.insn_id, "fetch", lane=FETCH_LANE, cycle=trace_cycle)
-            logger.log_stage_start(slot.insn_id, "dispatch", lane=DISPATCH_LANE, cycle=trace_cycle)
-        slot.fetch_stage_open = False
-        return slot
-
-    def _stall_if_slot(self, slot: _PipelineSlot, cycle: int) -> None:
-        if not slot.fetch_stage_open:
+        if logger is None:
             return
+        trace_cycle = self._trace_cycle(cycle)
+        logger.log_insn(uop.insn_id, _format_instruction(uop.instruction))
+        logger.log_arch_value("pc", 0, uop.pc, cycle=trace_cycle)
+        logger.log_stage_start(uop.insn_id, "fetch", lane=FETCH_LANE, cycle=trace_cycle)
+
+    def _on_fetch_stall(self, uop: PipelineUop, cycle: int) -> None:
+        if not uop.fetch_stage_open or self.state.trace_logger is None:
+            return
+        self.state.trace_logger.log_stage_end(
+            uop.insn_id,
+            "fetch",
+            lane=FETCH_LANE,
+            cycle=self._trace_cycle(cycle),
+        )
+        uop.fetch_stage_open = False
+
+    def _on_misaligned_fetch(self) -> None:
+        self.state.stop(StopReason.INSTRUCTION_ADDRESS_MISALIGNED)
+
+    def _on_fetch_pc_advanced(self, fetched_pc: int) -> None:
+        del fetched_pc
+        self._refresh_fetch_redirect()
+        self.state.pc = self._ifu.fetch_pc
+
+    def _on_claim_from_ifu(self, uop: PipelineUop, cycle: int) -> None:
         logger = self.state.trace_logger
-        if logger is not None:
-            logger.log_stage_end(
-                slot.insn_id,
-                "fetch",
-                lane=FETCH_LANE,
-                cycle=self._trace_cycle(cycle),
-            )
-        slot.fetch_stage_open = False
-
-    def _async_completion_callback(
-        self,
-        slot: _PipelineSlot,
-        completion_cycle: int,
-    ) -> Callable[[], None]:
-        instruction = slot.instruction
-        params = instruction.params
-
-        if isinstance(params, MXUMatmulType):
-            if not self.state.check_mreg_pair_base(params.md):
-                return lambda: None
-            activation = self.state.load_mreg(params.ms).clone()
-            weights = self.state.load_weight_slot(0 if instruction.mnemonic.endswith("mxu0") else 1, params.ws).clone()
-            scale_a = self.state.read_ereg(params.ea)
-            scale_b = self.state.read_ereg(params.eb)
-            mxu = 0 if instruction.mnemonic.endswith("mxu0") else 1
-
-            def complete() -> None:
-                self.state.trace_end_cycle = self._trace_cycle(completion_cycle)
-                lo, hi = compute_bf16_matmul(
-                    activation,
-                    weights,
-                    scale_a,
-                    scale_b,
-                    None,
-                    config=self.state.config,
-                )
-                if self.state.check_mreg_pair_base(params.md):
-                    self.state.store_mreg(params.md, lo)
-                    self.state.store_mreg(params.md + 1, hi)
-
-            return complete
-
-        if isinstance(params, MXUMatmulAccType):
-            if not self.state.check_mreg_pair_base(params.md):
-                return lambda: None
-            activation = self.state.load_mreg(params.ms).clone()
-            weights = self.state.load_weight_slot(0 if instruction.mnemonic.endswith("mxu0") else 1, params.ws).clone()
-            partial = (
-                self.state.load_mreg(params.mp).clone(),
-                self.state.load_mreg(params.mp + 1).clone(),
-            )
-            scale_a = self.state.read_ereg(params.ea)
-            scale_b = self.state.read_ereg(params.eb)
-
-            def complete() -> None:
-                self.state.trace_end_cycle = self._trace_cycle(completion_cycle)
-                lo, hi = compute_bf16_matmul(
-                    activation,
-                    weights,
-                    scale_a,
-                    scale_b,
-                    partial,
-                    config=self.state.config,
-                )
-                if self.state.check_mreg_pair_base(params.md):
-                    self.state.store_mreg(params.md, lo)
-                    self.state.store_mreg(params.md + 1, hi)
-
-            return complete
-
-        if isinstance(params, VPUBinaryType):
-            lhs = self.state.load_mreg(params.ms1).clone()
-            rhs = self.state.load_mreg(params.ms2).clone()
-            op = {
-                "vadd": compute_bf16_vadd,
-                "vmul": compute_bf16_vmul,
-                "vsub": compute_bf16_vsub,
-                "vmax": compute_bf16_vmax,
-                "vmin": compute_bf16_vmin,
-            }[instruction.mnemonic]
-
-            def complete() -> None:
-                self.state.trace_end_cycle = self._trace_cycle(completion_cycle)
-                self.state.store_mreg(params.md, op(lhs, rhs, config=self.state.config))
-
-            return complete
-
-        if isinstance(params, VPUUnaryType):
-            src = self.state.load_mreg(params.ms).clone()
-            op = {
-                "vrelu": compute_bf16_vrelu,
-                "vmov": compute_bf16_vmov,
-                "vexp": compute_bf16_vexp,
-                "vrecip": compute_bf16_vrecip,
-            }[instruction.mnemonic]
-
-            def complete() -> None:
-                self.state.trace_end_cycle = self._trace_cycle(completion_cycle)
-                self.state.store_mreg(params.md, op(src, config=self.state.config))
-
-            return complete
-
-        if isinstance(params, XLUTransposeType):
-            src = self.state.load_mreg(params.ms).clone()
-            op = {
-                "transpose.xlu": compute_bf16_transpose,
-                "reduce.max.xlu": compute_bf16_row_reduce_max,
-                "reduce.sum.xlu": compute_bf16_row_reduce_sum,
-            }[instruction.mnemonic]
-
-            def complete() -> None:
-                self.state.trace_end_cycle = self._trace_cycle(completion_cycle)
-                self.state.store_mreg(params.md, op(src, config=self.state.config))
-
-            return complete
-
-        raise TypeError(f"Unsupported async instruction '{instruction.mnemonic}'")
+        if logger is None:
+            return
+        trace_cycle = self._trace_cycle(cycle)
+        if uop.fetch_stage_open:
+            logger.log_stage_end(uop.insn_id, "fetch", lane=FETCH_LANE, cycle=trace_cycle)
+            uop.fetch_stage_open = False
+        logger.log_stage_start(uop.insn_id, "dispatch", lane=DISPATCH_LANE, cycle=trace_cycle)
 
     def _mark_step_limit_if_reached(self) -> None:
         self._step_limit_reached = (
@@ -593,140 +467,9 @@ class Sim:
             and self.state.perf.instructions - self._start_count >= self._max_instructions
         )
 
-    def _issue_decode_slot(self, slot: _PipelineSlot, cycle: int) -> _PipelineSlot | None:
-        instruction = slot.instruction
-        if instruction.mnemonic not in ALL_INSTRUCTION_SPECS:
-            raise KeyError(f"Unknown mnemonic '{instruction.mnemonic}'")
-        spec = ALL_INSTRUCTION_SPECS[instruction.mnemonic]
-        if not isinstance(instruction.params, spec.params_type):
-            raise TypeError(
-                f"{instruction.mnemonic} expects {spec.params_type.__name__}, "
-                f"got {type(instruction.params).__name__}"
-            )
-        assert slot.dispatch_start_cycle is not None
-        self.state.instruction_extra_cycles = 0
-        self.state.control_transfer_set = False
-        if _is_dma_wait_instruction(instruction):
-            wait_channel = _dma_channel_for_instruction(instruction)
-            if wait_channel is None:
-                raise ValueError(f"Malformed DMA wait mnemonic '{instruction.mnemonic}'")
-            retire_cycle = self.state.dma_wait_completion_cycle(wait_channel, slot.dispatch_start_cycle)
-            if cycle < retire_cycle:
-                return slot
-            logger = self.state.trace_logger
-            if logger is not None:
-                trace_cycle = self._trace_cycle(cycle)
-                logger.log_stage_end(slot.insn_id, "dispatch", lane=DISPATCH_LANE, cycle=trace_cycle)
-                logger.log_retire(slot.insn_id, lane=DISPATCH_LANE, cycle=trace_cycle)
-            self.state.trace_end_cycle = self._trace_cycle(cycle)
-            self.state.perf.record_instruction(instruction.mnemonic)
-            self.state.retire_dma_wait(wait_channel, retire_cycle=cycle)
-            self._mark_step_limit_if_reached()
-            return None
-        execute_lane = _execute_lane_for_instruction(instruction)
-        operand_ready_cycle = self._instruction_operand_ready_cycle(instruction)
-        if cycle < max(slot.dispatch_start_cycle + 1, self._cycle_exu_ready[execute_lane], operand_ready_cycle):
-            return slot
-        total_latency = _instruction_latency_cycles(self.state, instruction, spec.latency)
-        lane_occupancy = _lane_occupancy_cycles(instruction, execute_lane, total_latency)
-        completion_cycle = cycle + total_latency
-        logger = self.state.trace_logger
-        if logger is not None:
-            trace_cycle = self._trace_cycle(cycle)
-            logger.log_stage_end(slot.insn_id, "dispatch", lane=DISPATCH_LANE, cycle=trace_cycle)
-            logger.log_stage_start(slot.insn_id, "execute", lane=execute_lane, cycle=trace_cycle)
-        self._cycle_exu_ready[execute_lane] = cycle + lane_occupancy
-        self._reserve_instruction_destinations(instruction, completion_cycle)
-        if instruction.mnemonic.startswith(("dma.load.", "dma.store.")):
-            saved_pc = self._set_execute_pc(slot.pc, trace_cycle=cycle)
-            spec.semantics(self.state, instruction.params)
-            self._restore_fetch_pc(saved_pc)
-            if logger is not None and self.state.stop_reason is None:
-                channel = _dma_channel_for_instruction(instruction)
-                if channel is not None:
-                    transfer = self.state.dma_channels[channel].pending
-                    if transfer is not None:
-                        logger.log_stage_start(
-                            slot.insn_id,
-                            "transfer",
-                            lane=_dma_transfer_lane(channel),
-                            cycle=self._trace_cycle(cycle + 1),
-                        )
-                        logger.log_stage_end(
-                            slot.insn_id,
-                            "transfer",
-                            lane=_dma_transfer_lane(channel),
-                            cycle=self._trace_cycle(transfer.ready_cycle),
-                        )
-
-            def complete_dma_issue() -> None:
-                self.state.trace_end_cycle = self._trace_cycle(completion_cycle)
-                self.state.perf.record_instruction(instruction.mnemonic)
-                if logger is not None:
-                    logger.log_stage_end(
-                        slot.insn_id,
-                        "execute",
-                        lane=execute_lane,
-                        cycle=self._trace_cycle(completion_cycle),
-                    )
-                    logger.log_retire(
-                        slot.insn_id,
-                        lane=execute_lane,
-                        cycle=self._trace_cycle(completion_cycle),
-                    )
-                self._mark_step_limit_if_reached()
-                self._log_stop(completion_cycle)
-
-            self._schedule_action(completion_cycle, complete_dma_issue)
-            return None
-        if _is_async_tensor_lane(execute_lane):
-            completion = self._async_completion_callback(slot, completion_cycle)
-
-            def complete_async() -> None:
-                completion()
-                self.state.perf.record_instruction(instruction.mnemonic)
-                if logger is not None:
-                    logger.log_stage_end(
-                        slot.insn_id,
-                        "execute",
-                        lane=execute_lane,
-                        cycle=self._trace_cycle(completion_cycle),
-                    )
-                    logger.log_retire(
-                        slot.insn_id,
-                        lane=execute_lane,
-                        cycle=self._trace_cycle(completion_cycle),
-                    )
-                self._mark_step_limit_if_reached()
-                self._log_stop(completion_cycle)
-
-            self._schedule_action(completion_cycle, complete_async)
-            return None
-
-        def complete_blocking() -> None:
-            self.state.trace_end_cycle = self._trace_cycle(completion_cycle)
-            saved_pc = self._set_execute_pc(slot.pc, trace_cycle=completion_cycle)
-            spec.semantics(self.state, instruction.params)
-            self._consume_control_transfer(slot.insn_id)
-            self._restore_fetch_pc(saved_pc)
-            self.state.perf.record_instruction(instruction.mnemonic)
-            if logger is not None:
-                logger.log_stage_end(
-                    slot.insn_id,
-                    "execute",
-                    lane=execute_lane,
-                    cycle=self._trace_cycle(completion_cycle),
-                )
-                logger.log_retire(
-                    slot.insn_id,
-                    lane=execute_lane,
-                    cycle=self._trace_cycle(completion_cycle),
-                )
-            self._mark_step_limit_if_reached()
-            self._log_stop(completion_cycle)
-
-        self._schedule_action(completion_cycle, complete_blocking)
-        return None
+    def _squash_frontend_for_step_limit(self) -> None:
+        self._ifu.output.reset()
+        self._idu.current_uop = None
 
     def _instruction_operand_ready_cycle(self, instruction: Instruction) -> int:
         ready_cycle = self.state.perf.cycles
@@ -862,6 +605,309 @@ class Sim:
         elif isinstance(params, VPUBinaryType | VPUUnaryType | XLUTransposeType):
             reserve_mreg(params.md)
 
+    def _build_async_callbacks(
+        self,
+        uop: PipelineUop,
+        completion_cycle: int,
+    ) -> tuple[Callable[[int], None], Callable[[int], None]]:
+        instruction = uop.instruction
+        params = instruction.params
+
+        if isinstance(params, MXUMatmulType):
+            captured: dict[str, object] = {}
+
+            def on_start(cycle: int) -> None:
+                del cycle
+                if not self.state.check_mreg_pair_base(params.md):
+                    return
+                captured["activation"] = self.state.load_mreg(params.ms).clone()
+                captured["weights"] = self.state.load_weight_slot(
+                    0 if instruction.mnemonic.endswith("mxu0") else 1,
+                    params.ws,
+                ).clone()
+                captured["scale_a"] = self.state.read_ereg(params.ea)
+                captured["scale_b"] = self.state.read_ereg(params.eb)
+
+            def on_complete(cycle: int) -> None:
+                if "activation" not in captured:
+                    return
+                self.state.trace_end_cycle = self._trace_cycle(completion_cycle)
+                lo, hi = compute_bf16_matmul(
+                    captured["activation"],
+                    captured["weights"],
+                    captured["scale_a"],
+                    captured["scale_b"],
+                    None,
+                    config=self.state.config,
+                )
+                self.state.store_mreg(params.md, lo)
+                self.state.store_mreg(params.md + 1, hi)
+
+            return on_start, on_complete
+
+        if isinstance(params, MXUMatmulAccType):
+            captured: dict[str, object] = {}
+
+            def on_start(cycle: int) -> None:
+                del cycle
+                if not self.state.check_mreg_pair_base(params.md):
+                    return
+                captured["activation"] = self.state.load_mreg(params.ms).clone()
+                captured["weights"] = self.state.load_weight_slot(
+                    0 if instruction.mnemonic.endswith("mxu0") else 1,
+                    params.ws,
+                ).clone()
+                captured["partial"] = (
+                    self.state.load_mreg(params.mp).clone(),
+                    self.state.load_mreg(params.mp + 1).clone(),
+                )
+                captured["scale_a"] = self.state.read_ereg(params.ea)
+                captured["scale_b"] = self.state.read_ereg(params.eb)
+
+            def on_complete(cycle: int) -> None:
+                if "activation" not in captured:
+                    return
+                self.state.trace_end_cycle = self._trace_cycle(completion_cycle)
+                lo, hi = compute_bf16_matmul(
+                    captured["activation"],
+                    captured["weights"],
+                    captured["scale_a"],
+                    captured["scale_b"],
+                    captured["partial"],
+                    config=self.state.config,
+                )
+                self.state.store_mreg(params.md, lo)
+                self.state.store_mreg(params.md + 1, hi)
+
+            return on_start, on_complete
+
+        if isinstance(params, VPUBinaryType):
+            captured: dict[str, object] = {}
+            op = {
+                "vadd": compute_bf16_vadd,
+                "vmul": compute_bf16_vmul,
+                "vsub": compute_bf16_vsub,
+                "vmax": compute_bf16_vmax,
+                "vmin": compute_bf16_vmin,
+            }[instruction.mnemonic]
+
+            def on_start(cycle: int) -> None:
+                del cycle
+                captured["lhs"] = self.state.load_mreg(params.ms1).clone()
+                captured["rhs"] = self.state.load_mreg(params.ms2).clone()
+
+            def on_complete(cycle: int) -> None:
+                if "lhs" not in captured:
+                    return
+                self.state.trace_end_cycle = self._trace_cycle(completion_cycle)
+                self.state.store_mreg(
+                    params.md,
+                    op(captured["lhs"], captured["rhs"], config=self.state.config),
+                )
+
+            return on_start, on_complete
+
+        if isinstance(params, VPUUnaryType):
+            captured: dict[str, object] = {}
+            op = {
+                "vrelu": compute_bf16_vrelu,
+                "vmov": compute_bf16_vmov,
+                "vexp": compute_bf16_vexp,
+                "vrecip": compute_bf16_vrecip,
+            }[instruction.mnemonic]
+
+            def on_start(cycle: int) -> None:
+                del cycle
+                captured["src"] = self.state.load_mreg(params.ms).clone()
+
+            def on_complete(cycle: int) -> None:
+                if "src" not in captured:
+                    return
+                self.state.trace_end_cycle = self._trace_cycle(completion_cycle)
+                self.state.store_mreg(params.md, op(captured["src"], config=self.state.config))
+
+            return on_start, on_complete
+
+        if isinstance(params, XLUTransposeType):
+            captured: dict[str, object] = {}
+            op = {
+                "transpose.xlu": compute_bf16_transpose,
+                "reduce.max.xlu": compute_bf16_row_reduce_max,
+                "reduce.sum.xlu": compute_bf16_row_reduce_sum,
+            }[instruction.mnemonic]
+
+            def on_start(cycle: int) -> None:
+                del cycle
+                captured["src"] = self.state.load_mreg(params.ms).clone()
+
+            def on_complete(cycle: int) -> None:
+                if "src" not in captured:
+                    return
+                self.state.trace_end_cycle = self._trace_cycle(completion_cycle)
+                self.state.store_mreg(params.md, op(captured["src"], config=self.state.config))
+
+            return on_start, on_complete
+
+        raise TypeError(f"Unsupported async instruction '{instruction.mnemonic}'")
+
+    def _make_execute_callbacks(
+        self,
+        uop: PipelineUop,
+        *,
+        execute_start_cycle: int,
+        completion_cycle: int,
+    ) -> tuple[Callable[[int], None] | None, Callable[[int], None] | None]:
+        instruction = uop.instruction
+        spec = ALL_INSTRUCTION_SPECS[instruction.mnemonic]
+        execute_lane = _execute_lane_for_instruction(instruction)
+        logger = self.state.trace_logger
+
+        if instruction.mnemonic.startswith(("dma.load.", "dma.store.")):
+            channel = _dma_channel_for_instruction(instruction)
+
+            def on_start(cycle: int) -> None:
+                saved_pc = self._set_execute_pc(uop.pc, trace_cycle=cycle)
+                spec.semantics(self.state, instruction.params)
+                self._restore_fetch_pc(saved_pc)
+                if channel is not None:
+                    transfer = self.state.dma_channels[channel].pending
+                    if transfer is not None:
+                        self._dma_scheduled_ready_cycle[channel] = transfer.ready_cycle
+                        self._dma_scheduled_valid[channel] = True
+                if logger is not None and self.state.stop_reason is None:
+                    if channel is not None:
+                        transfer = self.state.dma_channels[channel].pending
+                        if transfer is not None:
+                            logger.log_stage_start(
+                                uop.insn_id,
+                                "transfer",
+                                lane=_dma_transfer_lane(channel),
+                                cycle=self._trace_cycle(cycle + 1),
+                            )
+                            logger.log_stage_end(
+                                uop.insn_id,
+                                "transfer",
+                                lane=_dma_transfer_lane(channel),
+                                cycle=self._trace_cycle(transfer.ready_cycle),
+                            )
+
+            def on_complete(cycle: int) -> None:
+                self.state.trace_end_cycle = self._trace_cycle(cycle)
+                self.state.perf.record_instruction(instruction.mnemonic)
+                self._mark_step_limit_if_reached()
+                self._log_stop(cycle)
+
+            return on_start, on_complete
+
+        if _is_async_tensor_lane(execute_lane):
+            async_start, async_complete = self._build_async_callbacks(uop, completion_cycle)
+
+            def on_start(cycle: int) -> None:
+                async_start(cycle)
+
+            def on_complete(cycle: int) -> None:
+                async_complete(cycle)
+                self.state.perf.record_instruction(instruction.mnemonic)
+                self._mark_step_limit_if_reached()
+                self._log_stop(cycle)
+
+            return on_start, on_complete
+
+        def on_complete(cycle: int) -> None:
+            self.state.trace_end_cycle = self._trace_cycle(cycle)
+            saved_pc = self._set_execute_pc(uop.pc, trace_cycle=cycle)
+            spec.semantics(self.state, instruction.params)
+            self._consume_control_transfer(uop.insn_id)
+            self._restore_fetch_pc(saved_pc)
+            self.state.perf.record_instruction(instruction.mnemonic)
+            self._mark_step_limit_if_reached()
+            self._log_stop(cycle)
+
+        return None, on_complete
+
+    def _try_retire_decode_only(self, uop: PipelineUop, cycle: int) -> bool:
+        instruction = uop.instruction
+        if not _is_dma_wait_instruction(instruction):
+            return False
+        if uop.dispatch_start_cycle is None or cycle <= uop.dispatch_start_cycle:
+            return False
+
+        wait_channel = _dma_channel_for_instruction(instruction)
+        if wait_channel is None:
+            raise ValueError(f"Malformed DMA wait mnemonic '{instruction.mnemonic}'")
+        retire_cycle = self.state.dma_wait_completion_cycle(wait_channel, uop.dispatch_start_cycle)
+        if self._dma_scheduled_valid[wait_channel]:
+            retire_cycle = max(retire_cycle, self._dma_scheduled_ready_cycle[wait_channel])
+        if cycle < retire_cycle:
+            return False
+
+        logger = self.state.trace_logger
+        if logger is not None:
+            trace_cycle = self._trace_cycle(cycle)
+            logger.log_stage_end(uop.insn_id, "dispatch", lane=DISPATCH_LANE, cycle=trace_cycle)
+            logger.log_retire(uop.insn_id, lane=DISPATCH_LANE, cycle=trace_cycle)
+        self.state.trace_end_cycle = self._trace_cycle(cycle)
+        self.state.perf.record_instruction(instruction.mnemonic)
+        self.state.retire_dma_wait(wait_channel, retire_cycle=cycle)
+        self._dma_scheduled_valid[wait_channel] = False
+        self._dma_scheduled_ready_cycle[wait_channel] = 0
+        self._mark_step_limit_if_reached()
+        self._log_stop(cycle)
+        return True
+
+    def _try_dispatch(self, uop: PipelineUop, cycle: int) -> str | None:
+        instruction = uop.instruction
+        if _is_dma_wait_instruction(instruction):
+            return None
+        if instruction.mnemonic not in ALL_INSTRUCTION_SPECS:
+            raise KeyError(f"Unknown mnemonic '{instruction.mnemonic}'")
+        spec = ALL_INSTRUCTION_SPECS[instruction.mnemonic]
+        if not isinstance(instruction.params, spec.params_type):
+            raise TypeError(
+                f"{instruction.mnemonic} expects {spec.params_type.__name__}, "
+                f"got {type(instruction.params).__name__}"
+            )
+        if uop.dispatch_start_cycle is None or cycle < uop.dispatch_start_cycle:
+            return None
+
+        unit_key = _unit_key_for_instruction(instruction)
+        output = self._idu.outputs[unit_key]
+        if output.should_stall():
+            return None
+
+        execute_lane = _UNIT_LANES[unit_key]
+        total_latency = _instruction_latency_cycles(self.state, instruction, spec.latency)
+        lane_occupancy = _lane_occupancy_cycles(instruction, execute_lane, total_latency)
+        operand_ready_cycle = self._instruction_operand_ready_cycle(instruction)
+        execute_start_cycle = max(
+            cycle + 1,
+            operand_ready_cycle,
+            self._unit_next_available_cycle[unit_key],
+        )
+        completion_cycle = execute_start_cycle + total_latency
+
+        uop.unit_key = unit_key
+        uop.execute_start_cycle = execute_start_cycle
+        uop.completion_cycle = completion_cycle
+        uop.on_execute_start, uop.on_execute_complete = self._make_execute_callbacks(
+            uop,
+            execute_start_cycle=execute_start_cycle,
+            completion_cycle=completion_cycle,
+        )
+
+        self._reserve_instruction_destinations(instruction, completion_cycle)
+        self._unit_next_available_cycle[unit_key] = execute_start_cycle + lane_occupancy
+        if isinstance(instruction.params, DMAType):
+            channel = _dma_channel_for_instruction(instruction)
+            if channel is not None:
+                predicted_size = self.state.read_xreg(instruction.params.size_rs)
+                predicted_ready_cycle = execute_start_cycle + self.state.config.dma_transfer_cycles(
+                    predicted_size
+                )
+                self._dma_scheduled_ready_cycle[channel] = predicted_ready_cycle
+                self._dma_scheduled_valid[channel] = True
+        return unit_key
+
     def load_program(
         self,
         program: Iterable[Instruction],
@@ -874,207 +920,122 @@ class Sim:
         program_base = getattr(program, "base_address", 0)
         if start_pc is None:
             start_pc = program_base
+
+        self._program_loaded = True
         self._program = instructions
         self._program_base = program_base
         self._program_end = program_base + len(instructions) * 4
         self._max_instructions = max_instructions
         self._start_count = self.state.perf.instructions
-        self._step_limit_reached = False
-        self._fetch_pc = start_pc & 0xFFFF_FFFF
         self._reset_scoreboards(self.state.perf.cycles)
-        self._reset_lane_state()
-        self.state.pc = self._fetch_pc
+        self._reset_pipeline_state(self.state.perf.cycles)
+        self._set_trace_logger(trace_logger)
         self.state.clear_stop()
-        self.state.trace_logger = trace_logger
+
+        self._ifu.load_program(
+            instructions,
+            program_base=program_base,
+            start_pc=start_pc,
+        )
+        self.state.pc = start_pc & 0xFFFF_FFFF
         if trace_logger is not None:
+            trace_logger.set_pc_base_address(program_base)
             trace_logger.log_arch_value(
                 "pc",
                 0,
-                self._fetch_pc,
+                self.state.pc,
                 cycle=self._trace_cycle(self.state.perf.cycles),
             )
 
+    def _pipeline_drained(self) -> bool:
+        return (
+            self._ifu.is_finished()
+            and self._idu.is_finished()
+            and all(not exu.has_in_flight for exu in self._exus.values())
+        )
+
     def tick(self) -> bool:
-        if not self._program:
+        if not self._program_loaded:
             raise RuntimeError("No program loaded; call load_program() or execute() first")
         if self.state.stop_reason is not None:
             return False
 
         current_cycle = self.state.perf.cycles
-        active_cycle = current_cycle + 1
         if self._max_instructions is not None:
             executed = self.state.perf.instructions - self._start_count
             if executed >= self._max_instructions:
                 self._step_limit_reached = True
-                self._if_slot = None
-                self._id_slot = None
-        if (
-            self._step_limit_reached
-            and self._if_slot is None
-            and self._id_slot is None
-            and not self._has_pending_actions()
-        ):
+                self._squash_frontend_for_step_limit()
+
+        if self._step_limit_reached and self._pipeline_drained():
             self.state.stop(StopReason.STEP_LIMIT)
             self._log_stop(current_cycle)
             return False
-        if (
-            self._if_slot is None
-            and self._id_slot is None
-            and not self._has_pending_actions()
-            and self._fetch_pc >= self._program_end
-        ):
+        if not self._step_limit_reached and self._pipeline_drained():
             self.state.stop(StopReason.PROGRAM_END)
             self._log_stop(current_cycle)
             return False
 
-        next_cycle = current_cycle + 1
+        active_cycle = current_cycle + 1
         self.state.perf.cycles = active_cycle
-        self._run_actions_for_cycle(active_cycle)
 
+        for exu in self._exus.values():
+            exu.complete_cycle(active_cycle)
         if self.state.stop_reason is not None:
-            self._if_slot = None
-            self._id_slot = None
             self._log_stop(active_cycle)
             return False
-
-        current_if_slot = self._if_slot
-        current_id_slot = self._id_slot
-        next_if_slot = current_if_slot
-        next_id_slot = current_id_slot
-        frontend_fenced = (
-            current_id_slot is not None and _is_dma_wait_instruction(current_id_slot.instruction)
-        )
-
-        if current_id_slot is not None:
-            next_id_slot = self._issue_decode_slot(current_id_slot, active_cycle)
-
+        for unit_key, exu in self._exus.items():
+            exu.start_cycle(active_cycle, self._idu.outputs[unit_key])
+        if self.state.stop_reason is not None:
+            self._log_stop(active_cycle)
+            return False
         if self._step_limit_reached:
-            next_if_slot = None
-            next_id_slot = None
+            self._squash_frontend_for_step_limit()
         else:
-            if current_if_slot is not None and next_id_slot is None:
-                next_id_slot = self._advance_if_to_id(current_if_slot, active_cycle)
-                next_if_slot = None
+            self._idu.tick(
+                active_cycle,
+                self._ifu.output,
+                on_claim_from_ifu=self._on_claim_from_ifu,
+                try_retire_decode_only=self._try_retire_decode_only,
+                try_dispatch=self._try_dispatch,
+            )
+        if self.state.stop_reason is not None:
+            self._log_stop(active_cycle)
+            return False
+        if self._step_limit_reached:
+            self._squash_frontend_for_step_limit()
+        else:
+            frontend_fenced = (
+                self._idu.current_uop is not None
+                and _is_dma_wait_instruction(self._idu.current_uop.instruction)
+            )
+            self._ifu.tick(
+                active_cycle,
+                allow_fetch=(not frontend_fenced) or (not self._ifu.output.is_valid()),
+                on_fetch=self._on_fetch,
+                on_fetch_stall=self._on_fetch_stall,
+                on_misaligned_fetch=self._on_misaligned_fetch,
+                on_fetch_pc_advanced=self._on_fetch_pc_advanced,
+            )
 
-            if next_if_slot is None and not frontend_fenced:
-                fetched_slot = self._fetch_instruction(active_cycle)
-                if fetched_slot is not None:
-                    next_if_slot = fetched_slot
-
-        if next_if_slot is current_if_slot and current_if_slot is not None:
-            self._stall_if_slot(current_if_slot, active_cycle)
-
-        self._if_slot = next_if_slot
-        self._id_slot = next_id_slot
-        self.state.pc = self._fetch_pc
-        if (
-            self._step_limit_reached
-            and self._if_slot is None
-            and self._id_slot is None
-            and not self._has_pending_actions()
-        ):
+        self.state.pc = self._ifu.fetch_pc
+        if self.state.stop_reason is not None:
+            self._log_stop(active_cycle)
+            return False
+        if self._step_limit_reached and self._pipeline_drained():
             self.state.stop(StopReason.STEP_LIMIT)
             self._log_stop(active_cycle)
             return False
-        if (
-            self._if_slot is None
-            and self._id_slot is None
-            and not self._has_pending_actions()
-            and self._fetch_pc >= self._program_end
-        ):
+        if not self._step_limit_reached and self._pipeline_drained():
             self.state.stop(StopReason.PROGRAM_END)
             self._log_stop(active_cycle)
             return False
         return True
 
-    def execute_instruction(self, instruction: Instruction) -> None:
-        self.execute([instruction])
-
-    def execute(
-        self,
-        program: Iterable[Instruction],
-        *,
-        start_pc: int | None = None,
-        max_instructions: int | None = None,
-        trace_logger: TraceLogger | None = None,
-    ) -> PerformanceCounters:
-        if trace_logger is None:
-            auto_trace_path = _pytest_auto_trace_path()
-            if auto_trace_path is not None:
-                from .logging import TraceLogger, TraceLoggerConfig
-
-                with TraceLogger(
-                    TraceLoggerConfig(
-                        filename=str(auto_trace_path),
-                        ticks_per_cycle=self.state.config.trace.ticks_per_cycle,
-                    )
-                ) as auto_trace_logger:
-                    return self.execute(
-                        program,
-                        start_pc=start_pc,
-                        max_instructions=max_instructions,
-                        trace_logger=auto_trace_logger,
-                    )
-
-        self.load_program(
-            program,
-            start_pc=start_pc,
-            max_instructions=max_instructions,
-            trace_logger=trace_logger,
-        )
-
-        if self.state.pc % 4 != 0:
-            self.state.stop(StopReason.INSTRUCTION_ADDRESS_MISALIGNED)
-        while self.state.stop_reason is None:
-            self.tick()
-
-        self.state.trace_logger = None
-        return self.state.perf
-
-    def dump_json_trace(
-        self,
-        program: Iterable[Instruction],
-        trace_path: str | PathLike[str],
-        *,
-        start_pc: int | None = None,
-        max_instructions: int | None = None,
-    ) -> PerformanceCounters:
-        from .logging import TraceLogger, TraceLoggerConfig
-
-        with TraceLogger(
-            TraceLoggerConfig(
-                filename=str(trace_path),
-                ticks_per_cycle=self.state.config.trace.ticks_per_cycle,
-            )
-        ) as trace_logger:
-            return self.execute(
-                program,
-                start_pc=start_pc,
-                max_instructions=max_instructions,
-                trace_logger=trace_logger,
-            )
+    def is_finished(self) -> bool:
+        return self._pipeline_drained()
 
 
-def _pytest_auto_trace_path() -> Path | None:
-    current_test = os.environ.get("PYTEST_CURRENT_TEST")
-    if current_test is None:
-        return None
+from .simulation import Sim  # noqa: E402
 
-    base = current_test.rsplit(" ", 1)[0]
-    sanitized = re.sub(r"[^A-Za-z0-9._-]+", "_", base).strip("_")
-    count = _AUTO_TRACE_COUNTERS.get(sanitized, 0)
-    _AUTO_TRACE_COUNTERS[sanitized] = count + 1
-
-    repo_root = Path(__file__).resolve().parents[2]
-    trace_root = repo_root / "outputs" / "tests"
-    trace_root.mkdir(parents=True, exist_ok=True)
-    return trace_root / f"{sanitized}__{count:02d}.json"
-
-
-__all__ = [
-    "ArchState",
-    "INSTRUCTION_LATENCY",
-    "PerformanceCounters",
-    "Sim",
-    "StopReason",
-]
+__all__ = ["Core", "INSTRUCTION_LATENCY", "Sim"]

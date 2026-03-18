@@ -11,7 +11,9 @@ What exists now:
   - `penguin-compiler`
   - `penguin-model`
 - a working scalar integer functional model in `penguin-model`
-- scalar tests covering the current RV32I-derived scalar subset
+- scalar tests covering the older RV32I-derived scalar subset; the formal architecture
+  spec now moves the scalar core baseline to full `RV32I`, including byte and halfword
+  VMEM load/store instructions
 - a directed scalar-program testbench for the functional/perf model, including
   label-resolved self-checking programs inspired by `riscv-tests` `rv32ui`
 - a GitHub Actions CI workflow that installs the `uv` workspace and runs
@@ -52,6 +54,9 @@ What exists now:
     whole-register interpretation
   - `32` `e` registers carrying whole-tensor `FP8_E8M0` scales
   - square `64 x 64` FP8 MXUs with paired-register BF16 writeback
+- the formal execution-model baseline now explicitly drops architectural register
+  dependency checks in tensor issue and treats `vload` / `vstore` as deterministic
+  fixed-latency on-chip transfers
 - historical notes later in this file may still mention earlier `32 x 32` / `2048`-byte
   tensor baselines and should not be treated as normative
 - fixed-shape Gemma-inspired examples now exist under `examples/` and run as staged

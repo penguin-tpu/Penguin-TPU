@@ -122,7 +122,7 @@ def test_tick_models_dma_wait_as_a_per_channel_decode_fence() -> None:
     assert core.tick() is True
     assert state.perf.cycles == ready_ch1
     assert state.perf.instructions == 3
-    assert state.pc == 16
+    assert state.pc == 20
     assert state.dma_channels[1].busy is False
     assert state.dma_channels[0].busy is True
     assert torch.equal(state.vmem.read(VMEM_BASE + 0x300, size_ch1), payload_ch1)

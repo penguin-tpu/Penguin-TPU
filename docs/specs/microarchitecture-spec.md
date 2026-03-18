@@ -159,17 +159,11 @@ Requirements:
 - `mxu0`, `mxu1`, `vpu`, `xlu`, and DMA transfers may be active concurrently
 - only one new instruction may issue in a cycle
 - issue stalls when the targeted unit cannot accept a new instruction
-- issue also stalls when a source operand or destination register / slot is not yet ready
 - issue does not perform dynamic reordering to bypass stalled older instructions
-
-The baseline cycle-accurate model shall enforce operand readiness with architectural
-scoreboards over:
-
-- scalar `x` registers
-- scale `e` registers
-- tensor `m` registers
-- MXU weight slots
-- VMEM architectural visibility for cross-unit memory hazards
+- the baseline issue model does not perform architectural register dependency checks or
+  register-ready scoreboarding
+- execution timing is instead determined by frontend ordering, unit availability,
+  architecturally defined blocking instructions, and fixed instruction latency classes
 
 ### 4.3 Tensor access organization
 
@@ -186,8 +180,8 @@ interconnect.
 
 ### 5.1 Scalar decode
 
-The scalar decode path shall recognize the RV32I-compatible binary baseline defined by
-the architecture specification.
+The scalar decode path shall recognize the full `RV32I` binary baseline defined by the
+architecture specification.
 
 Minimum decode outputs:
 
@@ -232,7 +226,7 @@ The intended first scalar implementation slice is partitioned into:
 - scale-register load path for `seli` and `seld`
 - scalar ALU / compare datapath
 - branch and jump target unit
-- VMEM-facing scalar load/store unit
+- VMEM-facing scalar load/store unit supporting byte, halfword, and word accesses
 - scalar control block that owns `pc`, delay-slot tracking, and halt status
 
 ### 5.3 Delay-slot handling
@@ -335,18 +329,17 @@ The following instructions are modeled and implemented as blocking:
 - `vstore`
 - `mxu.push.*`
 - `seld`
-- scalar `sld`
-- scalar `sst`
+- scalar `RV32I` load/store instructions
 
 The baseline intent is to keep on-chip movement deterministic and simpler to verify.
 
 The cycle-accurate model shall also preserve VMEM ordering across units:
 
 - a VMEM reader shall not observe data older than the most recent completed VMEM writer
-- `dma.store` shall therefore stall behind prior `vstore` traffic until the relevant VMEM
-  contents are architecturally visible
-- the software model may conservatively enforce this with a VMEM-ready scoreboard rather
-  than fine-grained address overlap analysis
+- `dma.store` shall therefore not complete before older blocking VMEM writes make their
+  data architecturally visible
+- this ordering is modeled with fixed completion timing and program order, not with an
+  architectural register- or VMEM-dependency scoreboard
 
 ### 7.3 Asynchronous DMA
 
@@ -389,7 +382,8 @@ For the frozen baseline values:
 
 - one off-chip beat costs `2` core cycles
 - one VMEM beat costs `1` core cycle
-- one `vload` / `vstore` of a `4096`-byte tensor register takes `256` cycles
+- one `vload` / `vstore` of a `4096`-byte tensor register takes a deterministic `256`
+  cycles
 - one `mxu.push.*` of a `4096`-byte weight tile takes `256` cycles
 
 ## 8. Functional Units

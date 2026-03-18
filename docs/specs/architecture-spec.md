@@ -85,8 +85,8 @@ The baseline Penguin execution model shall satisfy the following rules:
 - instructions are fixed-width `32`-bit words
 - instructions conceptually retire in program order
 - the scalar frontend issues at most one new instruction per cycle
-- issue shall stall on structural conflicts and on architecturally visible source or
-  destination operand hazards
+- issue shall stall only on structural conflicts and architecturally defined blocking
+  conditions
 - long-chime tensor instructions may remain active for multiple cycles after issue
 - different execution units may be active concurrently
 - architectural completion order remains defined by the instruction semantics, not by
@@ -106,14 +106,14 @@ For a control-transfer instruction at address `pc`:
 
 This rule applies to:
 
-- `sjal`
-- `sjalr`
-- `sbeq`
-- `sbne`
-- `sblt`
-- `sbge`
-- `sbltu`
-- `sbgeu`
+- `jal`
+- `jalr`
+- `beq`
+- `bne`
+- `blt`
+- `bge`
+- `bltu`
+- `bgeu`
 
 ### 4.3 Halt model
 
@@ -126,8 +126,8 @@ Illegal or misaligned architectural behavior stops execution and reports halt st
 Architecturally meaningful stop classes are:
 
 - normal end-of-program completion
-- `secall`
-- `sebreak`
+- `ecall`
+- `ebreak`
 - illegal instruction
 - instruction-address misaligned
 - misaligned scalar memory access
@@ -236,12 +236,59 @@ Memory-region rules:
 - tensor register load/store and MXU weight push access `VMEM` only
 - DMA is the only architected path between `DRAM` and `VMEM`
 
+Illustrative architectural memory-hierarchy view:
+
+```mermaid
+flowchart LR
+    subgraph FU["Function Units"]
+        SALU["Scalar path\n(RV32I load/store,\nseld, control,\nDMA issue)"]
+        MXU0["MXU0"]
+        MXU1["MXU1"]
+        VPU["VPU"]
+        XLU["XLU"]
+    end
+
+    subgraph RF["Architectural Register Files"]
+        XREG["x registers"]
+        EREG["e registers"]
+        MREG["Tensor register file\nm0-m63"]
+    end
+
+    subgraph ONCHIP["On-Chip Data Storage"]
+        VMEM["VMEM / TMEM\n1 MiB scratchpad"]
+    end
+
+    subgraph OFFCHIP["Off-Chip Backing Storage"]
+        DRAM["DRAM\n16 GiB"]
+    end
+
+    SALU --- XREG
+    SALU --- EREG
+    MXU0 --- MREG
+    MXU1 --- MREG
+    VPU --- MREG
+    XLU --- MREG
+
+    SALU -->|"scalar RV32I\nload/store,\nseld"| VMEM
+    VMEM -->|"vload"| MREG
+    MREG -->|"vstore"| VMEM
+    VMEM -->|"mxu.push.*"| MXU0
+    VMEM -->|"mxu.push.*"| MXU1
+
+    SALU -->|"dma.load/store issue"| VMEM
+    VMEM <-->|"DMA channels"| DRAM
+```
+
+The diagram is illustrative. The normative architectural rules are the bullets above.
+
 ### 6.2 Alignment rules
 
 The following alignment rules are architectural:
 
 - instruction fetch address alignment: `4` bytes
-- scalar `sld` / `sst` alignment: `4` bytes
+- scalar `lb` / `lbu` / `sb` alignment: `1` byte
+- scalar `lh` / `lhu` / `sh` alignment: `2` bytes
+- scalar `lw` / `sw` alignment: `4` bytes
 - scalar `seld` byte-load alignment: `1` byte
 - DMA source address alignment: `32` bytes
 - DMA destination address alignment: `32` bytes
@@ -264,34 +311,56 @@ The host shall populate `IMEM` before enabling accelerator execution.
 
 ## 7. Scalar ISA
 
-### 7.1 Naming convention
+### 7.1 RV32I baseline
 
-Scalar integer mnemonics are derived from RV32I mnemonics by prefixing `s`, except that
-scalar memory access uses:
+The scalar core shall implement the full RISC-V `RV32I` base integer instruction set
+using the standard architectural mnemonics and binary encodings.
 
-- `sld`
-- `sst`
+Penguin-specific execution context:
 
-The baseline scalar subset intentionally excludes:
+- instruction fetch reads `IMEM`
+- scalar data loads and stores access `VMEM` only
+- branch and jump instructions obey the architectural two-delay-slot rule defined in
+  Section `4.2`
+- accelerator custom instructions are additive extensions and do not redefine `RV32I`
 
-- floating-point scalar state
-- byte and halfword scalar loads and stores
-- unaligned scalar load/store support
+Compatibility note:
+
+- Penguin reuses `RV32I` mnemonics and base instruction encodings, but Penguin scalar
+  execution is not drop-in compatible with a conventional no-delay-slot `RV32I`
+  implementation
+- a generic `RV32I` binary cannot be assumed to execute correctly on Penguin without
+  compiler or assembler handling for the required two branch/jump delay slots
+
+The baseline scalar core intentionally excludes:
+
+- scalar floating-point instructions
+- compressed instructions
+- integer multiply/divide extensions
+- atomic extensions
 
 ### 7.2 Binary encoding baseline
 
-The scalar binary encoding baseline shall remain RV32I-compatible:
+The scalar binary encoding baseline shall be standard `RV32I`:
 
 - fixed-width `32`-bit instruction words
 - standard RV32I field layouts for `R`, `I`, `S`, `B`, `U`, and `J` formats
-- standard RV32I opcode / `funct3` / `funct7` placement for the supported scalar subset
+- standard RV32I opcode / `funct3` / `funct7` placement for the full scalar instruction
+  set
 
 Required binary compatibility points:
 
-- `sld` reuses the `lw` encoding shape
-- `sst` reuses the `sw` encoding shape
-- `sfence` reuses the `fence` encoding shape
-- `secall` and `sebreak` reuse the standard system encodings
+- all `RV32I` arithmetic, branch, jump, load, and store instructions use their standard
+  encodings
+- `fence` uses the standard `RV32I` fence encoding
+- `ecall` and `ebreak` use the standard system encodings
+
+Execution-compatibility caveat:
+
+- binary field layout and opcode compatibility with `RV32I` do not imply unchanged
+  control-flow semantics
+- software that targets Penguin shall account for the mandatory two delay slots on
+  branch and jump instructions when generating executable code
 
 Penguin accelerator instructions shall use the standard RISC-V custom major opcodes.
 Their allocation is defined in Section 8.
@@ -302,26 +371,26 @@ Their allocation is defined in Section 8.
 
 | Mnemonic | Semantics |
 |---|---|
-| `slui rd, imm20` | `x[rd] <- imm20 << 12` |
-| `sauipc rd, imm20` | `x[rd] <- pc + (imm20 << 12)` |
+| `lui rd, imm20` | `x[rd] <- imm20 << 12` |
+| `auipc rd, imm20` | `x[rd] <- pc + (imm20 << 12)` |
 
 #### 7.3.2 Jumps
 
 | Mnemonic | Semantics |
 |---|---|
-| `sjal rd, imm` | `x[rd] <- pc + 4`; redirect to `pc + imm` after 2 delay slots |
-| `sjalr rd, rs1, imm` | `target <- (x[rs1] + imm) & ~1`; `x[rd] <- pc + 4`; redirect after 2 delay slots |
+| `jal rd, imm` | `x[rd] <- pc + 4`; redirect to `pc + imm` after 2 delay slots |
+| `jalr rd, rs1, imm` | `target <- (x[rs1] + imm) & ~1`; `x[rd] <- pc + 4`; redirect after 2 delay slots |
 
 #### 7.3.3 Branches
 
 | Mnemonic | Branch condition |
 |---|---|
-| `sbeq rs1, rs2, imm` | `x[rs1] == x[rs2]` |
-| `sbne rs1, rs2, imm` | `x[rs1] != x[rs2]` |
-| `sblt rs1, rs2, imm` | `signed(x[rs1]) < signed(x[rs2])` |
-| `sbge rs1, rs2, imm` | `signed(x[rs1]) >= signed(x[rs2])` |
-| `sbltu rs1, rs2, imm` | `unsigned(x[rs1]) < unsigned(x[rs2])` |
-| `sbgeu rs1, rs2, imm` | `unsigned(x[rs1]) >= unsigned(x[rs2])` |
+| `beq rs1, rs2, imm` | `x[rs1] == x[rs2]` |
+| `bne rs1, rs2, imm` | `x[rs1] != x[rs2]` |
+| `blt rs1, rs2, imm` | `signed(x[rs1]) < signed(x[rs2])` |
+| `bge rs1, rs2, imm` | `signed(x[rs1]) >= signed(x[rs2])` |
+| `bltu rs1, rs2, imm` | `unsigned(x[rs1]) < unsigned(x[rs2])` |
+| `bgeu rs1, rs2, imm` | `unsigned(x[rs1]) >= unsigned(x[rs2])` |
 
 If the branch is taken, the redirect target is `pc + imm` after the two required delay
 slots. If the branch is not taken, execution continues sequentially after those same
@@ -331,30 +400,30 @@ delay-slot instructions retire.
 
 | Mnemonic | Semantics |
 |---|---|
-| `saddi rd, rs1, imm` | `x[rd] <- x[rs1] + imm` |
-| `sslti rd, rs1, imm` | `x[rd] <- 1` if `signed(x[rs1]) < signed(imm)` else `0` |
-| `ssltiu rd, rs1, imm` | `x[rd] <- 1` if `unsigned(x[rs1]) < unsigned(sign_extend(imm))` else `0` |
-| `sxori rd, rs1, imm` | `x[rd] <- x[rs1] xor sign_extend(imm)` |
-| `sori rd, rs1, imm` | `x[rd] <- x[rs1] or sign_extend(imm)` |
-| `sandi rd, rs1, imm` | `x[rd] <- x[rs1] and sign_extend(imm)` |
-| `sslli rd, rs1, shamt` | `x[rd] <- x[rs1] << (shamt & 0x1f)` |
-| `ssrli rd, rs1, shamt` | `x[rd] <- unsigned(x[rs1]) >> (shamt & 0x1f)` |
-| `ssrai rd, rs1, shamt` | `x[rd] <- signed(x[rs1]) >>> (shamt & 0x1f)` |
+| `addi rd, rs1, imm` | `x[rd] <- x[rs1] + imm` |
+| `slti rd, rs1, imm` | `x[rd] <- 1` if `signed(x[rs1]) < signed(imm)` else `0` |
+| `sltiu rd, rs1, imm` | `x[rd] <- 1` if `unsigned(x[rs1]) < unsigned(sign_extend(imm))` else `0` |
+| `xori rd, rs1, imm` | `x[rd] <- x[rs1] xor sign_extend(imm)` |
+| `ori rd, rs1, imm` | `x[rd] <- x[rs1] or sign_extend(imm)` |
+| `andi rd, rs1, imm` | `x[rd] <- x[rs1] and sign_extend(imm)` |
+| `slli rd, rs1, shamt` | `x[rd] <- x[rs1] << (shamt & 0x1f)` |
+| `srli rd, rs1, shamt` | `x[rd] <- unsigned(x[rs1]) >> (shamt & 0x1f)` |
+| `srai rd, rs1, shamt` | `x[rd] <- signed(x[rs1]) >>> (shamt & 0x1f)` |
 
 #### 7.3.5 Register-register ALU operations
 
 | Mnemonic | Semantics |
 |---|---|
-| `sadd rd, rs1, rs2` | `x[rd] <- x[rs1] + x[rs2]` |
-| `ssub rd, rs1, rs2` | `x[rd] <- x[rs1] - x[rs2]` |
-| `ssll rd, rs1, rs2` | `x[rd] <- x[rs1] << (x[rs2] & 0x1f)` |
-| `sslt rd, rs1, rs2` | `x[rd] <- 1` if `signed(x[rs1]) < signed(x[rs2])` else `0` |
-| `ssltu rd, rs1, rs2` | `x[rd] <- 1` if `unsigned(x[rs1]) < unsigned(x[rs2])` else `0` |
-| `sxor rd, rs1, rs2` | `x[rd] <- x[rs1] xor x[rs2]` |
-| `ssrl rd, rs1, rs2` | `x[rd] <- unsigned(x[rs1]) >> (x[rs2] & 0x1f)` |
-| `ssra rd, rs1, rs2` | `x[rd] <- signed(x[rs1]) >>> (x[rs2] & 0x1f)` |
-| `sor rd, rs1, rs2` | `x[rd] <- x[rs1] or x[rs2]` |
-| `sand rd, rs1, rs2` | `x[rd] <- x[rs1] and x[rs2]` |
+| `add rd, rs1, rs2` | `x[rd] <- x[rs1] + x[rs2]` |
+| `sub rd, rs1, rs2` | `x[rd] <- x[rs1] - x[rs2]` |
+| `sll rd, rs1, rs2` | `x[rd] <- x[rs1] << (x[rs2] & 0x1f)` |
+| `slt rd, rs1, rs2` | `x[rd] <- 1` if `signed(x[rs1]) < signed(x[rs2])` else `0` |
+| `sltu rd, rs1, rs2` | `x[rd] <- 1` if `unsigned(x[rs1]) < unsigned(x[rs2])` else `0` |
+| `xor rd, rs1, rs2` | `x[rd] <- x[rs1] xor x[rs2]` |
+| `srl rd, rs1, rs2` | `x[rd] <- unsigned(x[rs1]) >> (x[rs2] & 0x1f)` |
+| `sra rd, rs1, rs2` | `x[rd] <- signed(x[rs1]) >>> (x[rs2] & 0x1f)` |
+| `or rd, rs1, rs2` | `x[rd] <- x[rs1] or x[rs2]` |
+| `and rd, rs1, rs2` | `x[rd] <- x[rs1] and x[rs2]` |
 
 All scalar integer arithmetic is modulo `2^32` unless signed comparison semantics are
 explicitly stated.
@@ -363,22 +432,31 @@ explicitly stated.
 
 | Mnemonic | Semantics |
 |---|---|
-| `sld rd, imm(rs1)` | `x[rd] <- VMEM32[x[rs1] + imm]` |
-| `sst rs2, imm(rs1)` | `VMEM32[x[rs1] + imm] <- x[rs2]` |
+| `lb rd, imm(rs1)` | `x[rd] <- sign_extend(VMEM8[x[rs1] + imm])` |
+| `lh rd, imm(rs1)` | `x[rd] <- sign_extend(VMEM16[x[rs1] + imm])` |
+| `lw rd, imm(rs1)` | `x[rd] <- VMEM32[x[rs1] + imm]` |
+| `lbu rd, imm(rs1)` | `x[rd] <- zero_extend(VMEM8[x[rs1] + imm])` |
+| `lhu rd, imm(rs1)` | `x[rd] <- zero_extend(VMEM16[x[rs1] + imm])` |
+| `sb rs2, imm(rs1)` | `VMEM8[x[rs1] + imm] <- x[rs2][7:0]` |
+| `sh rs2, imm(rs1)` | `VMEM16[x[rs1] + imm] <- x[rs2][15:0]` |
+| `sw rs2, imm(rs1)` | `VMEM32[x[rs1] + imm] <- x[rs2]` |
 
 Scalar memory requirements:
 
-- exactly one aligned `32`-bit word is transferred
-- the effective address must be `4`-byte aligned
-- no partial-word scalar memory operation exists in the baseline architecture
+- scalar data-memory instructions access `VMEM` only
+- `lb`, `lbu`, and `sb` have byte alignment
+- `lh`, `lhu`, and `sh` require `2`-byte alignment
+- `lw` and `sw` require `4`-byte alignment
+- misaligned scalar memory access is a fatal architectural error rather than a
+  trap-and-resume event
 
 #### 7.3.7 Ordering and environment operations
 
 | Mnemonic | Semantics |
 |---|---|
-| `sfence` | architecturally legal; baseline no-op |
-| `secall` | terminate execution with environment-call halt status |
-| `sebreak` | terminate execution with breakpoint halt status |
+| `fence` | architecturally legal; baseline no-op |
+| `ecall` | terminate execution with environment-call halt status |
+| `ebreak` | terminate execution with breakpoint halt status |
 
 #### 7.3.8 Scale-register load operations
 
@@ -391,8 +469,8 @@ Scale-register rules:
 
 - `seli` and `seld` are the only baseline architectural writers of `e` registers
 - `seld` transfers exactly one byte from `VMEM`
-- `seld` is a dedicated `e`-register load and does not relax the `32`-bit-only rule for
-  ordinary scalar `sld` / `sst`
+- `seld` is a dedicated `e`-register byte load in addition to the standard `RV32I`
+  scalar load/store instructions
 - both instructions write the raw exponent payload; scale interpretation is defined in
   Section 5.3
 
@@ -573,7 +651,8 @@ Architectural rules:
 - `mxu.push.* w<slot>, imm(x<rs1>)` transfers one whole weight tile from `VMEM` into the
   selected MXU weight slot
 - the effective address is `x[rs1] + (sign_extend(imm11_32) << 5)`
-- these instructions are blocking
+- these instructions are blocking and have deterministic latency in a fixed
+  implementation configuration
 - the effective VMEM address shall satisfy the `32`-byte alignment rule
 
 ### 8.6 `custom-1`: MXU launch encodings
@@ -741,7 +820,7 @@ The following conditions shall terminate execution with architectural error stat
 - illegal or unsupported instruction
 - misaligned branch target
 - misaligned jump target
-- misaligned `sld` or `sst`
+- misaligned scalar load or store
 - DMA issue to a busy channel
 - DMA issue with misaligned address or size
 - any other explicitly defined fatal architectural contract violation
