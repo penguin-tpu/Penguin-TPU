@@ -12,6 +12,7 @@ from .instructions import (
     EmptyType,
     IType,
     JType,
+    MXUAccumulatorType,
     ScaleImmType,
     ScaleMemType,
     MXUMatmulAccType,
@@ -20,6 +21,7 @@ from .instructions import (
     SType,
     TensorMemType,
     UType,
+    WeightTensorType,
     XLUTransposeType,
     VPUBinaryType,
     VPUUnaryType,
@@ -29,14 +31,18 @@ from .instructions import (
 from .memory import DMA_CHANNEL_COUNT
 from .tensor import (
     MATMUL_LATENCY_CYCLES,
-    MXU_PUSH_LATENCY_CYCLES,
+    VLOAD_WEIGHT_LATENCY_CYCLES,
     VLOAD_LATENCY_CYCLES,
+    VMATPOP_ACC_BF16_LATENCY_CYCLES,
+    VMATPOP_ACC_FP8_LATENCY_CYCLES,
+    VMATPUSH_ACC_LATENCY_CYCLES,
+    VMATPUSH_WEIGHT_LATENCY_CYCLES,
     VPU_NON_PIPELINEABLE_OP_LATENCY_CYCLES,
     VPU_SIMPLE_OP_LATENCY_CYCLES,
     VSTORE_LATENCY_CYCLES,
     XLU_TRANSPOSE_LATENCY_CYCLES,
     compute_bf16_transpose,
-    compute_bf16_matmul,
+    compute_accum_matmul,
     compute_bf16_row_reduce_max,
     compute_bf16_row_reduce_sum,
     compute_bf16_vadd,
@@ -377,57 +383,103 @@ def vstore(state: ArchState, params: TensorMemType) -> None:
 
 
 @instruction(
-    mnemonic="mxu.push.mxu0",
-    params_type=WeightMemType,
-    latency=MXU_PUSH_LATENCY_CYCLES,
+    mnemonic="vmatpush.mxu0",
+    params_type=WeightTensorType,
+    latency=VMATPUSH_WEIGHT_LATENCY_CYCLES,
     registry=TENSOR_INSTRUCTION_SPECS,
 )
-def mxu_push_mxu0(state: ArchState, params: WeightMemType) -> None:
-    address = state.resolve_indirect_address(params.rs1, params.imm)
-    state.push_weight_slot(0, params.slot, address)
+def vmatpush_mxu0(state: ArchState, params: WeightTensorType) -> None:
+    state.push_weight_slot_from_mreg(0, params.slot, params.ms)
 
 
 @instruction(
-    mnemonic="mxu.push.mxu1",
-    params_type=WeightMemType,
-    latency=MXU_PUSH_LATENCY_CYCLES,
+    mnemonic="vmatpush.mxu1",
+    params_type=WeightTensorType,
+    latency=VMATPUSH_WEIGHT_LATENCY_CYCLES,
     registry=TENSOR_INSTRUCTION_SPECS,
 )
-def mxu_push_mxu1(state: ArchState, params: WeightMemType) -> None:
-    address = state.resolve_indirect_address(params.rs1, params.imm)
-    state.push_weight_slot(1, params.slot, address)
+def vmatpush_mxu1(state: ArchState, params: WeightTensorType) -> None:
+    state.push_weight_slot_from_mreg(1, params.slot, params.ms)
 
 
-def _matmul_result(
-    state: ArchState,
-    *,
-    mxu: int,
-    dest: int,
-    src: int,
-    slot: int,
-    scale_a: int,
-    scale_b: int,
-    partial: int | None = None,
-) -> None:
-    if not state.check_mreg_pair_base(dest):
-        return
-    activation = state.load_mreg(src)
-    weights = state.load_weight_slot(mxu, slot)
-    partial_raw = None if partial is None else _load_mreg_pair(state, partial)
-    if partial is not None and partial_raw is None:
-        return
-    state.instruction_extra_cycles = (
-        state.config.matmul_latency_cycles - MATMUL_LATENCY_CYCLES
-    )
-    result_lo, result_hi = compute_bf16_matmul(
-        activation,
-        weights,
-        state.read_ereg(scale_a),
-        state.read_ereg(scale_b),
-        partial_raw,
-        config=state.config,
-    )
-    _store_mreg_pair(state, dest, result_lo, result_hi)
+@instruction(
+    mnemonic="vload.weight.mxu0",
+    params_type=WeightMemType,
+    latency=VLOAD_WEIGHT_LATENCY_CYCLES,
+    registry=TENSOR_INSTRUCTION_SPECS,
+)
+def vload_weight_mxu0(state: ArchState, params: WeightMemType) -> None:
+    state.push_weight_slot_from_vmem(0, params.slot, state.read_xreg(params.rs1))
+
+
+@instruction(
+    mnemonic="vload.weight.mxu1",
+    params_type=WeightMemType,
+    latency=VLOAD_WEIGHT_LATENCY_CYCLES,
+    registry=TENSOR_INSTRUCTION_SPECS,
+)
+def vload_weight_mxu1(state: ArchState, params: WeightMemType) -> None:
+    state.push_weight_slot_from_vmem(1, params.slot, state.read_xreg(params.rs1))
+
+
+@instruction(
+    mnemonic="vmatpush.bf16.acc.mxu0",
+    params_type=MXUAccumulatorType,
+    latency=VMATPUSH_ACC_LATENCY_CYCLES,
+    registry=TENSOR_INSTRUCTION_SPECS,
+)
+def vmatpush_bf16_acc_mxu0(state: ArchState, params: MXUAccumulatorType) -> None:
+    state.push_accum_from_mregs(0, params.mreg)
+
+
+@instruction(
+    mnemonic="vmatpush.bf16.acc.mxu1",
+    params_type=MXUAccumulatorType,
+    latency=VMATPUSH_ACC_LATENCY_CYCLES,
+    registry=TENSOR_INSTRUCTION_SPECS,
+)
+def vmatpush_bf16_acc_mxu1(state: ArchState, params: MXUAccumulatorType) -> None:
+    state.push_accum_from_mregs(1, params.mreg)
+
+
+@instruction(
+    mnemonic="vmatpop.bf16.acc.mxu0",
+    params_type=MXUAccumulatorType,
+    latency=VMATPOP_ACC_BF16_LATENCY_CYCLES,
+    registry=TENSOR_INSTRUCTION_SPECS,
+)
+def vmatpop_bf16_acc_mxu0(state: ArchState, params: MXUAccumulatorType) -> None:
+    state.pop_accum_to_mregs(0, params.mreg)
+
+
+@instruction(
+    mnemonic="vmatpop.bf16.acc.mxu1",
+    params_type=MXUAccumulatorType,
+    latency=VMATPOP_ACC_BF16_LATENCY_CYCLES,
+    registry=TENSOR_INSTRUCTION_SPECS,
+)
+def vmatpop_bf16_acc_mxu1(state: ArchState, params: MXUAccumulatorType) -> None:
+    state.pop_accum_to_mregs(1, params.mreg)
+
+
+@instruction(
+    mnemonic="vmatpop.fp8.acc.mxu0",
+    params_type=MXUAccumulatorType,
+    latency=VMATPOP_ACC_FP8_LATENCY_CYCLES,
+    registry=TENSOR_INSTRUCTION_SPECS,
+)
+def vmatpop_fp8_acc_mxu0(state: ArchState, params: MXUAccumulatorType) -> None:
+    state.pop_accum_to_fp8_mreg(0, params.mreg)
+
+
+@instruction(
+    mnemonic="vmatpop.fp8.acc.mxu1",
+    params_type=MXUAccumulatorType,
+    latency=VMATPOP_ACC_FP8_LATENCY_CYCLES,
+    registry=TENSOR_INSTRUCTION_SPECS,
+)
+def vmatpop_fp8_acc_mxu1(state: ArchState, params: MXUAccumulatorType) -> None:
+    state.pop_accum_to_fp8_mreg(1, params.mreg)
 
 
 def _apply_vpu_simple_latency(state: ArchState) -> None:
@@ -476,76 +528,84 @@ def _apply_xlu_transpose_latency(state: ArchState) -> None:
 
 
 @instruction(
-    mnemonic="matmul.mxu0",
+    mnemonic="vmatmul.mxu0",
     params_type=MXUMatmulType,
     latency=MATMUL_LATENCY_CYCLES,
     registry=TENSOR_INSTRUCTION_SPECS,
 )
-def matmul_mxu0(state: ArchState, params: MXUMatmulType) -> None:
-    _matmul_result(
-        state,
-        mxu=0,
-        dest=params.md,
-        src=params.ms,
-        slot=params.ws,
-        scale_a=params.ea,
-        scale_b=params.eb,
+def vmatmul_mxu0(state: ArchState, params: MXUMatmulType) -> None:
+    state.instruction_extra_cycles = (
+        state.config.matmul_latency_cycles - MATMUL_LATENCY_CYCLES
+    )
+    state.store_accum_buffer(
+        0,
+        compute_accum_matmul(
+            state.load_mreg(params.ms),
+            state.load_weight_slot(0, params.ws),
+            config=state.config,
+        ),
     )
 
 
 @instruction(
-    mnemonic="matmul.mxu1",
+    mnemonic="vmatmul.mxu1",
     params_type=MXUMatmulType,
     latency=MATMUL_LATENCY_CYCLES,
     registry=TENSOR_INSTRUCTION_SPECS,
 )
-def matmul_mxu1(state: ArchState, params: MXUMatmulType) -> None:
-    _matmul_result(
-        state,
-        mxu=1,
-        dest=params.md,
-        src=params.ms,
-        slot=params.ws,
-        scale_a=params.ea,
-        scale_b=params.eb,
+def vmatmul_mxu1(state: ArchState, params: MXUMatmulType) -> None:
+    state.instruction_extra_cycles = (
+        state.config.matmul_latency_cycles - MATMUL_LATENCY_CYCLES
+    )
+    state.store_accum_buffer(
+        1,
+        compute_accum_matmul(
+            state.load_mreg(params.ms),
+            state.load_weight_slot(1, params.ws),
+            config=state.config,
+        ),
     )
 
 
 @instruction(
-    mnemonic="matmul.acc.mxu0",
+    mnemonic="vmatmul.acc.mxu0",
     params_type=MXUMatmulAccType,
     latency=MATMUL_LATENCY_CYCLES,
     registry=TENSOR_INSTRUCTION_SPECS,
 )
-def matmul_acc_mxu0(state: ArchState, params: MXUMatmulAccType) -> None:
-    _matmul_result(
-        state,
-        mxu=0,
-        dest=params.md,
-        src=params.ms,
-        slot=params.ws,
-        partial=params.mp,
-        scale_a=params.ea,
-        scale_b=params.eb,
+def vmatmul_acc_mxu0(state: ArchState, params: MXUMatmulAccType) -> None:
+    state.instruction_extra_cycles = (
+        state.config.matmul_latency_cycles - MATMUL_LATENCY_CYCLES
+    )
+    state.store_accum_buffer(
+        0,
+        compute_accum_matmul(
+            state.load_mreg(params.ms),
+            state.load_weight_slot(0, params.ws),
+            state.load_accum_buffer(0),
+            config=state.config,
+        ),
     )
 
 
 @instruction(
-    mnemonic="matmul.acc.mxu1",
+    mnemonic="vmatmul.acc.mxu1",
     params_type=MXUMatmulAccType,
     latency=MATMUL_LATENCY_CYCLES,
     registry=TENSOR_INSTRUCTION_SPECS,
 )
-def matmul_acc_mxu1(state: ArchState, params: MXUMatmulAccType) -> None:
-    _matmul_result(
-        state,
-        mxu=1,
-        dest=params.md,
-        src=params.ms,
-        slot=params.ws,
-        partial=params.mp,
-        scale_a=params.ea,
-        scale_b=params.eb,
+def vmatmul_acc_mxu1(state: ArchState, params: MXUMatmulAccType) -> None:
+    state.instruction_extra_cycles = (
+        state.config.matmul_latency_cycles - MATMUL_LATENCY_CYCLES
+    )
+    state.store_accum_buffer(
+        1,
+        compute_accum_matmul(
+            state.load_mreg(params.ms),
+            state.load_weight_slot(1, params.ws),
+            state.load_accum_buffer(1),
+            config=state.config,
+        ),
     )
 
 
@@ -867,12 +927,20 @@ __all__ = [
     "ori",
     "seld",
     "seli",
-    "matmul_acc_mxu0",
-    "matmul_acc_mxu1",
-    "matmul_mxu0",
-    "matmul_mxu1",
-    "mxu_push_mxu0",
-    "mxu_push_mxu1",
+    "vload_weight_mxu0",
+    "vload_weight_mxu1",
+    "vmatmul_acc_mxu0",
+    "vmatmul_acc_mxu1",
+    "vmatmul_mxu0",
+    "vmatmul_mxu1",
+    "vmatpop_bf16_acc_mxu0",
+    "vmatpop_bf16_acc_mxu1",
+    "vmatpop_fp8_acc_mxu0",
+    "vmatpop_fp8_acc_mxu1",
+    "vmatpush_bf16_acc_mxu0",
+    "vmatpush_bf16_acc_mxu1",
+    "vmatpush_mxu0",
+    "vmatpush_mxu1",
     "sb",
     "sh",
     "sll",

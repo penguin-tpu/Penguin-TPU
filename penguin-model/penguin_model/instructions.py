@@ -102,34 +102,41 @@ class TensorMemType:
 
 @dataclass(frozen=True, slots=True)
 class WeightMemType:
-    """MXU weight-slot selector plus scalar-register-indirect VMEM address."""
+    """MXU weight-slot selector plus scalar-register source address."""
 
     slot: int
     rs1: int
-    imm: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class WeightTensorType:
+    """MXU weight-slot selector plus tensor-register source."""
+
+    slot: int
+    ms: int
+
+
+@dataclass(frozen=True, slots=True)
+class MXUAccumulatorType:
+    """Single tensor-register operand used by MXU accumulator movement forms."""
+
+    mreg: int
 
 
 @dataclass(frozen=True, slots=True)
 class MXUMatmulType:
-    """Fresh matmul launch: dest tensor, activation tensor, weight selector."""
+    """MXU launch form: activation tensor plus resident weight-slot selector."""
 
-    md: int
     ms: int
     ws: int
-    ea: int
-    eb: int
 
 
 @dataclass(frozen=True, slots=True)
 class MXUMatmulAccType:
-    """Accumulating matmul launch with an explicit partial-sum tensor."""
+    """Accumulating MXU launch form over the resident local accumulation buffer."""
 
-    md: int
     ms: int
     ws: int
-    mp: int
-    ea: int
-    eb: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -170,6 +177,8 @@ InstructionParams: TypeAlias = (
     | ScaleMemType
     | TensorMemType
     | WeightMemType
+    | WeightTensorType
+    | MXUAccumulatorType
     | MXUMatmulType
     | MXUMatmulAccType
     | VPUBinaryType
@@ -242,6 +251,7 @@ __all__ = [
     "InstructionParams",
     "InstructionSpec",
     "JType",
+    "MXUAccumulatorType",
     "MXUMatmulAccType",
     "MXUMatmulType",
     "RType",
@@ -251,6 +261,7 @@ __all__ = [
     "TENSOR_INSTRUCTION_SPECS",
     "TensorMemType",
     "UType",
+    "WeightTensorType",
     "XLUTransposeType",
     "VPUBinaryType",
     "VPUUnaryType",

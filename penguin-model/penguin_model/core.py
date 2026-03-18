@@ -26,6 +26,7 @@ from .instructions import (
     IType,
     Instruction,
     JType,
+    MXUAccumulatorType,
     MXUMatmulAccType,
     MXUMatmulType,
     RType,
@@ -37,12 +38,17 @@ from .instructions import (
     VPUBinaryType,
     VPUUnaryType,
     WeightMemType,
+    WeightTensorType,
     XLUTransposeType,
 )
 from .isa import SCALAR_LOAD_MNEMONICS
 from .memory import Memory
 from .tensor import (
-    compute_bf16_matmul,
+    accum_tile_from_bytes,
+    accum_tile_to_bytes,
+    bf16_tile_pair_from_bytes,
+    bf16_tile_pair_to_bytes,
+    compute_accum_matmul,
     compute_bf16_row_reduce_max,
     compute_bf16_row_reduce_sum,
     compute_bf16_transpose,
@@ -55,6 +61,7 @@ from .tensor import (
     compute_bf16_vrelu,
     compute_bf16_vsub,
     compute_bf16_vmul,
+    export_accum_to_fp8,
 )
 from .uop import PipelineUop
 
@@ -139,14 +146,15 @@ def _format_instruction(instruction: Instruction) -> str:
     if isinstance(params, TensorMemType):
         return f"{mnemonic} m{params.mreg}, {params.imm}(x{params.rs1})"
     if isinstance(params, WeightMemType):
-        return f"{mnemonic} w{params.slot}, {params.imm}(x{params.rs1})"
+        return f"{mnemonic} w{params.slot}, x{params.rs1}"
+    if isinstance(params, WeightTensorType):
+        return f"{mnemonic} w{params.slot}, m{params.ms}"
+    if isinstance(params, MXUAccumulatorType):
+        return f"{mnemonic} m{params.mreg}"
     if isinstance(params, MXUMatmulType):
-        return f"{mnemonic} m{params.md}, m{params.ms}, w{params.ws}, e{params.ea}, e{params.eb}"
+        return f"{mnemonic} m{params.ms}, w{params.ws}"
     if isinstance(params, MXUMatmulAccType):
-        return (
-            f"{mnemonic} m{params.md}, m{params.ms}, w{params.ws}, "
-            f"m{params.mp}, e{params.ea}, e{params.eb}"
-        )
+        return f"{mnemonic} m{params.ms}, w{params.ws}"
     if isinstance(params, VPUBinaryType):
         return f"{mnemonic} m{params.md}, m{params.ms1}, m{params.ms2}"
     if isinstance(params, VPUUnaryType):
@@ -159,16 +167,16 @@ def _format_instruction(instruction: Instruction) -> str:
 def _execute_lane_for_instruction(instruction: Instruction) -> int:
     if instruction.mnemonic.startswith("dma."):
         return DMA_LANE
-    if instruction.mnemonic in {"vload", "vstore"} or instruction.mnemonic.startswith("mxu.push."):
+    if instruction.mnemonic in {"vload", "vstore"}:
         return TMEM_LANE
-    if isinstance(instruction.params, (VPUBinaryType, VPUUnaryType)):
-        return VPU_LANE
-    if isinstance(instruction.params, XLUTransposeType):
-        return XLU_LANE
     if instruction.mnemonic.endswith(".mxu0"):
         return MXU0_LANE
     if instruction.mnemonic.endswith(".mxu1"):
         return MXU1_LANE
+    if isinstance(instruction.params, (VPUBinaryType, VPUUnaryType)):
+        return VPU_LANE
+    if isinstance(instruction.params, XLUTransposeType):
+        return XLU_LANE
     return SALU_LANE
 
 
@@ -218,9 +226,17 @@ def _instruction_latency_cycles(
         return state.config.vload_latency_cycles
     if instruction.mnemonic == "vstore":
         return state.config.vstore_latency_cycles
-    if instruction.mnemonic.startswith("mxu.push."):
-        return state.config.mxu_push_latency_cycles
-    if instruction.mnemonic.startswith("matmul"):
+    if instruction.mnemonic.startswith("vmatpush.mxu"):
+        return state.config.vmatpush_weight_latency_cycles
+    if instruction.mnemonic.startswith("vload.weight."):
+        return state.config.vload_weight_latency_cycles
+    if instruction.mnemonic.startswith("vmatpush.bf16.acc."):
+        return state.config.vmatpush_acc_latency_cycles
+    if instruction.mnemonic.startswith("vmatpop.bf16.acc."):
+        return state.config.vmatpop_acc_bf16_latency_cycles
+    if instruction.mnemonic.startswith("vmatpop.fp8.acc."):
+        return state.config.vmatpop_acc_fp8_latency_cycles
+    if instruction.mnemonic.startswith("vmatmul"):
         return state.config.matmul_latency_cycles
     if isinstance(instruction.params, VPUBinaryType):
         return state.config.vpu_simple_op_latency_cycles
@@ -236,6 +252,7 @@ def _instruction_latency_cycles(
 @dataclass(slots=True)
 class _ControlShadow:
     insn_id: int
+    pc: int
     delay_slots_seen: int
     resolved: bool = False
     target: int | None = None
@@ -346,6 +363,7 @@ class Core:
             config=self.state.config,
             mreg=self.state.mreg,
             mxu_weight=self.state.mxu_weight,
+            mxu_accum=self.state.mxu_accum,
             ereg=self.state.ereg,
         )
         self._program_loaded = False
@@ -388,6 +406,12 @@ class Core:
             return
         if youngest.delay_slots_seen < self.state.config.scalar.control_flow_delay_slots:
             return
+        buffered = self._ifu.output.peek()
+        if (
+            buffered is not None
+            and buffered.pc > youngest.pc + self.state.config.scalar.control_flow_delay_slots
+        ):
+            self._ifu.output.reset()
         self._ifu.set_fetch_pc(youngest.target)
         self._control_shadows.clear()
 
@@ -428,7 +452,9 @@ class Core:
             ):
                 self.state.stop(StopReason.ILLEGAL_INSTRUCTION)
                 return
-            self._control_shadows.append(_ControlShadow(insn_id=uop.insn_id, delay_slots_seen=0))
+            self._control_shadows.append(
+                _ControlShadow(insn_id=uop.insn_id, pc=uop.pc, delay_slots_seen=0)
+            )
 
         logger = self.state.trace_logger
         if logger is None:
@@ -540,22 +566,24 @@ class Core:
             require_xreg(params.rs1)
             require_weight(0 if instruction.mnemonic.endswith("mxu0") else 1, params.slot)
             require_vmem()
+        elif isinstance(params, WeightTensorType):
+            require_mreg(params.ms)
+            require_weight(0 if instruction.mnemonic.endswith("mxu0") else 1, params.slot)
+        elif isinstance(params, MXUAccumulatorType):
+            if instruction.mnemonic.startswith("vmatpush.bf16.acc."):
+                require_mreg(params.mreg)
+                require_mreg(params.mreg + 1)
+            elif instruction.mnemonic.startswith("vmatpop.bf16.acc."):
+                require_mreg(params.mreg)
+                require_mreg(params.mreg + 1)
+            else:
+                require_mreg(params.mreg)
         elif isinstance(params, MXUMatmulType):
             require_mreg(params.ms)
-            require_mreg(params.md)
-            require_mreg(params.md + 1)
             require_weight(0 if instruction.mnemonic.endswith("mxu0") else 1, params.ws)
-            require_ereg(params.ea)
-            require_ereg(params.eb)
         elif isinstance(params, MXUMatmulAccType):
             require_mreg(params.ms)
-            require_mreg(params.mp)
-            require_mreg(params.mp + 1)
-            require_mreg(params.md)
-            require_mreg(params.md + 1)
             require_weight(0 if instruction.mnemonic.endswith("mxu0") else 1, params.ws)
-            require_ereg(params.ea)
-            require_ereg(params.eb)
         elif isinstance(params, VPUBinaryType):
             require_mreg(params.ms1)
             require_mreg(params.ms2)
@@ -603,11 +631,16 @@ class Core:
         elif isinstance(params, WeightMemType):
             reserve_vmem(completion_cycle)
             reserve_weight(0 if instruction.mnemonic.endswith("mxu0") else 1, params.slot)
+        elif isinstance(params, WeightTensorType):
+            reserve_weight(0 if instruction.mnemonic.endswith("mxu0") else 1, params.slot)
+        elif isinstance(params, MXUAccumulatorType):
+            if instruction.mnemonic.startswith("vmatpop.bf16.acc."):
+                reserve_mreg(params.mreg)
+                reserve_mreg(params.mreg + 1)
+            elif instruction.mnemonic.startswith("vmatpop.fp8.acc."):
+                reserve_mreg(params.mreg)
         elif isinstance(params, DMAType):
             reserve_vmem(completion_cycle)
-        elif isinstance(params, MXUMatmulType | MXUMatmulAccType):
-            reserve_mreg(params.md)
-            reserve_mreg(params.md + 1)
         elif isinstance(params, VPUBinaryType | VPUUnaryType | XLUTransposeType):
             reserve_mreg(params.md)
 
@@ -619,71 +652,136 @@ class Core:
         instruction = uop.instruction
         params = instruction.params
 
-        if isinstance(params, MXUMatmulType):
+        if isinstance(params, WeightTensorType):
             captured: dict[str, object] = {}
+            mxu = 0 if instruction.mnemonic.endswith("mxu0") else 1
 
             def on_start(cycle: int) -> None:
                 del cycle
-                if not self.state.check_mreg_pair_base(params.md):
-                    return
-                captured["activation"] = self.state.load_mreg(params.ms).clone()
-                captured["weights"] = self.state.load_weight_slot(
-                    0 if instruction.mnemonic.endswith("mxu0") else 1,
-                    params.ws,
-                ).clone()
-                captured["scale_a"] = self.state.read_ereg(params.ea)
-                captured["scale_b"] = self.state.read_ereg(params.eb)
+                captured["payload"] = self.state.load_mreg(params.ms).clone()
 
             def on_complete(cycle: int) -> None:
-                if "activation" not in captured:
+                if "payload" not in captured:
                     return
-                self.state.trace_end_cycle = self._trace_cycle(completion_cycle)
-                lo, hi = compute_bf16_matmul(
-                    captured["activation"],
-                    captured["weights"],
-                    captured["scale_a"],
-                    captured["scale_b"],
-                    None,
-                    config=self.state.config,
-                )
-                self.state.store_mreg(params.md, lo)
-                self.state.store_mreg(params.md + 1, hi)
+                self.state.trace_end_cycle = self._trace_cycle(cycle)
+                self.state.store_weight_slot(mxu, params.slot, captured["payload"])
 
             return on_start, on_complete
 
-        if isinstance(params, MXUMatmulAccType):
+        if isinstance(params, WeightMemType):
             captured: dict[str, object] = {}
+            mxu = 0 if instruction.mnemonic.endswith("mxu0") else 1
 
             def on_start(cycle: int) -> None:
                 del cycle
-                if not self.state.check_mreg_pair_base(params.md):
+                address = self.state.read_xreg(params.rs1)
+                if not self.state._check_tensor_alignment(address):
                     return
-                captured["activation"] = self.state.load_mreg(params.ms).clone()
-                captured["weights"] = self.state.load_weight_slot(
-                    0 if instruction.mnemonic.endswith("mxu0") else 1,
-                    params.ws,
+                captured["address"] = address
+                captured["payload"] = self.state.vmem.read(
+                    address,
+                    self.state.config.weight_slot_bytes,
                 ).clone()
-                captured["partial"] = (
-                    self.state.load_mreg(params.mp).clone(),
-                    self.state.load_mreg(params.mp + 1).clone(),
+
+            def on_complete(cycle: int) -> None:
+                if "payload" not in captured:
+                    return
+                self.state.trace_end_cycle = self._trace_cycle(cycle)
+                self.state.perf.bytes_read += self.state.config.weight_slot_bytes
+                self.state.store_weight_slot(mxu, params.slot, captured["payload"])
+                self.state._log_memory_access(
+                    "vmem",
+                    f"vload.weight.mxu{mxu}",
+                    captured["address"],
+                    params.slot,
+                    size=self.state.config.weight_slot_bytes,
                 )
-                captured["scale_a"] = self.state.read_ereg(params.ea)
-                captured["scale_b"] = self.state.read_ereg(params.eb)
+
+            return on_start, on_complete
+
+        if isinstance(params, MXUAccumulatorType):
+            captured: dict[str, object] = {}
+            mxu = 0 if instruction.mnemonic.endswith("mxu0") else 1
+
+            def on_start(cycle: int) -> None:
+                del cycle
+                if instruction.mnemonic.startswith("vmatpush.bf16.acc."):
+                    if not self.state.check_mreg_pair_base(params.mreg):
+                        return
+                    captured["payload"] = (
+                        self.state.load_mreg(params.mreg).clone(),
+                        self.state.load_mreg(params.mreg + 1).clone(),
+                    )
+                elif instruction.mnemonic.startswith("vmatpop.bf16.acc."):
+                    if not self.state.check_mreg_pair_base(params.mreg):
+                        return
+                    captured["payload"] = self.state.load_accum_buffer(mxu)
+                else:
+                    captured["payload"] = self.state.load_accum_buffer(mxu)
+
+            def on_complete(cycle: int) -> None:
+                if "payload" not in captured:
+                    return
+                self.state.trace_end_cycle = self._trace_cycle(cycle)
+                if instruction.mnemonic.startswith("vmatpush.bf16.acc."):
+                    raw_lo, raw_hi = captured["payload"]
+                    self.state.store_accum_buffer(
+                        mxu,
+                        accum_tile_to_bytes(
+                            bf16_tile_pair_from_bytes(
+                                raw_lo,
+                                raw_hi,
+                                config=self.state.config,
+                            ),
+                            config=self.state.config,
+                        ),
+                    )
+                elif instruction.mnemonic.startswith("vmatpop.bf16.acc."):
+                    raw_lo, raw_hi = bf16_tile_pair_to_bytes(
+                        accum_tile_from_bytes(captured["payload"], config=self.state.config),
+                        config=self.state.config,
+                    )
+                    self.state.store_mreg(
+                        params.mreg,
+                        raw_lo,
+                    )
+                    self.state.store_mreg(
+                        params.mreg + 1,
+                        raw_hi,
+                    )
+                else:
+                    self.state.store_mreg(
+                        params.mreg,
+                        export_accum_to_fp8(captured["payload"], config=self.state.config),
+                    )
+
+            return on_start, on_complete
+
+        if isinstance(params, MXUMatmulType | MXUMatmulAccType):
+            captured: dict[str, object] = {}
+            mxu = 0 if instruction.mnemonic.endswith("mxu0") else 1
+            accumulates = instruction.mnemonic.startswith("vmatmul.acc.")
+
+            def on_start(cycle: int) -> None:
+                del cycle
+                captured["activation"] = self.state.load_mreg(params.ms).clone()
+                captured["weights"] = self.state.load_weight_slot(mxu, params.ws).clone()
+                if accumulates:
+                    captured["accum"] = self.state.load_accum_buffer(mxu).clone()
 
             def on_complete(cycle: int) -> None:
                 if "activation" not in captured:
                     return
-                self.state.trace_end_cycle = self._trace_cycle(completion_cycle)
-                lo, hi = compute_bf16_matmul(
-                    captured["activation"],
-                    captured["weights"],
-                    captured["scale_a"],
-                    captured["scale_b"],
-                    captured["partial"],
-                    config=self.state.config,
+                self.state.trace_end_cycle = self._trace_cycle(cycle)
+                self.state.store_accum_buffer(
+                    mxu,
+                    compute_accum_matmul(
+                        captured["activation"],
+                        captured["weights"],
+                        captured.get("accum"),
+                        config=self.state.config,
+                    ),
                 )
-                self.state.store_mreg(params.md, lo)
-                self.state.store_mreg(params.md + 1, hi)
 
             return on_start, on_complete
 

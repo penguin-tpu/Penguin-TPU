@@ -46,32 +46,36 @@
 
     seli e0, 0
     seli e1, 0
-    mxu.push.mxu0 w0, 0(x10)
-    mxu.push.mxu0 w1, 0(x11)
+    vload.weight.mxu0 w0, x10
+    vload.weight.mxu0 w1, x11
     vload m10, 0(x12)
     vload m11, 0x1000(x12)
     vload m12, 0(x13)
     vload m13, 0x1000(x13)
 
     vload m1, 0(x1)
-    matmul.mxu0 m20, m1, w0, e0, e1
+    vmatmul.mxu0 m1, w0
+    vmatpop.bf16.acc.mxu0 m20
     vadd m20, m20, m10
     vadd m21, m21, m11
     vstore m20, 0(x20)
     vstore m21, 0x1000(x20)
-    matmul.mxu0 m22, m1, w1, e0, e1
+    vmatmul.mxu0 m1, w1
+    vmatpop.bf16.acc.mxu0 m22
     vadd m22, m22, m12
     vadd m23, m23, m13
     vstore m22, 0(x21)
     vstore m23, 0x1000(x21)
 
     vload m4, 0(x2)
-    matmul.mxu0 m24, m4, w0, e0, e1
+    vmatmul.mxu0 m4, w0
+    vmatpop.bf16.acc.mxu0 m24
     vadd m24, m24, m10
     vadd m25, m25, m11
     vstore m24, 0(x22)
     vstore m25, 0x1000(x22)
-    matmul.mxu0 m26, m4, w1, e0, e1
+    vmatmul.mxu0 m4, w1
+    vmatpop.bf16.acc.mxu0 m26
     vadd m26, m26, m12
     vadd m27, m27, m13
     vstore m26, 0(x23)

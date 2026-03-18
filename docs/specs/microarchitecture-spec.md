@@ -62,6 +62,9 @@ The following parameters are frozen for the current baseline implementation.
 | `WEIGHT_TILE_ROWS` | `64` | Rows per MXU weight tile |
 | `WEIGHT_TILE_COLS_FP8` | `64` | FP8 columns per MXU weight tile |
 | `WEIGHT_SLOT_BYTES` | `4096` bytes | Bytes per MXU weight slot |
+| `ACCUM_BUFFER_ROWS` | `64` | Rows per MXU accumulation buffer |
+| `ACCUM_BUFFER_COLS_BF16` | `64` | BF16 columns per MXU accumulation buffer |
+| `ACCUM_BUFFER_BYTES` | `8192` bytes | Bytes per MXU accumulation buffer |
 | `MXU_ARRAY_ROWS` | `64` | Rows per MXU array |
 | `MXU_ARRAY_COLS` | `64` | Columns per MXU array |
 | `VPU_LANES_BF16` | `32` | BF16 lanes in the baseline VPU |
@@ -87,7 +90,7 @@ The following parameters are frozen for the current baseline implementation.
 | `DMA_OFFCHIP_COMMAND_WORDS` | `2` | DRAM-side DMA command overhead |
 | `VMEM_BUS_WIDTH_BITS` | `512` | VMEM/system-bus beat width |
 | `VMEM_BUS_CORE_CYCLES_PER_BEAT` | `1` | VMEM/system-bus beat time |
-| `VMEM_TENSOR_ALIGN` | `32` bytes | VMEM alignment for `vload`, `vstore`, `mxu.push.*` |
+| `VMEM_TENSOR_ALIGN` | `32` bytes | VMEM alignment for `vload`, `vstore`, and `vload.weight.*` |
 | `TRACE_TICKS_PER_CYCLE` | `1` | Trace timestamp granularity |
 
 ### 3.3 Software-model initialization parameters
@@ -317,7 +320,7 @@ Baseline implementation direction:
 
 - `seli` writes `e` registers through a scalar-side immediate path
 - `seld` writes `e` registers through a scalar-controlled VMEM byte-load path
-- MXUs read `e` registers as side metadata for scaled matmul launch
+- the exact MXU launch forms that consume `e` registers remain under active revision
 
 Rationale:
 
@@ -335,15 +338,14 @@ The tensor register file shall hold:
 
 The baseline whole-register interpretations are:
 
-- `64 x 32` BF16 for VPU, XLU, and MXU half-result traffic
+- `64 x 32` BF16 for VPU, XLU, and tensor-register-resident BF16 tiles
 - `64 x 64` FP8 source tiles across the full physical row width for MXU input traffic
 
-The baseline MXU result contract writes one `64 x 64` BF16 tile into two consecutive
-tensor registers:
+When BF16 data is materialized in the tensor register file, one `64 x 64` BF16 tile uses
+two consecutive tensor registers:
 
 - destination base register carries BF16 columns `[31:0]`
 - destination base plus one carries BF16 columns `[63:32]`
-- accumulate-form partial sums follow that same paired-register convention
 
 The baseline does not require architectural bank visibility.
 
@@ -353,12 +355,29 @@ Each MXU shall contain two distinct weight-slot storage entries.
 
 The baseline implementation direction is weight-stationary:
 
-- weight data is pushed into the selected slot from `VMEM`
+- weight data is loaded into the selected slot either from `VMEM` or from one tensor
+  register via a local `vmatpush.*` path
 - the slot remains resident until overwritten
-- matmul launch selects between `w0` and `w1`
 - each weight slot stores one `64 x 64` FP8 tile
 
-### 6.4 Structural-conflict handling
+### 6.4 Accumulation buffers
+
+Each MXU shall contain one local BF16 accumulation buffer.
+
+Baseline requirements:
+
+- each accumulation buffer stores one complete `64 x 64` BF16 tile
+- MXU launch writes its result into the local accumulation buffer, not directly into the
+  tensor register file
+- `vmatpush.bf16.acc.*` loads the accumulation buffer from one BF16 tensor-register pair
+- `vmatpop.bf16.acc.*` stores the accumulation buffer into one BF16 tensor-register pair
+- `vmatpop.fp8.acc.*` stores a quantized FP8 tile from the accumulation buffer into one
+  tensor register
+- there is no direct architectural `VMEM` path into or out of the accumulation buffer
+- BF16 accumulator preload and spill use an even-numbered tensor base register together
+  with its next register to carry columns `[31:0]` and `[63:32]`
+
+### 6.5 Structural-conflict handling
 
 Structural conflicts shall be handled by stalls or arbitration.
 
@@ -385,7 +404,11 @@ The following instructions are modeled and implemented as blocking:
 
 - `vload`
 - `vstore`
-- `mxu.push.*`
+- `vmatpush.*`
+- `vload.weight.*`
+- `vmatpush.bf16.acc.*`
+- `vmatpop.bf16.acc.*`
+- `vmatpop.fp8.acc.*`
 - `seld`
 - scalar `RV32I` load/store instructions
 
@@ -442,7 +465,12 @@ For the frozen baseline values:
 - one VMEM beat costs `1` core cycle
 - one `vload` / `vstore` of a `4096`-byte tensor register takes a deterministic `64`
   cycles
-- one `mxu.push.*` of a `4096`-byte weight tile takes `64` cycles
+- one `vmatpush.*` of a `4096`-byte tensor-to-weight transfer takes `64` cycles
+- one `vload.weight.*` of a `4096`-byte weight tile takes `64` cycles
+- one `vmatpush.bf16.acc.*` or `vmatpop.bf16.acc.*` of an `8192`-byte accumulator /
+  BF16-tensor transfer takes `128` cycles
+- one `vmatpop.fp8.acc.*` of a `4096`-byte quantized accumulator export takes `64`
+  cycles
 
 ## 8. Functional Units
 
@@ -459,11 +487,14 @@ Shared microarchitectural requirements:
 
 - deterministic latency class of `64` cycles per matmul launch
 - whole-register activation source
-- selected weight-slot source
-- selected activation-scale and weight-scale source
+- resident local weight-slot source
 - BF16 architectural accumulation
 - square `64 x 64` array geometry for both `mxu0` and `mxu1`
-- paired-register BF16 writeback for each full MXU result tile
+- one local `64 x 64` BF16 accumulation buffer per MXU
+- tensor-register-only BF16 accumulator preload and spill path
+- local quantization path for `vmatpop.fp8.acc.*`
+- MXU launch decode must carry both one tensor activation operand and one local
+  weight-slot selector operand
 - ability to overlap with scalar and other long-chime units, subject to issue policy
 
 ### 8.2 VPU

@@ -16,7 +16,7 @@
       kind: "program",
       region: "imem",
       address: 0x00020000,
-      size_bytes: 180,
+      size_bytes: 188,
       file: "gemma_attention_scores_64x64.S",
     },
     weights: {

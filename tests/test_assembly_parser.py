@@ -12,11 +12,13 @@ from penguin_model import (
     IType,
     Instruction,
     JType,
+    MXUAccumulatorType,
     MXUMatmulAccType,
     MXUMatmulType,
     ScaleImmType,
     ScaleMemType,
     TensorMemType,
+    WeightTensorType,
     XLUTransposeType,
     VPUBinaryType,
     VPUUnaryType,
@@ -72,9 +74,13 @@ def test_assembler_parses_tensor_memory_and_mxu_operands() -> None:
     seli e1, 0
     seld e2, 4(x7)
     vload m3, 32(x1)
-    mxu.push.mxu1 w0, 64(x2)
-    matmul.mxu0 m6, m7, w1, e3, e4
-    matmul.acc.mxu1 m4, m3, w0, m5, e1, e2
+    vmatpush.mxu1 w0, m8
+    vload.weight.mxu0 w1, x2
+    vmatpush.bf16.acc.mxu1 m4
+    vmatmul.mxu0 m7, w1
+    vmatmul.acc.mxu1 m3, w0
+    vmatpop.bf16.acc.mxu1 m4
+    vmatpop.fp8.acc.mxu0 m6
     vstore m4, 96(x6)
 """
     )
@@ -83,9 +89,13 @@ def test_assembler_parses_tensor_memory_and_mxu_operands() -> None:
         Instruction("seli", ScaleImmType(ed=1, imm=0)),
         Instruction("seld", ScaleMemType(ed=2, rs1=7, imm=4)),
         Instruction("vload", TensorMemType(mreg=3, rs1=1, imm=32)),
-        Instruction("mxu.push.mxu1", WeightMemType(slot=0, rs1=2, imm=64)),
-        Instruction("matmul.mxu0", MXUMatmulType(md=6, ms=7, ws=1, ea=3, eb=4)),
-        Instruction("matmul.acc.mxu1", MXUMatmulAccType(md=4, ms=3, ws=0, mp=5, ea=1, eb=2)),
+        Instruction("vmatpush.mxu1", WeightTensorType(slot=0, ms=8)),
+        Instruction("vload.weight.mxu0", WeightMemType(slot=1, rs1=2)),
+        Instruction("vmatpush.bf16.acc.mxu1", MXUAccumulatorType(mreg=4)),
+        Instruction("vmatmul.mxu0", MXUMatmulType(ms=7, ws=1)),
+        Instruction("vmatmul.acc.mxu1", MXUMatmulAccType(ms=3, ws=0)),
+        Instruction("vmatpop.bf16.acc.mxu1", MXUAccumulatorType(mreg=4)),
+        Instruction("vmatpop.fp8.acc.mxu0", MXUAccumulatorType(mreg=6)),
         Instruction("vstore", TensorMemType(mreg=4, rs1=6, imm=96)),
     ]
 

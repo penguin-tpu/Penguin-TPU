@@ -22,7 +22,7 @@
       kind: "program",
       region: "imem",
       address: 0x00020000,
-      size_bytes: 284,
+      size_bytes: 300,
       file: "linear.S",
     },
     weights: {

@@ -17,7 +17,13 @@ from .memory import (
     _random_u8_tensor,
 )
 from .tensor import (
+    accum_tile_from_bytes,
+    accum_tile_to_bytes,
+    bf16_tile_pair_from_bytes,
+    bf16_tile_pair_to_bytes,
+    export_accum_to_fp8,
     make_tensor_register_file_for_config,
+    make_accum_buffer_file_for_config,
     make_weight_slot_file_for_config,
 )
 
@@ -73,6 +79,7 @@ class ArchState:
     config: PenguinCoreConfig = field(default_factory=lambda: DEFAULT_PENGUIN_CORE_CONFIG)
     mreg: torch.Tensor | None = None
     mxu_weight: torch.Tensor | None = None
+    mxu_accum: torch.Tensor | None = None
     ereg: list[int] | None = None
     xreg: list[int] | None = None
     pc: int = 0
@@ -98,6 +105,8 @@ class ArchState:
             self.mreg = make_tensor_register_file_for_config(self.config)
         if self.mxu_weight is None:
             self.mxu_weight = make_weight_slot_file_for_config(self.config)
+        if self.mxu_accum is None:
+            self.mxu_accum = make_accum_buffer_file_for_config(self.config)
         if self.ereg is None:
             self.ereg = [0] * self.config.scale.num_ereg
         elif len(self.ereg) != self.config.scale.num_ereg:
@@ -332,6 +341,18 @@ class ArchState:
             torch.uint8
         )
 
+    def load_accum_buffer(self, mxu: int) -> torch.Tensor:
+        assert self.mxu_accum is not None
+        return self.mxu_accum[mxu].clone()
+
+    def store_accum_buffer(self, mxu: int, raw: torch.Tensor) -> None:
+        if raw.numel() != self.config.accum_buffer_bytes:
+            raise ValueError(
+                f"accumulator write expects {self.config.accum_buffer_bytes} bytes, got {raw.numel()}"
+            )
+        assert self.mxu_accum is not None
+        self.mxu_accum[mxu] = raw.reshape(self.config.accum_buffer_bytes).to(torch.uint8)
+
     def check_mreg_pair_base(self, index: int) -> bool:
         if index < 0 or index + self.config.matmul_result_registers > self.config.tensor.num_mreg:
             self.stop(StopReason.ILLEGAL_TENSOR_REGISTER_PAIR)
@@ -368,23 +389,66 @@ class ArchState:
         self.vmem.write(address, payload)
         self._log_memory_access("vmem", "vstore", address, 0, size=self.config.mreg_bytes)
 
-    def push_weight_slot(self, mxu: int, slot: int, address: int) -> None:
+    def push_weight_slot_from_vmem(self, mxu: int, slot: int, address: int) -> None:
         if not self._check_tensor_alignment(address):
             return
         payload = self.vmem.read(address, self.config.weight_slot_bytes).clone()
         self.instruction_extra_cycles = (
             self.config.vmem_transfer_cycles(self.config.weight_slot_bytes)
-            - self.config.mxu_push_latency_cycles
+            - self.config.vload_weight_latency_cycles
         )
         self.perf.bytes_read += self.config.weight_slot_bytes
         self.store_weight_slot(mxu, slot, payload)
         self._log_memory_access(
             "vmem",
-            f"mxu.push.mxu{mxu}",
+            f"vload.weight.mxu{mxu}",
             address,
             slot,
             size=self.config.weight_slot_bytes,
         )
+
+    def push_weight_slot_from_mreg(self, mxu: int, slot: int, mreg: int) -> None:
+        payload = self.load_mreg(mreg)
+        self.instruction_extra_cycles = (
+            self.config.vmem_transfer_cycles(self.config.weight_slot_bytes)
+            - self.config.vmatpush_weight_latency_cycles
+        )
+        self.store_weight_slot(mxu, slot, payload)
+
+    def push_accum_from_mregs(self, mxu: int, base: int) -> None:
+        if not self.check_mreg_pair_base(base):
+            return
+        tile = bf16_tile_pair_from_bytes(
+            self.load_mreg(base),
+            self.load_mreg(base + 1),
+            config=self.config,
+        )
+        self.instruction_extra_cycles = (
+            self.config.vmem_transfer_cycles(self.config.accum_buffer_bytes)
+            - self.config.vmatpush_acc_latency_cycles
+        )
+        self.store_accum_buffer(mxu, accum_tile_to_bytes(tile, config=self.config))
+
+    def pop_accum_to_mregs(self, mxu: int, base: int) -> None:
+        if not self.check_mreg_pair_base(base):
+            return
+        raw_lo, raw_hi = bf16_tile_pair_to_bytes(
+            accum_tile_from_bytes(self.load_accum_buffer(mxu), config=self.config),
+            config=self.config,
+        )
+        self.instruction_extra_cycles = (
+            self.config.vmem_transfer_cycles(self.config.accum_buffer_bytes)
+            - self.config.vmatpop_acc_bf16_latency_cycles
+        )
+        self.store_mreg(base, raw_lo)
+        self.store_mreg(base + 1, raw_hi)
+
+    def pop_accum_to_fp8_mreg(self, mxu: int, mreg: int) -> None:
+        self.instruction_extra_cycles = (
+            self.config.vmem_transfer_cycles(self.config.mreg_bytes)
+            - self.config.vmatpop_acc_fp8_latency_cycles
+        )
+        self.store_mreg(mreg, export_accum_to_fp8(self.load_accum_buffer(mxu), config=self.config))
 
     def _issue_dma(
         self,

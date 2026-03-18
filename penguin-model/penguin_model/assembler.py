@@ -18,6 +18,7 @@ from .instructions import (
     IType,
     Instruction,
     JType,
+    MXUAccumulatorType,
     MXUMatmulAccType,
     MXUMatmulType,
     RType,
@@ -26,6 +27,7 @@ from .instructions import (
     SType,
     TensorMemType,
     UType,
+    WeightTensorType,
     XLUTransposeType,
     VPUBinaryType,
     VPUUnaryType,
@@ -568,21 +570,52 @@ def _assemble_instruction(
             source_name=source_name,
             line_number=line.line_number,
         )
-        rs1, imm = _parse_memory_operand(
-            operands[1],
-            labels=labels,
-            pc=pc,
-            source_name=source_name,
-            line_number=line.line_number,
-        )
         return Instruction(
             mnemonic,
             WeightMemType(
                 slot=_parse_weight_selector(
                     operands[0], source_name=source_name, line_number=line.line_number
                 ),
-                rs1=rs1,
-                imm=imm,
+                rs1=_parse_register(
+                    operands[1], source_name=source_name, line_number=line.line_number
+                ),
+            ),
+        )
+
+    if spec.params_type is WeightTensorType:
+        _expect_operand_count(
+            mnemonic,
+            operands,
+            expected=2,
+            source_name=source_name,
+            line_number=line.line_number,
+        )
+        return Instruction(
+            mnemonic,
+            WeightTensorType(
+                slot=_parse_weight_selector(
+                    operands[0], source_name=source_name, line_number=line.line_number
+                ),
+                ms=_parse_mregister(
+                    operands[1], source_name=source_name, line_number=line.line_number
+                ),
+            ),
+        )
+
+    if spec.params_type is MXUAccumulatorType:
+        _expect_operand_count(
+            mnemonic,
+            operands,
+            expected=1,
+            source_name=source_name,
+            line_number=line.line_number,
+        )
+        return Instruction(
+            mnemonic,
+            MXUAccumulatorType(
+                mreg=_parse_mregister(
+                    operands[0], source_name=source_name, line_number=line.line_number
+                ),
             ),
         )
 
@@ -590,27 +623,18 @@ def _assemble_instruction(
         _expect_operand_count(
             mnemonic,
             operands,
-            expected=5,
+            expected=2,
             source_name=source_name,
             line_number=line.line_number,
         )
         return Instruction(
             mnemonic,
             MXUMatmulType(
-                md=_parse_mregister(
+                ms=_parse_mregister(
                     operands[0], source_name=source_name, line_number=line.line_number
                 ),
-                ms=_parse_mregister(
-                    operands[1], source_name=source_name, line_number=line.line_number
-                ),
                 ws=_parse_weight_selector(
-                    operands[2], source_name=source_name, line_number=line.line_number
-                ),
-                ea=_parse_eregister(
-                    operands[3], source_name=source_name, line_number=line.line_number
-                ),
-                eb=_parse_eregister(
-                    operands[4], source_name=source_name, line_number=line.line_number
+                    operands[1], source_name=source_name, line_number=line.line_number
                 ),
             ),
         )
@@ -619,30 +643,18 @@ def _assemble_instruction(
         _expect_operand_count(
             mnemonic,
             operands,
-            expected=6,
+            expected=2,
             source_name=source_name,
             line_number=line.line_number,
         )
         return Instruction(
             mnemonic,
             MXUMatmulAccType(
-                md=_parse_mregister(
+                ms=_parse_mregister(
                     operands[0], source_name=source_name, line_number=line.line_number
                 ),
-                ms=_parse_mregister(
-                    operands[1], source_name=source_name, line_number=line.line_number
-                ),
                 ws=_parse_weight_selector(
-                    operands[2], source_name=source_name, line_number=line.line_number
-                ),
-                mp=_parse_mregister(
-                    operands[3], source_name=source_name, line_number=line.line_number
-                ),
-                ea=_parse_eregister(
-                    operands[4], source_name=source_name, line_number=line.line_number
-                ),
-                eb=_parse_eregister(
-                    operands[5], source_name=source_name, line_number=line.line_number
+                    operands[1], source_name=source_name, line_number=line.line_number
                 ),
             ),
         )

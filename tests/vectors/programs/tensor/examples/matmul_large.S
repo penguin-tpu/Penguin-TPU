@@ -61,8 +61,8 @@ n_loop:
     dma.wait.ch1
     dma.wait.ch0
     vload m1, 0(x4)
-    mxu.push.mxu0 w0, 0(x5)
-    matmul.mxu0 m2, m1, w0, e0, e1
+    vload.weight.mxu0 w0, x5
+    vmatmul.mxu0 m1, w0
     saddi x10, x10, 0x00001000
     saddi x11, x11, 0x00002000
     saddi x9, x9, -1
@@ -75,8 +75,8 @@ k_loop:
     dma.wait.ch1
     dma.wait.ch0
     vload m1, 0(x4)
-    mxu.push.mxu0 w0, 0(x5)
-    matmul.acc.mxu0 m2, m1, w0, m2, e0, e1
+    vload.weight.mxu0 w0, x5
+    vmatmul.acc.mxu0 m1, w0
     saddi x10, x10, 0x00001000
     saddi x11, x11, 0x00002000
     saddi x9, x9, -1
@@ -84,6 +84,7 @@ k_loop:
     nop
     nop
 k_done:
+    vmatpop.bf16.acc.mxu0 m2
     vstore m2, 0(x6)
     vstore m3, 0x1000(x6)
     dma.store.ch2 x19, x6, x14

@@ -39,8 +39,9 @@
 
     seli e0, 0
     seli e1, 0
-    mxu.push.mxu0 w0, 0(x10)
+    vload.weight.mxu0 w0, x10
     vload m1, 0(x1)
 
-    matmul.mxu0 m2, m1, w0, e0, e1
+    vmatmul.mxu0 m1, w0
+    vmatpop.bf16.acc.mxu0 m2
     vstore m2, 0(x20)

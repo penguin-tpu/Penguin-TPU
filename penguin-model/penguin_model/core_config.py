@@ -108,6 +108,9 @@ class InitializationConfig:
     randomize_weight_slots: bool = True
     """Whether MXU weight-slot state powers up with pseudo-random values."""
 
+    randomize_accum_buffers: bool = True
+    """Whether MXU accumulation buffers power up with pseudo-random values."""
+
 
 @dataclass(frozen=True, slots=True)
 class DMAConfig:
@@ -149,7 +152,7 @@ class TensorCoreConfig:
     """The number of FP8 columns stored in one MXU weight tile."""
 
     vmem_alignment_bytes: int = 32
-    """The required VMEM alignment for `vload`, `vstore`, and `mxu.push.*`."""
+    """The required VMEM alignment for `vload`, `vstore`, and `vload.weight.*`."""
 
     matmul_latency_cycles: int = 64
     """The modeled latency of one MXU matmul launch in core cycles."""
@@ -351,6 +354,12 @@ class PenguinCoreConfig:
         return self.tensor.weight_tile_rows * self.tensor.weight_tile_cols_fp8
 
     @property
+    def accum_buffer_bytes(self) -> int:
+        """Total byte count stored in one MXU accumulation buffer."""
+
+        return self.matmul_result_bytes
+
+    @property
     def matmul_result_rows(self) -> int:
         """Number of rows in one MXU result tile."""
 
@@ -389,14 +398,38 @@ class PenguinCoreConfig:
         return self.bandwidth.vmem_transfer_cycles(self.mreg_bytes)
 
     @property
-    def mxu_push_latency_cycles(self) -> int:
-        """Modeled latency of one `mxu.push.*` instruction in core cycles."""
+    def vmatpush_weight_latency_cycles(self) -> int:
+        """Modeled latency of one `vmatpush.mxu*` tensor-to-weight transfer."""
 
         return self.bandwidth.vmem_transfer_cycles(self.weight_slot_bytes)
 
     @property
+    def vload_weight_latency_cycles(self) -> int:
+        """Modeled latency of one `vload.weight.*` VMEM-to-weight transfer."""
+
+        return self.bandwidth.vmem_transfer_cycles(self.weight_slot_bytes)
+
+    @property
+    def vmatpush_acc_latency_cycles(self) -> int:
+        """Modeled latency of one BF16 tensor-pair to accumulator transfer."""
+
+        return self.bandwidth.vmem_transfer_cycles(self.accum_buffer_bytes)
+
+    @property
+    def vmatpop_acc_bf16_latency_cycles(self) -> int:
+        """Modeled latency of one BF16 accumulator export to a tensor-register pair."""
+
+        return self.bandwidth.vmem_transfer_cycles(self.accum_buffer_bytes)
+
+    @property
+    def vmatpop_acc_fp8_latency_cycles(self) -> int:
+        """Modeled latency of one FP8 accumulator export to a tensor register."""
+
+        return self.bandwidth.vmem_transfer_cycles(self.mreg_bytes)
+
+    @property
     def matmul_latency_cycles(self) -> int:
-        """Modeled latency of one `matmul.*` instruction in core cycles."""
+        """Modeled latency of one `vmatmul.*` instruction in core cycles."""
 
         return self.tensor.matmul_latency_cycles
 

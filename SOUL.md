@@ -53,7 +53,13 @@ What exists now:
   - one main `m` register file with `64` registers of `64 x 64` FP8 or `64 x 32` BF16
     whole-register interpretation
   - `32` `e` registers carrying whole-tensor `FP8_E8M0` scales
-  - square `64 x 64` FP8 MXUs with paired-register BF16 writeback
+  - square `64 x 64` FP8 MXUs with local `64 x 64` BF16 accumulation buffers
+  - MXU weight preload via either `vmatpush.mxu*` from tensor registers or
+    `vload.weight.mxu*` from `VMEM`
+  - BF16 accumulator preload/spill via `vmatpush.bf16.acc.*` / `vmatpop.bf16.acc.*`
+    using even-numbered tensor-register pairs
+  - untyped `vmatmul.*` / `vmatmul.acc.*` launch into the BF16 accumulator
+  - FP8 accumulator export via `vmatpop.fp8.acc.*`
 - the formal execution-model baseline now explicitly drops architectural register
   dependency checks in tensor issue and treats `vload` / `vstore` as deterministic
   fixed-latency on-chip transfers
@@ -164,7 +170,7 @@ Reasoning:
 ### Tensor architecture
 
 - 64 tensor registers: `m0..m63`
-- each register is `64 rows x 32 bytes`
+- each register is `64 rows x 64 bytes`
 - one flat tensor register file shared across data types
 - whole-register tensor operations only
 - full-connectivity tensor crossbar between registers and functional units
@@ -187,9 +193,10 @@ Reasoning:
   - `mxu1`: inner-product-tree-based
 - both are architecturally visible
 - both can execute concurrently, but only one new instruction may issue per cycle
-- issue stalls on operand-ready hazards as well as structural conflicts
+- issue stalls on structural conflicts and architecturally defined blocking conditions
 - weight-stationary dataflow
 - each MXU has distinct `w0` and `w1` weight-slot state
+- each MXU has one local `64 x 64` BF16 accumulation buffer
 - MXU does pure matmul/partial-sum accumulation only
 - no bias/residual/activation fusion in the MXU
 
@@ -206,8 +213,11 @@ Reasoning:
 - one whole-tensor `FP8_E8M0` activation scale from an `e` register
 - one whole-tensor `FP8_E8M0` weight scale from an `e` register
 - square `64 x 64` FP8 MXU geometry
-- one full `64 x 64` BF16 result tile writes back as two consecutive `m` registers
-- BF16-to-FP8 conversion is deferred to a later explicit conversion path
+- one full `64 x 64` BF16 result tile lives first in the local accumulation buffer
+- BF16 accumulator state is materialized through two consecutive even/odd `m` registers
+  only when software executes `vmatpop.bf16.acc.*`
+- BF16-to-FP8 conversion is performed by a quantization datapath near the accumulator
+  and exported through `vmatpop.fp8.acc.*`
 
 Reasoning:
 
@@ -771,3 +781,24 @@ Open follow-up for the next FPGA step:
     `Hello World\r\n`
   - reran `uv run pytest tests/cocotb -q` on March 18, 2026 and got
     `10 passed`
+- synced `penguin-model` to the accumulator-based MXU tensor spec revision:
+  - the model no longer uses the old direct-result `mxu.push.*`, `matmul.*`, or
+    `matmul.acc.*` path
+  - architectural tensor state now includes one local BF16 accumulation buffer per MXU,
+    with software-visible movement forms:
+    - `vmatpush.mxu*`
+    - `vload.weight.mxu*`
+    - `vmatpush.bf16.acc.mxu*`
+    - `vmatpop.bf16.acc.mxu*`
+    - `vmatpop.fp8.acc.mxu*`
+    - `vmatmul.mxu*`
+    - `vmatmul.acc.mxu*`
+  - the cycle model now treats these MXU-local ops as explicit MXU-lane work and uses
+    the new `4096`-byte / `8192`-byte transfer latency classes from config
+  - tensor example and Gemma stage programs were updated to export MXU results through
+    `vmatpop.bf16.acc.*`, and their symbol-table sizes / perf baselines were refreshed
+  - while bringing this up, the cycle-accurate frontend picked up a correctness fix:
+    once a taken branch resolves, any IFU-buffered instruction beyond the two legal
+    delay slots is now squashed before it can execute
+  - reran the full software model regression on March 18, 2026:
+    `uv run pytest tests/test_*.py -q` -> `382 passed`

@@ -28,7 +28,7 @@
       kind: "program",
       region: "imem",
       address: 0x00020000,
-      size_bytes: 364,
+      size_bytes: 368,
       file: "matmul_large.S",
     },
     weight_scratch: {
