@@ -719,3 +719,13 @@ Open follow-up for the next FPGA step:
     counts
   - full software verification now passes again with `uv run pytest` reporting
     `283 passed`
+- fixed a cycle-model deadlock in step-limit execution:
+  - once `max_instructions` is reached, the simulator now treats the squashed frontend
+    as drained when IFU/IDU buffers are empty instead of waiting for a looping fetch PC
+    to leave program range
+  - refreshed the affected software perf baselines and tensor intermediate-state tests
+    to the current cycle-accurate frontend contract
+  - fixed the checked-in symbol-table size for the new DDR UART hello vector so the
+    top-level Python test sweep can validate it
+  - the current top-level software regression is `uv run pytest tests/test_*.py` with
+    `294 passed`

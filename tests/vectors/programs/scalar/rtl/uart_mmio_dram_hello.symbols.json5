@@ -1,0 +1,11 @@
+{
+  symbols: {
+    program: {
+      kind: "program",
+      region: "imem",
+      address: 0x00100000,
+      size_bytes: 1032,
+      file: "uart_mmio_dram_hello.S",
+    },
+  },
+}

@@ -118,7 +118,7 @@ def test_large_matmul_first_partial_tile_matches_reference_and_updates_scalar_st
         core.state.load_mreg(3),
     ).to(torch.float32)
 
-    assert perf.instructions == 58
+    assert perf.instructions == 60
     assert core.state.stop_reason == StopReason.STEP_LIMIT
     assert torch.equal(actual, expected)
     assert core.state.read_xreg(10) == ACT_DRAM_BASE + 0x1000
@@ -136,7 +136,7 @@ def test_large_matmul_first_output_tile_is_correct_in_tensor_and_dram_state() ->
         core.state.load_mreg(2),
         core.state.load_mreg(3),
     ).to(torch.float32)
-    assert perf.instructions == 80
+    assert perf.instructions == 81
     assert core.state.stop_reason == StopReason.STEP_LIMIT
     assert torch.equal(tensor_tile, expected)
     assert core.state.read_xreg(19) == OUTPUT_DRAM_BASE

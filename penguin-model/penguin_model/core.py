@@ -949,8 +949,11 @@ class Core:
             )
 
     def _pipeline_drained(self) -> bool:
+        ifu_drained = self._ifu.is_finished() or (
+            self._step_limit_reached and not self._ifu.output.is_valid()
+        )
         return (
-            self._ifu.is_finished()
+            ifu_drained
             and self._idu.is_finished()
             and all(not exu.has_in_flight for exu in self._exus.values())
         )

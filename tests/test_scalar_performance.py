@@ -15,7 +15,7 @@ def test_scalar_benchmark_dma_stage_and_reduce_perf() -> None:
 
     assert core.state.vmem.load_u32(VMEM_BASE + 0x280) == sum(values)
     assert perf.instructions == 66
-    assert perf.cycles == 89
+    assert perf.cycles == 88
     assert perf.bytes_read == 64
     assert perf.bytes_written == 36
 
