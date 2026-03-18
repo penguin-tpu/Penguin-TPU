@@ -4,6 +4,21 @@ from __future__ import annotations
 
 from .instructions import BType, EmptyType, IType, Instruction, JType, RType, SType, UType, VPUBinaryType
 
+LOAD_FUNCT3 = {
+    "lb": 0b000,
+    "lh": 0b001,
+    "lw": 0b010,
+    "lbu": 0b100,
+    "lhu": 0b101,
+    "sld": 0b010,
+}
+STORE_FUNCT3 = {
+    "sb": 0b000,
+    "sh": 0b001,
+    "sw": 0b010,
+    "sst": 0b010,
+}
+
 OPCODE_LOAD = 0b0000011
 OPCODE_MISC_MEM = 0b0001111
 OPCODE_OP_IMM = 0b0010011
@@ -141,17 +156,19 @@ def encode_scalar_instruction(instruction: Instruction) -> int:
         }[mnemonic]
         return _mask_u32(_encode_b_type(OPCODE_BRANCH, funct3, params))
 
-    if mnemonic == "sld":
+    if mnemonic in LOAD_FUNCT3:
         if not isinstance(params, IType):
-            raise TypeError("sld expects IType operands")
+            raise TypeError(f"{mnemonic} expects IType operands")
         _check_range("imm", params.imm, 12)
-        return _mask_u32(_encode_i_type(OPCODE_LOAD, 0b010, params.imm, params.rs1, params.rd))
+        return _mask_u32(
+            _encode_i_type(OPCODE_LOAD, LOAD_FUNCT3[mnemonic], params.imm, params.rs1, params.rd)
+        )
 
-    if mnemonic == "sst":
+    if mnemonic in STORE_FUNCT3:
         if not isinstance(params, SType):
-            raise TypeError("sst expects SType operands")
+            raise TypeError(f"{mnemonic} expects SType operands")
         _check_range("imm", params.imm, 12)
-        return _mask_u32(_encode_s_type(OPCODE_STORE, 0b010, params))
+        return _mask_u32(_encode_s_type(OPCODE_STORE, STORE_FUNCT3[mnemonic], params))
 
     if mnemonic in {"saddi", "sslti", "ssltiu", "sxori", "sori", "sandi"}:
         if not isinstance(params, IType):

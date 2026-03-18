@@ -39,6 +39,7 @@ from .instructions import (
     WeightMemType,
     XLUTransposeType,
 )
+from .isa import SCALAR_LOAD_MNEMONICS
 from .memory import Memory
 from .tensor import (
     compute_bf16_matmul,
@@ -114,7 +115,7 @@ def _format_instruction(instruction: Instruction) -> str:
     if isinstance(params, RType):
         return f"{mnemonic} x{params.rd}, x{params.rs1}, x{params.rs2}"
     if isinstance(params, IType):
-        if mnemonic == "sld":
+        if mnemonic in SCALAR_LOAD_MNEMONICS:
             return f"{mnemonic} x{params.rd}, {params.imm}(x{params.rs1})"
         if mnemonic == "sjalr":
             return f"{mnemonic} x{params.rd}, x{params.rs1}, {params.imm}"
@@ -504,7 +505,7 @@ class Core:
         elif isinstance(params, IType):
             require_xreg(params.rs1)
             require_xreg(params.rd)
-            if instruction.mnemonic == "sld":
+            if instruction.mnemonic in SCALAR_LOAD_MNEMONICS:
                 require_vmem()
         elif isinstance(params, SType):
             require_xreg(params.rs1)
@@ -582,7 +583,7 @@ class Core:
 
         if isinstance(params, RType | IType | UType | JType):
             reserve_xreg(params.rd)
-            if isinstance(params, IType) and instruction.mnemonic == "sld":
+            if isinstance(params, IType) and instruction.mnemonic in SCALAR_LOAD_MNEMONICS:
                 reserve_vmem(completion_cycle)
         elif isinstance(params, ScaleImmType | ScaleMemType):
             reserve_ereg(params.ed)

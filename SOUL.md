@@ -11,9 +11,8 @@ What exists now:
   - `penguin-compiler`
   - `penguin-model`
 - a working scalar integer functional model in `penguin-model`
-- scalar tests covering the older RV32I-derived scalar subset; the formal architecture
-  spec now moves the scalar core baseline to full `RV32I`, including byte and halfword
-  VMEM load/store instructions
+- scalar tests and the Python model now cover the full `RV32I`-style VMEM load/store
+  baseline: `lb` / `lh` / `lw` / `lbu` / `lhu` and `sb` / `sh` / `sw`
 - a directed scalar-program testbench for the functional/perf model, including
   label-resolved self-checking programs inspired by `riscv-tests` `rv32ui`
 - a GitHub Actions CI workflow that installs the `uv` workspace and runs
@@ -333,7 +332,9 @@ Implemented today:
 - scalar control flow now implements the spec-defined 2 branch/jump delay slots
 - a younger control-transfer instruction in a delay slot now overrides any older pending
   redirect in both the spec and the model
-- VMEM-only scalar `sld` / `sst`
+- VMEM-only scalar `lb` / `lh` / `lw` / `lbu` / `lhu` and `sb` / `sh` / `sw`
+- the assembler and scalar binary encoder still accept legacy `sld` / `sst` aliases so
+  older checked-in vectors do not need a bulk rename during the ISA transition
 - DMA channel issue/wait behavior for DRAM <-> VMEM byte transfers
 - DMA completion timing modeled with 10-cycle DRAM latency
 - trace and execution modeling now separate `EXU.SALU` from `EXU.DMA`

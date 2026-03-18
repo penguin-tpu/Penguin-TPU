@@ -45,7 +45,7 @@ from penguin_model import (
     sblt,
     sbltu,
     sbne,
-    sld,
+    lw,
 )
 from penguin_model.testbench import TEST_CORE_CONFIG, load_scalar_program
 
@@ -61,10 +61,16 @@ EXPECTED_BASE_MNEMONICS = {
     "sbge",
     "sbltu",
     "sbgeu",
-    "sld",
+    "lb",
+    "lbu",
+    "lh",
+    "lhu",
+    "lw",
     "seli",
     "seld",
-    "sst",
+    "sb",
+    "sh",
+    "sw",
     "saddi",
     "sslti",
     "ssltiu",
@@ -185,15 +191,62 @@ def test_instruction_semantics_are_stateless_functions_over_state_and_params() -
     state = _fresh_state()
     state.vmem.store_u32(VMEM_BASE + 0x08, 0xABCD_EF01)
 
-    sld(state, IType(rd=5, rs1=0, imm=VMEM_BASE + 0x08))
+    lw(state, IType(rd=5, rs1=0, imm=VMEM_BASE + 0x08))
 
     assert state.read_xreg(5) == 0xABCD_EF01
 
 
 def test_instruction_decorator_registers_mnemonic_metadata() -> None:
-    assert sld.mnemonic == "sld"
-    assert INSTRUCTION_SPECS["sld"].semantics is sld
-    assert INSTRUCTION_SPECS["sld"].params_type is IType
+    assert lw.mnemonic == "lw"
+    assert INSTRUCTION_SPECS["lw"].semantics is lw
+    assert INSTRUCTION_SPECS["lw"].params_type is IType
+
+
+@pytest.mark.parametrize(
+    ("mnemonic", "bytes_", "expected"),
+    [
+        pytest.param("lb", [0x80], 0xFFFF_FF80, id="lb-sign-extend"),
+        pytest.param("lbu", [0x80], 0x0000_0080, id="lbu-zero-extend"),
+        pytest.param("lh", [0x34, 0xF2], 0xFFFF_F234, id="lh-sign-extend"),
+        pytest.param("lhu", [0x34, 0xF2], 0x0000_F234, id="lhu-zero-extend"),
+        pytest.param("lw", [0x78, 0x56, 0x34, 0xF2], 0xF234_5678, id="lw-word"),
+    ],
+)
+def test_scalar_load_variants_follow_rv32i_sign_and_zero_extension(
+    mnemonic: str, bytes_: list[int], expected: int
+) -> None:
+    state = _fresh_state()
+    address = VMEM_BASE + 0x20
+    _store_bytes(state.vmem, address, bytes_)
+
+    INSTRUCTION_SPECS[mnemonic].semantics(state, IType(rd=7, rs1=0, imm=address))
+
+    assert state.read_xreg(7) == expected
+    assert state.stop_reason is None
+    assert state.perf.bytes_read == len(bytes_)
+
+
+@pytest.mark.parametrize(
+    ("mnemonic", "value", "expected_bytes"),
+    [
+        pytest.param("sb", 0x1234_5678, [0x78], id="sb"),
+        pytest.param("sh", 0x1234_5678, [0x78, 0x56], id="sh"),
+        pytest.param("sw", 0x1234_5678, [0x78, 0x56, 0x34, 0x12], id="sw"),
+    ],
+)
+def test_scalar_store_variants_write_low_order_bytes_little_endian(
+    mnemonic: str, value: int, expected_bytes: list[int]
+) -> None:
+    state = _fresh_state()
+    address = VMEM_BASE + 0x40
+    state.write_xreg(3, address)
+    state.write_xreg(4, value)
+
+    INSTRUCTION_SPECS[mnemonic].semantics(state, SType(rs1=3, rs2=4, imm=0))
+
+    assert state.vmem.read(address, len(expected_bytes)).tolist() == expected_bytes
+    assert state.stop_reason is None
+    assert state.perf.bytes_written == len(expected_bytes)
 
 
 @pytest.mark.parametrize(
@@ -524,7 +577,7 @@ def test_dma_store_captures_vmem_payload_at_issue_time() -> None:
             Instruction("dma.store.ch0", DMAType(dram_rs=1, vmem_rs=2, size_rs=3)),
             Instruction("saddi", IType(rd=4, rs1=0, imm=VMEM_BASE + 0x40)),
             Instruction("saddi", IType(rd=5, rs1=0, imm=0xA5A5_5A5A)),
-            Instruction("sst", SType(rs1=4, rs2=5, imm=0)),
+            Instruction("sw", SType(rs1=4, rs2=5, imm=0)),
             Instruction("dma.wait.ch0", EmptyType()),
         ]
     )
@@ -749,7 +802,7 @@ def test_dump_json_trace_emits_region_aware_trace(tmp_path: Path) -> None:
     stalled_fetch_event = next(
         event
         for event in events
-        if event.get("cat") == "fetch" and "sld x4, 0(x2)" in event["name"]
+        if event.get("cat") == "fetch" and "lw x4, 0(x2)" in event["name"]
     )
     early_fetch_events = [
         event

@@ -39,6 +39,11 @@ _MREGISTER_RE = re.compile(r"m(?P<index>[0-9]|[1-5][0-9]|6[0-3])$")
 _WREGISTER_RE = re.compile(r"w(?P<index>[0-1])$")
 _LABEL_RE = re.compile(r"(?P<label>[A-Za-z_][A-Za-z0-9_]*)\s*:")
 _MEMORY_OPERAND_RE = re.compile(r"(?P<imm>.+)\((?P<rs1>x[0-9]+)\)$")
+_MNEMONIC_ALIASES: Mapping[str, str] = {
+    "sld": "lw",
+    "sst": "sw",
+}
+_I_TYPE_MEMORY_MNEMONICS = frozenset({"lb", "lh", "lw", "lbu", "lhu", "seld"})
 
 _DEFAULT_SYMBOLS: Mapping[str, int] = {
     "DRAM_BASE": DRAM_BASE,
@@ -196,7 +201,7 @@ def _assemble_instruction(
     labels: Mapping[str, int],
     source_name: str,
 ) -> Instruction:
-    mnemonic = line.mnemonic
+    mnemonic = _MNEMONIC_ALIASES.get(line.mnemonic, line.mnemonic)
     operands = line.operands
 
     if mnemonic == "nop":
@@ -257,7 +262,7 @@ def _assemble_instruction(
         )
 
     if spec.params_type is IType:
-        if mnemonic == "sld":
+        if mnemonic in _I_TYPE_MEMORY_MNEMONICS:
             _expect_operand_count(
                 mnemonic,
                 operands,

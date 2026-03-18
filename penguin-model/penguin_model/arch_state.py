@@ -265,9 +265,14 @@ class ArchState:
                 cycle=self.trace_end_cycle if cycle is None else cycle,
             )
 
+    def _check_vmem_alignment(self, address: int, *, align: int, reason: StopReason) -> bool:
+        if address % align != 0:
+            self.stop(reason)
+            return False
+        return True
+
     def load_vmem_u32(self, address: int) -> int | None:
-        if address % 4 != 0:
-            self.stop(StopReason.MISALIGNED_LOAD)
+        if not self._check_vmem_alignment(address, align=4, reason=StopReason.MISALIGNED_LOAD):
             return None
         value = self.vmem.load_u32(address)
         self.perf.bytes_read += 4
@@ -275,14 +280,37 @@ class ArchState:
         return value
 
     def load_vmem_u8(self, address: int) -> int:
-        value = int(self.vmem.read(address, 1)[0].item())
+        value = self.vmem.load_u8(address)
         self.perf.bytes_read += 1
         self._log_memory_access("vmem", "load", address, value, size=1)
         return value
 
+    def load_vmem_u16(self, address: int) -> int | None:
+        if not self._check_vmem_alignment(address, align=2, reason=StopReason.MISALIGNED_LOAD):
+            return None
+        value = self.vmem.load_u16(address)
+        self.perf.bytes_read += 2
+        self._log_memory_access("vmem", "load", address, value, size=2)
+        return value
+
+    def store_vmem_u8(self, address: int, value: int) -> bool:
+        value &= 0xFF
+        self.perf.bytes_written += 1
+        self.vmem.store_u8(address, value)
+        self._log_memory_access("vmem", "store", address, value, size=1)
+        return True
+
+    def store_vmem_u16(self, address: int, value: int) -> bool:
+        if not self._check_vmem_alignment(address, align=2, reason=StopReason.MISALIGNED_STORE):
+            return False
+        value &= 0xFFFF
+        self.perf.bytes_written += 2
+        self.vmem.store_u16(address, value)
+        self._log_memory_access("vmem", "store", address, value, size=2)
+        return True
+
     def store_vmem_u32(self, address: int, value: int) -> bool:
-        if address % 4 != 0:
-            self.stop(StopReason.MISALIGNED_STORE)
+        if not self._check_vmem_alignment(address, align=4, reason=StopReason.MISALIGNED_STORE):
             return False
         value &= 0xFFFF_FFFF
         self.perf.bytes_written += 4

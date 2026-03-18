@@ -135,6 +135,13 @@ class Memory:
         data = self.read(address, 4)
         return int.from_bytes(bytes(data.tolist()), byteorder="little", signed=False)
 
+    def load_u16(self, address: int) -> int:
+        data = self.read(address, 2)
+        return int.from_bytes(bytes(data.tolist()), byteorder="little", signed=False)
+
+    def load_u8(self, address: int) -> int:
+        return int(self.read(address, 1)[0].item())
+
     def store_u32(self, address: int, value: int) -> None:
         word = value & 0xFFFF_FFFF
         data = torch.tensor(
@@ -147,6 +154,20 @@ class Memory:
             dtype=torch.uint8,
         )
         self.write(address, data)
+
+    def store_u16(self, address: int, value: int) -> None:
+        halfword = value & 0xFFFF
+        data = torch.tensor(
+            [
+                (halfword >> 0) & 0xFF,
+                (halfword >> 8) & 0xFF,
+            ],
+            dtype=torch.uint8,
+        )
+        self.write(address, data)
+
+    def store_u8(self, address: int, value: int) -> None:
+        self.write(address, torch.tensor([value & 0xFF], dtype=torch.uint8))
 
     def load_f32(self, address: int) -> float:
         return struct.unpack("<f", struct.pack("<I", self.load_u32(address)))[0]

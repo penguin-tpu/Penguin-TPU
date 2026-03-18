@@ -41,7 +41,7 @@ class AssemblyBuilder:
         self.lines.append(f"    {mnemonic} x{rd}, x{rs1}, x{rs2}")
 
     def i(self, mnemonic: str, *, rd: int, rs1: int, imm: int | str) -> None:
-        if mnemonic == "sld":
+        if mnemonic in {"lb", "lh", "lw", "lbu", "lhu", "seld"}:
             self.lines.append(f"    {mnemonic} x{rd}, {_format_expr(imm)}(x{rs1})")
             return
         self.lines.append(f"    {mnemonic} x{rd}, x{rs1}, {_format_expr(imm)}")
@@ -170,7 +170,7 @@ def _directed_jalr_case() -> str:
 def _directed_load_case() -> str:
     builder = AssemblyBuilder()
     builder.li(1, VMEM_BASE + 0x40)
-    builder.i("sld", rd=3, rs1=1, imm=0)
+    builder.i("lw", rd=3, rs1=1, imm=0)
     _expect_reg_eq(builder, reg=3, expected=3)
     return _finish_program(builder)
 
@@ -179,8 +179,8 @@ def _directed_store_case() -> str:
     builder = AssemblyBuilder()
     builder.li(1, VMEM_BASE + 0x60)
     builder.li(2, 8)
-    builder.s("sst", rs1=1, rs2=2, imm=0)
-    builder.i("sld", rd=3, rs1=1, imm=0)
+    builder.s("sw", rs1=1, rs2=2, imm=0)
+    builder.i("lw", rd=3, rs1=1, imm=0)
     _expect_reg_eq(builder, reg=3, expected=8)
     return _finish_program(builder)
 
@@ -188,7 +188,7 @@ def _directed_store_case() -> str:
 def _directed_x0_load_case() -> str:
     builder = AssemblyBuilder()
     builder.li(1, VMEM_BASE + 0x48)
-    builder.i("sld", rd=0, rs1=1, imm=0)
+    builder.i("lw", rd=0, rs1=1, imm=0)
     _expect_reg_eq(builder, reg=0, expected=0)
     return _finish_program(builder)
 
@@ -206,13 +206,13 @@ def _reduction_program(*, src_addr: int, out_addr: int, count: int) -> str:
     builder.li(3, 0)
     builder.li(5, out_addr)
     builder.label("loop")
-    builder.i("sld", rd=4, rs1=1, imm=0)
+    builder.i("lw", rd=4, rs1=1, imm=0)
     builder.r("sadd", rd=3, rs1=3, rs2=4)
     builder.i("saddi", rd=1, rs1=1, imm=4)
     builder.i("saddi", rd=2, rs1=2, imm=-1)
     builder.branch("sbne", rs1=2, rs2=0, target="loop")
     builder.delay_slots()
-    builder.s("sst", rs1=5, rs2=3, imm=0)
+    builder.s("sw", rs1=5, rs2=3, imm=0)
     return builder.emit()
 
 
@@ -228,7 +228,7 @@ def _address_generation_program(
     builder.li(4, cols)
     builder.i("saddi", rd=5, rs1=2, imm=0)
     builder.label("col_loop")
-    builder.s("sst", rs1=1, rs2=5, imm=0)
+    builder.s("sw", rs1=1, rs2=5, imm=0)
     builder.i("saddi", rd=1, rs1=1, imm=4)
     builder.i("saddi", rd=5, rs1=5, imm=4)
     builder.i("saddi", rd=4, rs1=4, imm=-1)
@@ -251,15 +251,15 @@ def _copy_and_checksum_program(
     builder.li(4, 0)
     builder.li(5, checksum_addr)
     builder.label("loop")
-    builder.i("sld", rd=6, rs1=1, imm=0)
-    builder.s("sst", rs1=2, rs2=6, imm=0)
+    builder.i("lw", rd=6, rs1=1, imm=0)
+    builder.s("sw", rs1=2, rs2=6, imm=0)
     builder.r("sadd", rd=4, rs1=4, rs2=6)
     builder.i("saddi", rd=1, rs1=1, imm=4)
     builder.i("saddi", rd=2, rs1=2, imm=4)
     builder.i("saddi", rd=3, rs1=3, imm=-1)
     builder.branch("sbne", rs1=3, rs2=0, target="loop")
     builder.delay_slots()
-    builder.s("sst", rs1=5, rs2=4, imm=0)
+    builder.s("sw", rs1=5, rs2=4, imm=0)
     return builder.emit()
 
 
@@ -333,14 +333,14 @@ def _model_vmem_sum_loop() -> str:
     builder.li(2, 4)
     builder.li(3, 0)
     builder.label("loop")
-    builder.i("sld", rd=4, rs1=1, imm=0)
+    builder.i("lw", rd=4, rs1=1, imm=0)
     builder.r("sadd", rd=3, rs1=3, rs2=4)
     builder.i("saddi", rd=1, rs1=1, imm=4)
     builder.i("saddi", rd=2, rs1=2, imm=-1)
     builder.branch("sbne", rs1=2, rs2=0, target="loop")
     builder.nop()
     builder.nop()
-    builder.s("sst", rs1=0, rs2=3, imm=VMEM_BASE + 0x80)
+    builder.s("sw", rs1=0, rs2=3, imm=VMEM_BASE + 0x80)
     return builder.emit()
 
 
@@ -370,9 +370,9 @@ def _model_dma_requires_wait() -> str:
     builder.li(2, VMEM_BASE + 0x20)
     builder.li(3, 32)
     builder.dma("dma.load.ch0", dram_rs=1, vmem_rs=2, size_rs=3)
-    builder.i("sld", rd=4, rs1=2, imm=0)
+    builder.i("lw", rd=4, rs1=2, imm=0)
     builder.empty("dma.wait.ch0")
-    builder.i("sld", rd=5, rs1=2, imm=0)
+    builder.i("lw", rd=5, rs1=2, imm=0)
     return builder.emit()
 
 
@@ -386,7 +386,7 @@ def _model_salu_progress_while_dma() -> str:
     for _ in range(9):
         builder.i("saddi", rd=6, rs1=6, imm=1)
     builder.empty("dma.wait.ch0")
-    builder.i("sld", rd=7, rs1=2, imm=0)
+    builder.i("lw", rd=7, rs1=2, imm=0)
     return builder.emit()
 
 
@@ -423,7 +423,7 @@ def _model_dma_channels_independent() -> str:
 def _model_misaligned_load() -> str:
     builder = AssemblyBuilder()
     builder.li(1, 2)
-    builder.i("sld", rd=2, rs1=1, imm=0)
+    builder.i("lw", rd=2, rs1=1, imm=0)
     return builder.emit()
 
 
@@ -431,7 +431,7 @@ def _model_misaligned_store() -> str:
     builder = AssemblyBuilder()
     builder.li(1, 2)
     builder.li(2, 0x1234)
-    builder.s("sst", rs1=1, rs2=2, imm=0)
+    builder.s("sw", rs1=1, rs2=2, imm=0)
     return builder.emit()
 
 
@@ -477,8 +477,8 @@ def _model_trace_program() -> str:
     builder.li(3, 32)
     builder.dma("dma.load.ch0", dram_rs=1, vmem_rs=2, size_rs=3)
     builder.empty("dma.wait.ch0")
-    builder.i("sld", rd=4, rs1=2, imm=0)
-    builder.s("sst", rs1=0, rs2=4, imm=VMEM_BASE + 0x90)
+    builder.i("lw", rd=4, rs1=2, imm=0)
+    builder.s("sw", rs1=0, rs2=4, imm=VMEM_BASE + 0x90)
     return builder.emit()
 
 
@@ -493,12 +493,12 @@ def _example_scalar_matmul() -> str:
     builder.li(3, 0)
     builder.empty("dma.wait.ch0")
     builder.label("loop")
-    builder.i("sld", rd=4, rs1=1, imm=0)
+    builder.i("lw", rd=4, rs1=1, imm=0)
     builder.r("sadd", rd=3, rs1=3, rs2=4)
     builder.i("saddi", rd=1, rs1=1, imm=4)
     builder.i("saddi", rd=2, rs1=2, imm=-1)
     builder.branch("sbne", rs1=2, rs2=0, target="loop")
-    builder.s("sst", rs1=0, rs2=3, imm=VMEM_BASE + 0x80)
+    builder.s("sw", rs1=0, rs2=3, imm=VMEM_BASE + 0x80)
     return builder.emit()
 
 
