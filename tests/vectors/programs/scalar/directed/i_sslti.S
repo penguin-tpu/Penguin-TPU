@@ -4,6 +4,8 @@
     sslti x3, x1, -8
     li x30, 0x00000001
     sbne x3, x30, fail_1
+    nop
+    nop
     sjal x0, done
     nop
     nop

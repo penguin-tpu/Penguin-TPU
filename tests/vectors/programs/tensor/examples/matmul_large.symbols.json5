@@ -3,7 +3,7 @@
     activation_scratch: {
       kind: "scratch",
       region: "vmem",
-      address: 0x08000000,
+      address: 0x20000000,
       size_bytes: 4096,
     },
     activation_tiles: {
@@ -15,7 +15,7 @@
     output_scratch: {
       kind: "scratch",
       region: "vmem",
-      address: 0x08002000,
+      address: 0x20002000,
       size_bytes: 8192,
     },
     output_tiles: {
@@ -27,14 +27,14 @@
     program: {
       kind: "program",
       region: "imem",
-      address: 0x00100000,
+      address: 0x00020000,
       size_bytes: 364,
       file: "matmul_large.S",
     },
     weight_scratch: {
       kind: "scratch",
       region: "vmem",
-      address: 0x08001000,
+      address: 0x20001000,
       size_bytes: 4096,
     },
     weight_tiles: {

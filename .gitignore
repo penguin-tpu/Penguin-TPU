@@ -163,3 +163,4 @@ cython_debug/
 VivadoProject/
 vivado*.log
 vivado*.jou
+vivado_pid*.str

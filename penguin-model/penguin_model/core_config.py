@@ -52,15 +52,15 @@ class MemoryMapConfig:
 
     imem: MemoryRegionConfig = field(
         default_factory=lambda: MemoryRegionConfig(
-            base=0x0010_0000,
-            size=32 * 1024,
+            base=0x0002_0000,
+            size=64 * 1024,
         )
     )
     """The on-chip instruction-memory address range."""
 
     vmem: MemoryRegionConfig = field(
         default_factory=lambda: MemoryRegionConfig(
-            base=0x0800_0000,
+            base=0x2000_0000,
             size=1 * 1024 * 1024,
         )
     )
@@ -184,7 +184,7 @@ class BandwidthConfig:
     offchip_link_core_cycles_per_beat: int = 2
     """The number of core cycles required for one off-chip serialized beat."""
 
-    vmem_bus_width_bits: int = 128
+    vmem_bus_width_bits: int = 512
     """The width of the on-chip VMEM/system bus in bits."""
 
     vmem_bus_core_cycles_per_beat: int = 1

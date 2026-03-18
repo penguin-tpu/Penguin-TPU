@@ -33,6 +33,7 @@ class StopReason(str, Enum):
     PROGRAM_END = "program_end"
     ECALL = "ecall"
     EBREAK = "ebreak"
+    ILLEGAL_INSTRUCTION = "illegal_instruction"
     MISALIGNED_LOAD = "misaligned_load"
     MISALIGNED_STORE = "misaligned_store"
     INSTRUCTION_ADDRESS_MISALIGNED = "instruction_address_misaligned"
@@ -75,7 +76,6 @@ class ArchState:
     ereg: list[int] | None = None
     xreg: list[int] | None = None
     pc: int = 0
-    mem_base: int = 0
     perf: PerformanceCounters = field(default_factory=PerformanceCounters)
     stop_reason: StopReason | None = None
     next_pc: int | None = None
@@ -220,18 +220,9 @@ class ArchState:
             channel.pending = None
 
     def set_next_pc(self, value: int) -> None:
-        if value % 4 != 0:
-            self.stop(StopReason.INSTRUCTION_ADDRESS_MISALIGNED)
-            return
         self.next_pc = value & 0xFFFF_FFFF
         self.delay_slots_remaining = self.config.scalar.control_flow_delay_slots
         self.control_transfer_set = True
-
-    def read_mem_base(self) -> int:
-        return self.mem_base
-
-    def write_mem_base(self, value: int) -> None:
-        self.mem_base = int(value)
 
     @property
     def bandwidth(self):
@@ -239,11 +230,8 @@ class ArchState:
 
         return self.config.bandwidth
 
-    def extend_address(self, address: int) -> int:
-        return (self.mem_base << 32) | (int(address) & 0xFFFF_FFFF)
-
     def resolve_indirect_address(self, rs1: int, imm: int = 0) -> int:
-        return self.extend_address((self.read_xreg(rs1) + imm) & 0xFFFF_FFFF)
+        return (self.read_xreg(rs1) + imm) & 0xFFFF_FFFF
 
     def _log_memory_access(
         self,

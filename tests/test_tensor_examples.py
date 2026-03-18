@@ -24,7 +24,7 @@ def test_matmul_example_matches_pytorch_and_emits_trace(tmp_path) -> None:
     assert tuple(result.output.shape) == (64, 64)
     assert torch.equal(result.output, result.golden)
     assert result.perf.instructions == 41
-    assert result.perf.cycles == 1_127
+    assert result.perf.cycles == 359
 
 
 def test_linear_example_matches_pytorch_and_emits_trace(tmp_path) -> None:
@@ -37,7 +37,7 @@ def test_linear_example_matches_pytorch_and_emits_trace(tmp_path) -> None:
     assert tuple(result.output.shape) == (128, 128)
     assert torch.equal(result.output, result.golden)
     assert result.perf.instructions == 71
-    assert result.perf.cycles == 4_274
+    assert result.perf.cycles == 1_202
 
 
 def test_large_matmul_example_matches_pytorch_and_emits_trace(tmp_path) -> None:
@@ -50,12 +50,11 @@ def test_large_matmul_example_matches_pytorch_and_emits_trace(tmp_path) -> None:
     assert tuple(result.output.shape) == (128, 128)
     assert torch.equal(result.output, result.golden)
     assert result.perf.instructions == 229
-    assert result.perf.cycles == 39_344
+    assert result.perf.cycles == 34_736
     assert result.perf.bytes_read == 163_840
     assert result.perf.bytes_written == 131_072
-    assert result.perf.instructions_by_opcode["sbeq"] > 0
-    assert result.perf.instructions_by_opcode["sbne"] > 0
-    assert result.perf.instructions_by_opcode["sjal"] > 0
+    assert result.perf.instructions_by_opcode["bne"] > 0
+    assert result.perf.instructions_by_opcode["jal"] > 0
 
 
 def test_large_linear_example_matches_pytorch_and_emits_trace(tmp_path) -> None:
@@ -68,10 +67,9 @@ def test_large_linear_example_matches_pytorch_and_emits_trace(tmp_path) -> None:
     assert tuple(result.output.shape) == (192, 192)
     assert torch.equal(result.output, result.golden)
     assert result.perf.instructions == 497
-    assert result.perf.cycles == 92_498
+    assert result.perf.cycles == 78_674
     assert result.perf.bytes_read == 442_368
     assert result.perf.bytes_written == 294_912
-    assert result.perf.instructions_by_opcode["sbeq"] > 0
-    assert result.perf.instructions_by_opcode["sbne"] > 0
-    assert result.perf.instructions_by_opcode["sjal"] > 0
+    assert result.perf.instructions_by_opcode["bne"] > 0
+    assert result.perf.instructions_by_opcode["jal"] > 0
     assert result.perf.instructions_by_opcode["vadd"] > 0

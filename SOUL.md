@@ -109,6 +109,16 @@ What exists now:
   - bundle-loader error handling for non-program entry symbols and program-size mismatch
   - assembler parsing of symbol/label expressions inside tensor-memory operands
   - VPU in-place destination aliasing semantics against BF16/PyTorch reference behavior
+- the scalar software verification baseline is now aligned with the current
+  architecture/uarch specs instead of the older byte-PC contract:
+  - directed scalar vectors and imported `rv32ui` vectors now target the word-indexed
+    `pc`
+  - `jal` / `jalr` self-checks now validate `pc + 1` link-register semantics
+  - generated scalar directed vectors no longer place control-flow ops in delay slots
+  - trace tests now explicitly cover illegal control flow in both the first and second
+    delay-slot positions, including the case where the older branch is not taken
+  - the software CI target `uv run pytest --ignore=tests/cocotb` now passes at
+    `381` tests
 - user-facing READMEs now describe the real current software surfaces rather than the
   original scaffold-only state:
   - current example entry points
@@ -541,8 +551,9 @@ Open follow-up for the next FPGA step:
 
 ## Scalar RTL Planning
 
-- added `docs/plans/scalar-core-encoding-and-rtl-plan.md` to capture the
-  proposed scalar binary encoding baseline plus a step-by-step RTL bring-up plan
+- folded the old scalar RTL bring-up plan into
+  `docs/specs/microarchitecture-spec.md` and `TODO.md` so the normative content and
+  active tasks now live in the main spec / task-tracking surfaces
 - current planning direction is:
   - keep scalar binary encodings RV32I-compatible for the first RTL slice
   - keep Penguin-specific `s*` mnemonics at the assembly/spec layer
@@ -730,3 +741,23 @@ Open follow-up for the next FPGA step:
     top-level Python test sweep can validate it
   - the current top-level software regression is `uv run pytest tests/test_*.py` with
     `294 passed`
+- aligned `penguin-model` to the refactored arch/uarch scalar baseline:
+  - scalar config defaults now match the current spec (`IMEM_BASE=0x0002_0000`,
+    `IMEM_SIZE=64 KiB`, `VMEM_BASE=0x2000_0000`, `VMEM_BUS_WIDTH_BITS=512`)
+  - the scalar architectural model now uses standard `RV32I` mnemonics in the canonical
+    registry, with word-indexed architectural `pc`, `jal` / `jalr` link value `pc + 1`,
+    and illegal control flow in either delay-slot position halting with
+    `StopReason.ILLEGAL_INSTRUCTION`
+  - assembler/encoder/text-program loading now follow the word-indexed `pc` contract,
+    while legacy `s*` textual mnemonics remain accepted as compatibility aliases
+  - architectural `MEM_BASE` handling was removed from the Python model to match the
+    current spec
+  - checked-in scalar/tensor symbol sidecars and VMEM-address literals were refreshed to
+    the new memory map, and roofline/tensor/Gemma perf baselines were updated to the
+    `512`-bit VMEM bus
+  - stale scalar test-vector suites that still assume the old scalar contract are now
+    explicitly skipped in software regression until regenerated:
+    - imported `rv32ui` vectors still assume byte-addressed `pc`
+    - generated scalar directed vectors still encode control flow in delay slots
+  - current top-level software regression remains green under the new contract:
+    `uv run pytest tests/test_*.py -q` -> `294 passed, 84 skipped`

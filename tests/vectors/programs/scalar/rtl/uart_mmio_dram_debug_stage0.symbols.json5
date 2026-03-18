@@ -1,0 +1,11 @@
+{
+  symbols: {
+    program: {
+      kind: "program",
+      region: "imem",
+      address: 0x00020000,
+      size_bytes: 184,
+      file: "uart_mmio_dram_debug_stage0.S",
+    },
+  },
+}

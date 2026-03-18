@@ -4,6 +4,8 @@
     sandi x3, x1, 0x00000006
     li x30, 0x00000006
     sbne x3, x30, fail_1
+    nop
+    nop
     sjal x0, done
     nop
     nop

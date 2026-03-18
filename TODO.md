@@ -43,17 +43,40 @@ repo-level TODO tracking. Keep historical context and completed-change notes in
   `core.py`, `ifu.py`, `idu.py`, `stage_data.py`, and unit-local EXU modules.
 - Refine the cycle-accurate tensor hazard / overlap model beyond the current architectural
   scoreboard if RTL-visible pipeline details require it.
-- Decide whether `mem_base` is architecturally a high-bits extension
-  `(mem_base << 32) | low32` or some other shared address-offset encoding.
 
 ## RTL
 
+- Keep the scalar RTL slice aligned with the frozen decode/control contract in
+  `docs/specs/microarchitecture-spec.md`:
+  - preserve the full scalar decode control record (`valid`, `illegal`, `format_class`,
+    `scalar_op_class`, `alu_fn`, register fields, immediates, and control flags)
+  - keep reserved custom opcodes classified distinctly from fully illegal encodings
+  - keep module responsibilities coherent across `penguin_scalar_defs.vh`, decoder,
+    regfile, ALU, branch unit, LSU, controller, and core top
+- Finish the first scalar RTL milestone:
+  - fetch and execute the frozen scalar subset from `IMEM`
+  - prove `x0` hardwiring
+  - prove two-delay-slot control flow
+  - prove misaligned target / scalar-memory halts
+  - report distinct `ecall` and `ebreak` outcomes
+  - run the scalar RTL regression path in automation
 - Build the RTL execution/testbench flow around the same executable package artifacts used
   by the software stack.
 - Connect compiler- or vector-generated assembly/bundle artifacts into cocotb-based RTL
   regression runs.
 - Reuse the same executable-package artifacts for on-hardware FPGA validation after RTL
   execution is in place.
+- Reuse the checked-in scalar vectors for decoder, ALU/register-file, branch/jump,
+  scalar-memory, and end-to-end core verification before widening accelerator scope.
+- Decide the scalar RTL bring-up details that remain open:
+  - whether non-`x0` scalar registers power up as zero in RTL or are explicitly
+    initialized only by testbench/setup flow
+  - whether the first scalar IMEM/VMEM interface stays simple and blocking or adopts a
+    request/response handshake immediately
+  - whether encoded scalar binaries are checked in beside source vectors or generated on
+    demand during tests
+  - whether `fence` remains a distinct controller-visible op or is normalized to a
+    generic no-op immediately after decode
 - Grow the preliminary BF16 VPU RTL beyond the current single-lane `vadd` slice:
   - replace the MMIO-seeded one-lane mreg file with architecturally meaningful tensor
     register storage

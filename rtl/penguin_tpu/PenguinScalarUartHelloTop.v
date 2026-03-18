@@ -29,7 +29,7 @@ module PenguinScalarUartHelloTop #(
     //  Parameters / localparams
     //------------------------------------------------------------------------------
 
-    localparam integer IMEM_WORDS = 256;
+    localparam integer IMEM_WORDS = 512;
     localparam [31:0] UART_STATUS_ADDR = 32'h0000_0100;
     localparam [31:0] UART_TX_ADDR = 32'h0000_0104;
     localparam [31:0] CYCLE_COUNTER_ADDR = 32'h0000_0108;
@@ -50,7 +50,6 @@ module PenguinScalarUartHelloTop #(
     wire        reset;
     wire        dram_clock;
     wire        dram_reset;
-    wire        sys_clock_bufg;
     wire        clock_wiz_locked;
     wire        core_clock;
     wire        mig_ref_clock;
@@ -58,6 +57,7 @@ module PenguinScalarUartHelloTop #(
     wire        mig_ui_clk_sync_rst;
     wire        mig_mmcm_locked;
     wire        mig_init_calib_complete;
+    wire        sys_clock_buffered;
     wire [11:0] mig_device_temp_unused;
     wire        mig_app_sr_active_unused;
     wire        mig_app_ref_ack_unused;
@@ -142,7 +142,7 @@ module PenguinScalarUartHelloTop #(
 
     assign uart_tx_data = scalar_dmem_wdata[7:0];
     assign scalar_imem_rdata =
-        (scalar_imem_addr[31:10] == 22'd0) ? imem[scalar_imem_addr[9:2]] : 32'h0010_0073;
+        (scalar_imem_addr[31:11] == 21'd0) ? imem[scalar_imem_addr[10:2]] : 32'h0010_0073;
     assign scalar_dmem_targets_mmio = scalar_dmem_valid && (scalar_dmem_addr[31:12] == 20'd0);
     assign scalar_dmem_targets_dram = scalar_dmem_valid && (scalar_dmem_addr[31] == 1'b1);
     assign scalar_mmio_rdata =
@@ -163,9 +163,9 @@ module PenguinScalarUartHelloTop #(
         scalar_dmem_targets_mmio &&
         (scalar_dmem_addr == UART_TX_ADDR);
 
-    BUFG system_clock_bufg_inst (
+    BUFG sys_clock_bufg_inst (
         .I(sys_clk_i),
-        .O(sys_clock_bufg)
+        .O(sys_clock_buffered)
     );
 
     ClockingWizard clock_wiz_inst (
@@ -173,7 +173,7 @@ module PenguinScalarUartHelloTop #(
         .clk_out2(mig_ref_clock),
         .resetn(cpu_resetn),
         .locked(clock_wiz_locked),
-        .clk_in1(sys_clock_bufg)
+        .clk_in1(sys_clock_buffered)
     );
 
     Mig7Series mig_inst (
@@ -191,7 +191,7 @@ module PenguinScalarUartHelloTop #(
         .ddr3_cke(ddr3_cke),
         .ddr3_dm(ddr3_dm),
         .ddr3_odt(ddr3_odt),
-        .sys_clk_i(sys_clock_bufg),
+        .sys_clk_i(sys_clock_buffered),
         .clk_ref_i(mig_ref_clock),
         .ui_clk(mig_ui_clk),
         .ui_clk_sync_rst(mig_ui_clk_sync_rst),

@@ -5,8 +5,29 @@ set top_name [get_property top [current_fileset]]
 set bit_path [format "/home/tk/Desktop/Penguin-TPU/VivadoProject/VivadoProject.runs/impl_1/%s.bit" $top_name]
 
 connect_hw_server -allow_non_jtag
+refresh_hw_server
 
-open_hw_target
+set selected_target ""
+foreach hw_target [get_hw_targets *] {
+    catch {close_hw_target [current_hw_target]}
+    current_hw_target $hw_target
+    if {[catch {open_hw_target $hw_target}]} {
+        catch {close_hw_target $hw_target}
+        continue
+    }
+
+    refresh_hw_target [current_hw_target]
+    if {[llength [get_hw_devices]] > 0} {
+        set selected_target $hw_target
+        break
+    }
+
+    catch {close_hw_target $hw_target}
+}
+
+if {$selected_target eq ""} {
+    error "no connected hardware target with a programmable device was found"
+}
 
 set_property PROGRAM.FILE $bit_path [get_hw_devices xc7a200t_0]
 current_hw_device [get_hw_devices xc7a200t_0]

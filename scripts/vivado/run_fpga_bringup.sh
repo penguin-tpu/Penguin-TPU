@@ -9,7 +9,28 @@ SERIAL_PORT="${SERIAL_PORT:-/dev/ttyUSB0}"
 SERIAL_BAUD="${SERIAL_BAUD:-115200}"
 SERIAL_TIMEOUT="${SERIAL_TIMEOUT:-6}"
 PROGRAM_RETRIES="${PROGRAM_RETRIES:-3}"
+STEP_TIMEOUT="${STEP_TIMEOUT:-300}"
+BITSTREAM_TIMEOUT="${BITSTREAM_TIMEOUT:-1800}"
+PROGRAM_TIMEOUT="${PROGRAM_TIMEOUT:-120}"
 CLEAN_FIRST=1
+
+run_with_timeout() {
+    local timeout_s="$1"
+    local description="$2"
+    shift 2
+
+    if ! command -v timeout >/dev/null 2>&1; then
+        echo "'timeout' is required for bounded FPGA flow execution" >&2
+        exit 2
+    fi
+
+    timeout --foreground "${timeout_s}s" "$@"
+    local status=$?
+    if [[ "${status}" -eq 124 ]]; then
+        echo "${description} timed out after ${timeout_s}s" >&2
+    fi
+    return "${status}"
+}
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -31,6 +52,18 @@ while [[ $# -gt 0 ]]; do
             ;;
         --program-retries)
             PROGRAM_RETRIES="$2"
+            shift 2
+            ;;
+        --step-timeout)
+            STEP_TIMEOUT="$2"
+            shift 2
+            ;;
+        --bitstream-timeout)
+            BITSTREAM_TIMEOUT="$2"
+            shift 2
+            ;;
+        --program-timeout)
+            PROGRAM_TIMEOUT="$2"
             shift 2
             ;;
         --skip-clean)
@@ -76,13 +109,18 @@ fi
 
 export PENGUIN_VIVADO_TARGET="${TARGET}"
 
-vivado -mode batch -source "${REPO_ROOT}/scripts/vivado/1_create_project.tcl"
-vivado -mode batch -source "${REPO_ROOT}/scripts/vivado/2_add_files.tcl"
-vivado -mode batch -source "${REPO_ROOT}/scripts/vivado/3_generate_vivado_ip.tcl"
-vivado -mode batch -source "${REPO_ROOT}/scripts/vivado/4_generate_bitstream.tcl"
+run_with_timeout "${STEP_TIMEOUT}" "vivado project creation" \
+    vivado -mode batch -source "${REPO_ROOT}/scripts/vivado/1_create_project.tcl"
+run_with_timeout "${STEP_TIMEOUT}" "vivado add-files step" \
+    vivado -mode batch -source "${REPO_ROOT}/scripts/vivado/2_add_files.tcl"
+run_with_timeout "${STEP_TIMEOUT}" "vivado ip-generation step" \
+    vivado -mode batch -source "${REPO_ROOT}/scripts/vivado/3_generate_vivado_ip.tcl"
+run_with_timeout "${BITSTREAM_TIMEOUT}" "vivado bitstream generation" \
+    vivado -mode batch -source "${REPO_ROOT}/scripts/vivado/4_generate_bitstream.tcl"
 
 for ((attempt = 1; attempt <= PROGRAM_RETRIES; attempt += 1)); do
-    if vivado -mode batch -source "${REPO_ROOT}/scripts/vivado/5_program_device.tcl"; then
+    if run_with_timeout "${PROGRAM_TIMEOUT}" "vivado device programming" \
+        vivado -mode batch -source "${REPO_ROOT}/scripts/vivado/5_program_device.tcl"; then
         break
     fi
 

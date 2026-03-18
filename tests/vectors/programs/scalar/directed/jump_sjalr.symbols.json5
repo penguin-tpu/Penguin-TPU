@@ -3,8 +3,8 @@
     program: {
       kind: "program",
       region: "imem",
-      address: 0x00100000,
-      size_bytes: 64,
+      address: 0x00020000,
+      size_bytes: 72,
       file: "jump_sjalr.S",
     },
   },

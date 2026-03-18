@@ -4,6 +4,8 @@
     ssrai x3, x1, 0x00000004
     li x30, 0xffffffff
     sbne x3, x30, fail_1
+    nop
+    nop
     sjal x0, done
     nop
     nop

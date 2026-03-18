@@ -117,7 +117,7 @@ def _format_instruction(instruction: Instruction) -> str:
     if isinstance(params, IType):
         if mnemonic in SCALAR_LOAD_MNEMONICS:
             return f"{mnemonic} x{params.rd}, {params.imm}(x{params.rs1})"
-        if mnemonic == "sjalr":
+        if mnemonic == "jalr":
             return f"{mnemonic} x{params.rd}, x{params.rs1}, {params.imm}"
         return f"{mnemonic} x{params.rd}, x{params.rs1}, {params.imm}"
     if isinstance(params, SType):
@@ -242,7 +242,7 @@ class _ControlShadow:
 
 
 def _is_control_transfer_instruction(instruction: Instruction) -> bool:
-    return isinstance(instruction.params, (BType, JType)) or instruction.mnemonic == "sjalr"
+    return isinstance(instruction.params, (BType, JType)) or instruction.mnemonic == "jalr"
 
 
 class Core:
@@ -347,7 +347,6 @@ class Core:
             mreg=self.state.mreg,
             mxu_weight=self.state.mxu_weight,
             ereg=self.state.ereg,
-            mem_base=self.state.mem_base,
         )
         self._program_loaded = False
         self._program = ()
@@ -423,6 +422,12 @@ class Core:
                 self.state.config.scalar.control_flow_delay_slots,
             )
         if _is_control_transfer_instruction(uop.instruction):
+            if any(
+                shadow.delay_slots_seen <= self.state.config.scalar.control_flow_delay_slots
+                for shadow in self._control_shadows
+            ):
+                self.state.stop(StopReason.ILLEGAL_INSTRUCTION)
+                return
             self._control_shadows.append(_ControlShadow(insn_id=uop.insn_id, delay_slots_seen=0))
 
         logger = self.state.trace_logger
@@ -861,7 +866,8 @@ class Core:
         if _is_dma_wait_instruction(instruction):
             return None
         if instruction.mnemonic not in ALL_INSTRUCTION_SPECS:
-            raise KeyError(f"Unknown mnemonic '{instruction.mnemonic}'")
+            self.state.stop(StopReason.ILLEGAL_INSTRUCTION)
+            return None
         spec = ALL_INSTRUCTION_SPECS[instruction.mnemonic]
         if not isinstance(instruction.params, spec.params_type):
             raise TypeError(
@@ -925,7 +931,7 @@ class Core:
         self._program_loaded = True
         self._program = instructions
         self._program_base = program_base
-        self._program_end = program_base + len(instructions) * 4
+        self._program_end = program_base + len(instructions)
         self._max_instructions = max_instructions
         self._start_count = self.state.perf.instructions
         self._reset_scoreboards(self.state.perf.cycles)

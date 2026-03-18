@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from penguin_model import IMEM_BASE
 from penguin_model.memory import DRAM_BASE, VMEM_BASE
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -76,6 +77,7 @@ def _format_expr(value: int | str) -> str:
 def _expect_reg_eq(builder: AssemblyBuilder, *, reg: int, expected: int, fail_code: int = 1) -> None:
     builder.li(SCRATCH_REG, expected)
     builder.branch("sbne", rs1=reg, rs2=SCRATCH_REG, target=f"fail_{fail_code}")
+    builder.delay_slots()
 
 
 def _expect_reg_eq_label(
@@ -84,6 +86,7 @@ def _expect_reg_eq_label(
     offset_text = f" + {offset}" if offset >= 0 else f" - {abs(offset)}"
     builder.li(SCRATCH_REG, f"{label}{offset_text}" if offset else label)
     builder.branch("sbne", rs1=reg, rs2=SCRATCH_REG, target=f"fail_{fail_code}")
+    builder.delay_slots()
 
 
 def _add_fail_handlers(builder: AssemblyBuilder, fail_codes: range) -> None:
@@ -145,8 +148,10 @@ def _directed_branch_case(mnemonic: str, lhs: int, rhs: int, taken: bool) -> str
 def _directed_jal_case() -> str:
     builder = AssemblyBuilder()
     builder.jal(rd=10, target="target")
-    builder.delay_slots()
     builder.label("link")
+    builder.nop()
+    builder.label("link_plus_1")
+    builder.nop()
     builder.jal(rd=0, target="fail_1")
     builder.delay_slots()
     builder.label("target")
@@ -156,10 +161,12 @@ def _directed_jal_case() -> str:
 
 def _directed_jalr_case() -> str:
     builder = AssemblyBuilder()
-    builder.li(12, "target + 1")
+    builder.li(12, "target")
     builder.i("sjalr", rd=11, rs1=12, imm=0)
-    builder.delay_slots()
     builder.label("link")
+    builder.nop()
+    builder.label("link_plus_1")
+    builder.nop()
     builder.jal(rd=0, target="fail_1")
     builder.delay_slots()
     builder.label("target")
@@ -301,7 +308,7 @@ def _model_core_sjal_delay_slots() -> str:
 def _model_core_sjalr_delay_slots() -> str:
     builder = AssemblyBuilder()
     builder.li(1, "target")
-    builder.i("sjalr", rd=5, rs1=1, imm=1)
+    builder.i("sjalr", rd=5, rs1=1, imm=0)
     builder.li(2, 2)
     builder.li(3, 3)
     builder.li(4, 99)
@@ -512,7 +519,7 @@ def _write_program(relative_path: str, source: str) -> None:
 
 def main() -> int:
     directed_u_cases = [
-        ("directed/u_sauipc.S", _directed_u_case("sauipc", 1, 0x0000_1000)),
+        ("directed/u_sauipc.S", _directed_u_case("sauipc", 1, IMEM_BASE + 0x0000_1000)),
         ("directed/u_slui.S", _directed_u_case("slui", 0x12345, 0x1234_5000)),
     ]
     directed_r_cases = [

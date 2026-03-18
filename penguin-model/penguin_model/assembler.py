@@ -40,18 +40,50 @@ _WREGISTER_RE = re.compile(r"w(?P<index>[0-1])$")
 _LABEL_RE = re.compile(r"(?P<label>[A-Za-z_][A-Za-z0-9_]*)\s*:")
 _MEMORY_OPERAND_RE = re.compile(r"(?P<imm>.+)\((?P<rs1>x[0-9]+)\)$")
 _MNEMONIC_ALIASES: Mapping[str, str] = {
-    "lb": "slb",
-    "lbu": "slbu",
-    "lh": "slh",
-    "lhu": "slhu",
-    "lw": "slw",
-    "sb": "ssb",
-    "sh": "ssh",
-    "sw": "ssw",
-    "sld": "slw",
-    "sst": "ssw",
+    "slui": "lui",
+    "sauipc": "auipc",
+    "sjal": "jal",
+    "sjalr": "jalr",
+    "sbeq": "beq",
+    "sbne": "bne",
+    "sblt": "blt",
+    "sbge": "bge",
+    "sbltu": "bltu",
+    "sbgeu": "bgeu",
+    "slb": "lb",
+    "slbu": "lbu",
+    "slh": "lh",
+    "slhu": "lhu",
+    "slw": "lw",
+    "ssb": "sb",
+    "ssh": "sh",
+    "ssw": "sw",
+    "saddi": "addi",
+    "sslti": "slti",
+    "ssltiu": "sltiu",
+    "sxori": "xori",
+    "sori": "ori",
+    "sandi": "andi",
+    "sslli": "slli",
+    "ssrli": "srli",
+    "ssrai": "srai",
+    "sadd": "add",
+    "ssub": "sub",
+    "ssll": "sll",
+    "sslt": "slt",
+    "ssltu": "sltu",
+    "sxor": "xor",
+    "ssrl": "srl",
+    "ssra": "sra",
+    "sor": "or",
+    "sand": "and",
+    "sfence": "fence",
+    "secall": "ecall",
+    "sebreak": "ebreak",
+    "sld": "lw",
+    "sst": "sw",
 }
-_I_TYPE_MEMORY_MNEMONICS = frozenset({"slb", "slh", "slw", "slbu", "slhu", "seld"})
+_I_TYPE_MEMORY_MNEMONICS = frozenset({"lb", "lh", "lw", "lbu", "lhu", "seld"})
 
 _DEFAULT_SYMBOLS: Mapping[str, int] = {
     "DRAM_BASE": DRAM_BASE,
@@ -138,12 +170,12 @@ def assemble_text(
                 raw_line=raw_line.rstrip(),
             )
         )
-        pc += 4
+        pc += 1
 
     instructions = tuple(
         _assemble_instruction(
             line,
-            pc=base_address + index * 4,
+            pc=base_address + index,
             labels=labels,
             source_name=source_name,
         )
@@ -220,7 +252,7 @@ def _assemble_instruction(
             source_name=source_name,
             line_number=line.line_number,
         )
-        return Instruction("saddi", IType(rd=0, rs1=0, imm=0))
+        return Instruction("addi", IType(rd=0, rs1=0, imm=0))
 
     if mnemonic == "li":
         _expect_operand_count(
@@ -231,7 +263,7 @@ def _assemble_instruction(
             line_number=line.line_number,
         )
         return Instruction(
-            "saddi",
+            "addi",
             IType(
                 rd=_parse_register(operands[0], source_name=source_name, line_number=line.line_number),
                 rs1=0,

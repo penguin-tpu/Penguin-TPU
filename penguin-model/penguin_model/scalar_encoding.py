@@ -4,27 +4,62 @@ from __future__ import annotations
 
 from .instructions import BType, EmptyType, IType, Instruction, JType, RType, SType, UType, VPUBinaryType
 
+_MNEMONIC_ALIASES = {
+    "slui": "lui",
+    "sauipc": "auipc",
+    "sjal": "jal",
+    "sjalr": "jalr",
+    "sbeq": "beq",
+    "sbne": "bne",
+    "sblt": "blt",
+    "sbge": "bge",
+    "sbltu": "bltu",
+    "sbgeu": "bgeu",
+    "slb": "lb",
+    "slh": "lh",
+    "slw": "lw",
+    "slbu": "lbu",
+    "slhu": "lhu",
+    "sld": "lw",
+    "ssb": "sb",
+    "ssh": "sh",
+    "ssw": "sw",
+    "sst": "sw",
+    "saddi": "addi",
+    "sslti": "slti",
+    "ssltiu": "sltiu",
+    "sxori": "xori",
+    "sori": "ori",
+    "sandi": "andi",
+    "sslli": "slli",
+    "ssrli": "srli",
+    "ssrai": "srai",
+    "sadd": "add",
+    "ssub": "sub",
+    "ssll": "sll",
+    "sslt": "slt",
+    "ssltu": "sltu",
+    "sxor": "xor",
+    "ssrl": "srl",
+    "ssra": "sra",
+    "sor": "or",
+    "sand": "and",
+    "sfence": "fence",
+    "secall": "ecall",
+    "sebreak": "ebreak",
+}
+
 LOAD_FUNCT3 = {
-    "slb": 0b000,
-    "slh": 0b001,
-    "slw": 0b010,
-    "slbu": 0b100,
-    "slhu": 0b101,
     "lb": 0b000,
     "lh": 0b001,
     "lw": 0b010,
     "lbu": 0b100,
     "lhu": 0b101,
-    "sld": 0b010,
 }
 STORE_FUNCT3 = {
-    "ssb": 0b000,
-    "ssh": 0b001,
-    "ssw": 0b010,
     "sb": 0b000,
     "sh": 0b001,
     "sw": 0b010,
-    "sst": 0b010,
 }
 
 OPCODE_LOAD = 0b0000011
@@ -123,46 +158,55 @@ def _encode_j_type(opcode: int, params: JType) -> int:
 def encode_scalar_instruction(instruction: Instruction) -> int:
     """Encode one Penguin scalar instruction into a 32-bit machine word."""
 
-    mnemonic = instruction.mnemonic
+    mnemonic = _MNEMONIC_ALIASES.get(instruction.mnemonic, instruction.mnemonic)
     params = instruction.params
 
-    if mnemonic == "slui":
+    if mnemonic == "lui":
         if not isinstance(params, UType):
-            raise TypeError("slui expects UType operands")
+            raise TypeError("lui expects UType operands")
         return _mask_u32(_encode_u_type(OPCODE_LUI, params))
 
-    if mnemonic == "sauipc":
+    if mnemonic == "auipc":
         if not isinstance(params, UType):
-            raise TypeError("sauipc expects UType operands")
+            raise TypeError("auipc expects UType operands")
         return _mask_u32(_encode_u_type(OPCODE_AUIPC, params))
 
-    if mnemonic == "sjal":
+    if mnemonic == "jal":
         if not isinstance(params, JType):
-            raise TypeError("sjal expects JType operands")
-        _check_range("imm", params.imm, 21)
-        _check_alignment("imm", params.imm, 2)
-        return _mask_u32(_encode_j_type(OPCODE_JAL, params))
+            raise TypeError("jal expects JType operands")
+        byte_imm = params.imm * 4
+        _check_range("imm", byte_imm, 21)
+        _check_alignment("imm", byte_imm, 2)
+        return _mask_u32(_encode_j_type(OPCODE_JAL, JType(rd=params.rd, imm=byte_imm)))
 
-    if mnemonic == "sjalr":
+    if mnemonic == "jalr":
         if not isinstance(params, IType):
-            raise TypeError("sjalr expects IType operands")
-        _check_range("imm", params.imm, 12)
-        return _mask_u32(_encode_i_type(OPCODE_JALR, 0b000, params.imm, params.rs1, params.rd))
+            raise TypeError("jalr expects IType operands")
+        byte_imm = params.imm * 4
+        _check_range("imm", byte_imm, 12)
+        return _mask_u32(_encode_i_type(OPCODE_JALR, 0b000, byte_imm, params.rs1, params.rd))
 
-    if mnemonic in {"sbeq", "sbne", "sblt", "sbge", "sbltu", "sbgeu"}:
+    if mnemonic in {"beq", "bne", "blt", "bge", "bltu", "bgeu"}:
         if not isinstance(params, BType):
             raise TypeError(f"{mnemonic} expects BType operands")
-        _check_range("imm", params.imm, 13)
-        _check_alignment("imm", params.imm, 2)
+        byte_imm = params.imm * 4
+        _check_range("imm", byte_imm, 13)
+        _check_alignment("imm", byte_imm, 2)
         funct3 = {
-            "sbeq": 0b000,
-            "sbne": 0b001,
-            "sblt": 0b100,
-            "sbge": 0b101,
-            "sbltu": 0b110,
-            "sbgeu": 0b111,
+            "beq": 0b000,
+            "bne": 0b001,
+            "blt": 0b100,
+            "bge": 0b101,
+            "bltu": 0b110,
+            "bgeu": 0b111,
         }[mnemonic]
-        return _mask_u32(_encode_b_type(OPCODE_BRANCH, funct3, params))
+        return _mask_u32(
+            _encode_b_type(
+                OPCODE_BRANCH,
+                funct3,
+                BType(rs1=params.rs1, rs2=params.rs2, imm=byte_imm),
+            )
+        )
 
     if mnemonic in LOAD_FUNCT3:
         if not isinstance(params, IType):
@@ -178,45 +222,45 @@ def encode_scalar_instruction(instruction: Instruction) -> int:
         _check_range("imm", params.imm, 12)
         return _mask_u32(_encode_s_type(OPCODE_STORE, STORE_FUNCT3[mnemonic], params))
 
-    if mnemonic in {"saddi", "sslti", "ssltiu", "sxori", "sori", "sandi"}:
+    if mnemonic in {"addi", "slti", "sltiu", "xori", "ori", "andi"}:
         if not isinstance(params, IType):
             raise TypeError(f"{mnemonic} expects IType operands")
         _check_range("imm", params.imm, 12)
         funct3 = {
-            "saddi": 0b000,
-            "sslti": 0b010,
-            "ssltiu": 0b011,
-            "sxori": 0b100,
-            "sori": 0b110,
-            "sandi": 0b111,
+            "addi": 0b000,
+            "slti": 0b010,
+            "sltiu": 0b011,
+            "xori": 0b100,
+            "ori": 0b110,
+            "andi": 0b111,
         }[mnemonic]
         return _mask_u32(_encode_i_type(OPCODE_OP_IMM, funct3, params.imm, params.rs1, params.rd))
 
-    if mnemonic in {"sslli", "ssrli", "ssrai"}:
+    if mnemonic in {"slli", "srli", "srai"}:
         if not isinstance(params, IType):
             raise TypeError(f"{mnemonic} expects IType operands")
         shamt = params.imm & 0x1F
-        funct7 = 0b0100000 if mnemonic == "ssrai" else 0b0000000
-        funct3 = 0b001 if mnemonic == "sslli" else 0b101
+        funct7 = 0b0100000 if mnemonic == "srai" else 0b0000000
+        funct3 = 0b001 if mnemonic == "slli" else 0b101
         imm12 = (funct7 << 5) | shamt
         return _mask_u32(_encode_i_type(OPCODE_OP_IMM, funct3, imm12, params.rs1, params.rd))
 
-    if mnemonic in {"sadd", "ssub", "ssll", "sslt", "ssltu", "sxor", "ssrl", "ssra", "sor", "sand"}:
+    if mnemonic in {"add", "sub", "sll", "slt", "sltu", "xor", "srl", "sra", "or", "and"}:
         if not isinstance(params, RType):
             raise TypeError(f"{mnemonic} expects RType operands")
         funct3 = {
-            "sadd": 0b000,
-            "ssub": 0b000,
-            "ssll": 0b001,
-            "sslt": 0b010,
-            "ssltu": 0b011,
-            "sxor": 0b100,
-            "ssrl": 0b101,
-            "ssra": 0b101,
-            "sor": 0b110,
-            "sand": 0b111,
+            "add": 0b000,
+            "sub": 0b000,
+            "sll": 0b001,
+            "slt": 0b010,
+            "sltu": 0b011,
+            "xor": 0b100,
+            "srl": 0b101,
+            "sra": 0b101,
+            "or": 0b110,
+            "and": 0b111,
         }[mnemonic]
-        funct7 = 0b0100000 if mnemonic in {"ssub", "ssra"} else 0b0000000
+        funct7 = 0b0100000 if mnemonic in {"sub", "sra"} else 0b0000000
         return _mask_u32(_encode_r_type(OPCODE_OP, funct3, funct7, params))
 
     if mnemonic == "vadd":
@@ -233,19 +277,19 @@ def encode_scalar_instruction(instruction: Instruction) -> int:
             )
         )
 
-    if mnemonic == "sfence":
+    if mnemonic == "fence":
         if not isinstance(params, EmptyType):
-            raise TypeError("sfence expects EmptyType operands")
+            raise TypeError("fence expects EmptyType operands")
         return _mask_u32(_encode_i_type(OPCODE_MISC_MEM, 0b000, 0, 0, 0))
 
-    if mnemonic == "secall":
+    if mnemonic == "ecall":
         if not isinstance(params, EmptyType):
-            raise TypeError("secall expects EmptyType operands")
+            raise TypeError("ecall expects EmptyType operands")
         return _mask_u32(_encode_i_type(OPCODE_SYSTEM, 0b000, 0x000, 0, 0))
 
-    if mnemonic == "sebreak":
+    if mnemonic == "ebreak":
         if not isinstance(params, EmptyType):
-            raise TypeError("sebreak expects EmptyType operands")
+            raise TypeError("ebreak expects EmptyType operands")
         return _mask_u32(_encode_i_type(OPCODE_SYSTEM, 0b000, 0x001, 0, 0))
 
     raise KeyError(f"unsupported scalar encoding mnemonic: {mnemonic}")

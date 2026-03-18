@@ -3,7 +3,7 @@
     program: {
       kind: "program",
       region: "imem",
-      address: 0x00100000,
+      address: 0x00020000,
       size_bytes: 44,
       file: "vmem_sum_loop.S",
     },

@@ -60,7 +60,8 @@ def _assert_program_passed(
 )
 def test_scalar_u_directed_program_case(name: str, program: str) -> None:
     core, perf = run_scalar_program(program)
-    _assert_program_passed(name, core, perf, expected_instructions=6)
+    expected_instructions = 8
+    _assert_program_passed(name, core, perf, expected_instructions=expected_instructions)
 
 
 @pytest.mark.parametrize(
@@ -80,7 +81,7 @@ def test_scalar_u_directed_program_case(name: str, program: str) -> None:
 )
 def test_scalar_rr_directed_program_case(name: str, program: str) -> None:
     core, perf = run_scalar_program(program)
-    _assert_program_passed(name, core, perf, expected_instructions=8)
+    _assert_program_passed(name, core, perf, expected_instructions=10)
 
 
 @pytest.mark.parametrize(
@@ -99,7 +100,7 @@ def test_scalar_rr_directed_program_case(name: str, program: str) -> None:
 )
 def test_scalar_imm_directed_program_case(name: str, program: str) -> None:
     core, perf = run_scalar_program(program)
-    _assert_program_passed(name, core, perf, expected_instructions=7)
+    _assert_program_passed(name, core, perf, expected_instructions=9)
 
 
 @pytest.mark.parametrize(
@@ -149,21 +150,19 @@ def test_scalar_branch_directed_program_case(name: str, program: str) -> None:
 
 
 @pytest.mark.parametrize(
-    ("name", "program", "expected_instructions"),
+    ("name", "program"),
     [
-        pytest.param("sjal", "scalar/directed/jump_sjal.S", 8, id="sjal"),
-        pytest.param("sjalr", "scalar/directed/jump_sjalr.S", 9, id="sjalr"),
+        pytest.param("sjal", "scalar/directed/jump_sjal.S", id="sjal"),
+        pytest.param("sjalr", "scalar/directed/jump_sjalr.S", id="sjalr"),
     ],
 )
-def test_scalar_jump_directed_program_case(
-    name: str, program: str, expected_instructions: int
-) -> None:
+def test_scalar_jump_directed_program_case(name: str, program: str) -> None:
     core, perf = run_scalar_program(program)
     context = _assert_program_passed(
         name,
         core,
         perf,
-        expected_instructions=expected_instructions,
+        expected_instructions=10 if name == "sjal" else 11,
     )
     if name == "sjal":
         assert core.state.read_xreg(10) != 0, context
@@ -177,7 +176,7 @@ def test_scalar_load_directed_program_case() -> None:
         "sld",
         core,
         perf,
-        expected_instructions=7,
+        expected_instructions=9,
         expected_bytes_read=4,
     )
 
@@ -191,11 +190,11 @@ def test_scalar_store_directed_program_case() -> None:
         "sst",
         core,
         perf,
-        expected_instructions=9,
+        expected_instructions=11,
         expected_bytes_read=4,
         expected_bytes_written=4,
     )
-    assert core.state.vmem.load_u32(0x0800_0060) == 8, context
+    assert core.state.vmem.load_u32(0x2000_0060) == 8, context
     assert core.state.dram.load_u32(0x8000_0060) == 0xDEAD_0003, context
 
 
@@ -205,7 +204,7 @@ def test_scalar_x0_load_directed_program_case() -> None:
         "sld-x0",
         core,
         perf,
-        expected_instructions=7,
+        expected_instructions=9,
         expected_bytes_read=4,
     )
 

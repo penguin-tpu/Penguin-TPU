@@ -8,7 +8,7 @@ from pathlib import Path
 import re
 from typing import Iterable
 
-from .arch_state import PerformanceCounters, StopReason
+from .arch_state import PerformanceCounters
 from .core import Core
 from .logging import TraceLogger, TraceLoggerConfig
 
@@ -80,8 +80,6 @@ class Sim:
             trace_logger=trace_logger,
         )
 
-        if self.state.pc % 4 != 0:
-            self.state.stop(StopReason.INSTRUCTION_ADDRESS_MISALIGNED)
         while self.state.stop_reason is None:
             self.tick()
 

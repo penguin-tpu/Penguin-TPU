@@ -3,6 +3,8 @@
     slui x3, 0x00012345
     li x30, 0x12345000
     sbne x3, x30, fail_1
+    nop
+    nop
     sjal x0, done
     nop
     nop

@@ -42,7 +42,7 @@ class InstructionFetch:
     ) -> None:
         self._program = program
         self._program_base = program_base
-        self._program_end = program_base + len(program) * 4
+        self._program_end = program_base + len(program)
         self._fetch_pc = start_pc & 0xFFFF_FFFF
         self._next_insn_id = 0
         self._stalled = False
@@ -81,16 +81,11 @@ class InstructionFetch:
             self.output.prepare(None)
             return
 
-        if self._fetch_pc % 4 != 0:
-            on_misaligned_fetch()
-            self.output.prepare(None)
-            return
-
         if self._fetch_pc < self._program_base or self._fetch_pc >= self._program_end:
             self.output.prepare(None)
             return
 
-        instruction_index = (self._fetch_pc - self._program_base) // 4
+        instruction_index = self._fetch_pc - self._program_base
         uop = PipelineUop(
             pc=self._fetch_pc,
             instruction=self._program[instruction_index],
@@ -100,5 +95,5 @@ class InstructionFetch:
         on_fetch(uop, cycle)
         self.output.prepare(uop)
         fetched_pc = self._fetch_pc
-        self._fetch_pc = (fetched_pc + 4) & 0xFFFF_FFFF
+        self._fetch_pc = (fetched_pc + 1) & 0xFFFF_FFFF
         on_fetch_pc_advanced(fetched_pc)

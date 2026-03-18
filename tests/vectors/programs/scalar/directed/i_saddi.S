@@ -4,6 +4,8 @@
     saddi x3, x1, -2
     li x30, 0x00000005
     sbne x3, x30, fail_1
+    nop
+    nop
     sjal x0, done
     nop
     nop

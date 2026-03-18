@@ -27,7 +27,7 @@ def test_gemma_attention_example_matches_reference_and_emits_stage_bundles(tmp_p
     assert tuple(result.output.shape) == (64, 32)
     assert torch.equal(result.output, result.golden)
     assert result.perf.instructions == 317
-    assert result.perf.cycles == 6_354
+    assert result.perf.cycles == 2_130
     assert result.perf.instructions_by_opcode["transpose.xlu"] == 1
     assert result.perf.instructions_by_opcode["matmul.mxu0"] == 6
     assert result.perf.instructions_by_opcode["reduce.max.xlu"] == 1
@@ -58,7 +58,7 @@ def test_gemma_mlp_example_matches_reference_and_emits_stage_bundles(tmp_path) -
     assert tuple(result.output.shape) == (64, 32)
     assert torch.equal(result.output, result.golden)
     assert result.perf.instructions == 185
-    assert result.perf.cycles == 5_000
+    assert result.perf.cycles == 1_544
     assert result.perf.instructions_by_opcode["vmul"] == 9
     assert result.perf.instructions_by_opcode["vadd"] == 3
     assert result.perf.instructions_by_opcode["vsub"] == 2
@@ -83,7 +83,7 @@ def test_gemma_decoder_example_matches_reference_and_emits_stage_bundles(tmp_pat
     assert tuple(result.output.shape) == (64, 32)
     assert torch.equal(result.output, result.golden)
     assert result.perf.instructions == 578
-    assert result.perf.cycles == 12_968
+    assert result.perf.cycles == 4_136
     assert result.perf.instructions_by_opcode["transpose.xlu"] == 1
     assert result.perf.instructions_by_opcode["vadd"] == 5
     assert result.perf.instructions_by_opcode["reduce.max.xlu"] == 1

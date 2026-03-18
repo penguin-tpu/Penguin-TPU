@@ -22,7 +22,7 @@ def test_taken_branch_executes_two_delay_slots_before_target_starts(tmp_path: Pa
         """
     li x1, 1
     li x2, 1
-    sbeq x1, x2, target
+    beq x1, x2, target
     li x3, 3
     li x4, 4
     li x5, 99
@@ -32,13 +32,13 @@ target:
         trace_output_path("branch_taken_delay_slots.json"),
     )
 
-    delay_slot_1 = require_stage_event(events, stage="execute", contains="saddi x3, x0, 3")
-    delay_slot_2 = require_stage_event(events, stage="execute", contains="saddi x4, x0, 4")
-    target = require_stage_event(events, stage="execute", contains="saddi x6, x0, 6")
+    delay_slot_1 = require_stage_event(events, stage="execute", contains="addi x3, x0, 3")
+    delay_slot_2 = require_stage_event(events, stage="execute", contains="addi x4, x0, 4")
+    target = require_stage_event(events, stage="execute", contains="addi x6, x0, 6")
 
     assert perf.instructions == 6
     assert core.state.stop_reason == StopReason.PROGRAM_END
-    assert stage_events(events, stage="execute", contains="saddi x5, x0, 99") == []
+    assert stage_events(events, stage="execute", contains="addi x5, x0, 99") == []
     assert event_end(delay_slot_1) <= delay_slot_2["ts"]
     assert event_end(delay_slot_2) <= target["ts"]
 
@@ -50,7 +50,7 @@ def test_not_taken_branch_still_executes_two_delay_slots_then_continues_sequenti
         """
     li x1, 1
     li x2, 2
-    sbeq x1, x2, target
+    beq x1, x2, target
     li x3, 3
     li x4, 4
     li x5, 5
@@ -60,10 +60,10 @@ target:
         trace_output_path("branch_not_taken_delay_slots.json"),
     )
 
-    delay_slot_1 = require_stage_event(events, stage="execute", contains="saddi x3, x0, 3")
-    delay_slot_2 = require_stage_event(events, stage="execute", contains="saddi x4, x0, 4")
-    sequential = require_stage_event(events, stage="execute", contains="saddi x5, x0, 5")
-    target = require_stage_event(events, stage="execute", contains="saddi x6, x0, 6")
+    delay_slot_1 = require_stage_event(events, stage="execute", contains="addi x3, x0, 3")
+    delay_slot_2 = require_stage_event(events, stage="execute", contains="addi x4, x0, 4")
+    sequential = require_stage_event(events, stage="execute", contains="addi x5, x0, 5")
+    target = require_stage_event(events, stage="execute", contains="addi x6, x0, 6")
 
     assert perf.instructions == 7
     assert core.state.stop_reason == StopReason.PROGRAM_END
@@ -75,7 +75,7 @@ target:
 def test_jump_target_starts_only_after_two_delay_slots_retire(tmp_path: Path) -> None:
     core, perf, events = _dump_trace(
         """
-    sjal x10, target
+    jal x10, target
     li x1, 11
     li x2, 22
     li x3, 99
@@ -85,24 +85,24 @@ target:
         trace_output_path("jump_delay_slots.json"),
     )
 
-    delay_slot_1 = require_stage_event(events, stage="execute", contains="saddi x1, x0, 11")
-    delay_slot_2 = require_stage_event(events, stage="execute", contains="saddi x2, x0, 22")
-    target = require_stage_event(events, stage="execute", contains="saddi x4, x0, 44")
+    delay_slot_1 = require_stage_event(events, stage="execute", contains="addi x1, x0, 11")
+    delay_slot_2 = require_stage_event(events, stage="execute", contains="addi x2, x0, 22")
+    target = require_stage_event(events, stage="execute", contains="addi x4, x0, 44")
 
     assert perf.instructions == 4
     assert core.state.stop_reason == StopReason.PROGRAM_END
-    assert stage_events(events, stage="execute", contains="saddi x3, x0, 99") == []
+    assert stage_events(events, stage="execute", contains="addi x3, x0, 99") == []
     assert event_end(delay_slot_1) <= delay_slot_2["ts"]
     assert event_end(delay_slot_2) <= target["ts"]
 
 
-def test_younger_control_transfer_replaces_older_redirect_after_its_delay_slots(
+def test_control_transfer_in_delay_slot_is_illegal(
     tmp_path: Path,
 ) -> None:
     core, perf, events = _dump_trace(
         """
-    sjal x1, older_target
-    sjal x2, younger_target
+    jal x1, older_target
+    jal x2, younger_target
     li x3, 3
     li x4, 4
     li x5, 5
@@ -111,16 +111,84 @@ older_target:
 younger_target:
     li x7, 7
 """,
-        trace_output_path("younger_redirect_trace.json"),
+        trace_output_path("illegal_delay_slot_control_trace.json"),
     )
 
-    younger_delay_slot_1 = require_stage_event(events, stage="execute", contains="saddi x3, x0, 3")
-    younger_delay_slot_2 = require_stage_event(events, stage="execute", contains="saddi x4, x0, 4")
-    younger_target = require_stage_event(events, stage="execute", contains="saddi x7, x0, 7")
+    assert core.state.stop_reason == StopReason.ILLEGAL_INSTRUCTION
+    assert perf.instructions == 0
+    assert stage_events(events, stage="execute", contains="addi x3, x0, 3") == []
+    assert stage_events(events, stage="execute", contains="addi x7, x0, 7") == []
 
-    assert perf.instructions == 5
-    assert core.state.stop_reason == StopReason.PROGRAM_END
-    assert stage_events(events, stage="execute", contains="saddi x5, x0, 5") == []
-    assert stage_events(events, stage="execute", contains="saddi x6, x0, 6") == []
-    assert event_end(younger_delay_slot_1) <= younger_delay_slot_2["ts"]
-    assert event_end(younger_delay_slot_2) <= younger_target["ts"]
+
+def test_control_transfer_in_second_delay_slot_is_illegal(
+    tmp_path: Path,
+) -> None:
+    core, perf, events = _dump_trace(
+        """
+    jal x1, older_target
+    li x2, 2
+    jal x3, younger_target
+    li x4, 4
+    li x5, 5
+older_target:
+    li x6, 6
+younger_target:
+    li x7, 7
+""",
+        trace_output_path("illegal_second_delay_slot_control_trace.json"),
+    )
+
+    assert core.state.stop_reason == StopReason.ILLEGAL_INSTRUCTION
+    assert stage_events(events, stage="execute", contains="jal x3") == []
+    assert stage_events(events, stage="execute", contains="addi x4, x0, 4") == []
+    assert stage_events(events, stage="execute", contains="addi x7, x0, 7") == []
+
+
+def test_not_taken_branch_with_control_transfer_in_first_delay_slot_is_illegal(
+    tmp_path: Path,
+) -> None:
+    core, perf, events = _dump_trace(
+        """
+    li x1, 1
+    li x2, 2
+    beq x1, x2, target
+    jal x3, younger_target
+    li x4, 4
+    li x5, 5
+target:
+    li x6, 6
+younger_target:
+    li x7, 7
+""",
+        trace_output_path("illegal_not_taken_first_delay_slot_control_trace.json"),
+    )
+
+    assert core.state.stop_reason == StopReason.ILLEGAL_INSTRUCTION
+    assert stage_events(events, stage="execute", contains="jal x3") == []
+    assert stage_events(events, stage="execute", contains="addi x4, x0, 4") == []
+    assert stage_events(events, stage="execute", contains="addi x7, x0, 7") == []
+
+
+def test_not_taken_branch_with_control_transfer_in_second_delay_slot_is_illegal(
+    tmp_path: Path,
+) -> None:
+    core, perf, events = _dump_trace(
+        """
+    li x1, 1
+    li x2, 2
+    beq x1, x2, target
+    li x3, 3
+    jal x4, younger_target
+    li x5, 5
+target:
+    li x6, 6
+younger_target:
+    li x7, 7
+""",
+        trace_output_path("illegal_not_taken_second_delay_slot_control_trace.json"),
+    )
+
+    assert core.state.stop_reason == StopReason.ILLEGAL_INSTRUCTION
+    assert stage_events(events, stage="execute", contains="jal x4") == []
+    assert stage_events(events, stage="execute", contains="addi x5, x0, 5") == []
+    assert stage_events(events, stage="execute", contains="addi x7, x0, 7") == []

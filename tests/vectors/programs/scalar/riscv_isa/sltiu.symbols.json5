@@ -1,0 +1,11 @@
+{
+  symbols: {
+    program: {
+      kind: "program",
+      region: "imem",
+      address: 0x00020000,
+      size_bytes: 892,
+      file: "sltiu.S",
+    },
+  },
+}

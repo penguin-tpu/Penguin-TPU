@@ -42,7 +42,7 @@ def test_bundle_loader_reads_symbol_table_and_file_backed_inputs(tmp_path: Path)
     assert loaded.program.base_address == IMEM_BASE
     assert loaded.program.labels == {
         "start": IMEM_BASE,
-        "target": IMEM_BASE + 8,
+        "target": IMEM_BASE + 2,
     }
     assert loaded.manifest.symbol_table == "program.symbols.json5"
     assert loaded.symbol_table.symbol("program").address == IMEM_BASE
@@ -54,7 +54,7 @@ def test_bundle_loader_reads_symbol_table_and_file_backed_inputs(tmp_path: Path)
     symbol_table_text = loaded.bundle.symbol_table.read_text()
     # JSON5 writer emits bare identifier keys (no quotes), so check for the
     # unquoted address fields instead of JSON-style quoted keys.
-    assert "address: 0x00100000" in symbol_table_text
+    assert "address: 0x00020000" in symbol_table_text
     assert "address: 0x80000100" in symbol_table_text
 
 
@@ -65,7 +65,7 @@ def test_core_executes_bundle_program_from_mapped_imem_base(tmp_path: Path) -> N
     core = Sim()
     core.execute(loaded.program)
 
-    assert core.state.read_xreg(1) == IMEM_BASE + 8
+    assert core.state.read_xreg(1) == IMEM_BASE + 2
     assert core.state.stop_reason == StopReason.EBREAK
 
 

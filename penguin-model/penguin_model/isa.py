@@ -51,8 +51,8 @@ from .tensor import (
 )
 
 MASK32 = 0xFFFF_FFFF
-SCALAR_LOAD_MNEMONICS = frozenset({"slb", "slh", "slw", "slbu", "slhu"})
-SCALAR_STORE_MNEMONICS = frozenset({"ssb", "ssh", "ssw"})
+SCALAR_LOAD_MNEMONICS = frozenset({"lb", "lh", "lw", "lbu", "lhu"})
+SCALAR_STORE_MNEMONICS = frozenset({"sb", "sh", "sw"})
 
 
 def _u32(value: int) -> int:
@@ -86,8 +86,8 @@ def _branch_if(
 
 def _dma_operands(state: ArchState, params: DMAType) -> tuple[int, int, int]:
     return (
-        state.extend_address(_u32(state.read_xreg(params.dram_rs))),
-        state.extend_address(_u32(state.read_xreg(params.vmem_rs))),
+        _u32(state.read_xreg(params.dram_rs)),
+        _u32(state.read_xreg(params.vmem_rs)),
         _u32(state.read_xreg(params.size_rs)),
     )
 
@@ -109,89 +109,89 @@ def _scalar_load_address(state: ArchState, params: IType) -> int:
     return _u32(state.read_xreg(params.rs1) + params.imm)
 
 
-@instruction(mnemonic="slui", params_type=UType, latency=1)
-def slui(state: ArchState, params: UType) -> None:
+@instruction(mnemonic="lui", params_type=UType, latency=1)
+def lui(state: ArchState, params: UType) -> None:
     state.write_xreg(params.rd, params.imm << 12)
 
 
-@instruction(mnemonic="sauipc", params_type=UType, latency=1)
-def sauipc(state: ArchState, params: UType) -> None:
+@instruction(mnemonic="auipc", params_type=UType, latency=1)
+def auipc(state: ArchState, params: UType) -> None:
     state.write_xreg(params.rd, state.pc + (params.imm << 12))
 
 
-@instruction(mnemonic="sjal", params_type=JType, latency=1)
-def sjal(state: ArchState, params: JType) -> None:
-    state.write_xreg(params.rd, state.pc + 4)
+@instruction(mnemonic="jal", params_type=JType, latency=1)
+def jal(state: ArchState, params: JType) -> None:
+    state.write_xreg(params.rd, state.pc + 1)
     state.set_next_pc(state.pc + params.imm)
 
 
-@instruction(mnemonic="sjalr", params_type=IType, latency=1)
-def sjalr(state: ArchState, params: IType) -> None:
-    target = (state.read_xreg(params.rs1) + params.imm) & ~1
-    state.write_xreg(params.rd, state.pc + 4)
+@instruction(mnemonic="jalr", params_type=IType, latency=1)
+def jalr(state: ArchState, params: IType) -> None:
+    target = _u32(state.read_xreg(params.rs1) + params.imm)
+    state.write_xreg(params.rd, state.pc + 1)
     state.set_next_pc(target)
 
 
-@instruction(mnemonic="sbeq", params_type=BType, latency=1)
-def sbeq(state: ArchState, params: BType) -> None:
+@instruction(mnemonic="beq", params_type=BType, latency=1)
+def beq(state: ArchState, params: BType) -> None:
     _branch_if(state, params, lambda lhs, rhs: lhs == rhs)
 
 
-@instruction(mnemonic="sbne", params_type=BType, latency=1)
-def sbne(state: ArchState, params: BType) -> None:
+@instruction(mnemonic="bne", params_type=BType, latency=1)
+def bne(state: ArchState, params: BType) -> None:
     _branch_if(state, params, lambda lhs, rhs: lhs != rhs)
 
 
-@instruction(mnemonic="sblt", params_type=BType, latency=1)
-def sblt(state: ArchState, params: BType) -> None:
+@instruction(mnemonic="blt", params_type=BType, latency=1)
+def blt(state: ArchState, params: BType) -> None:
     _branch_if(state, params, lambda lhs, rhs: _s32(lhs) < _s32(rhs))
 
 
-@instruction(mnemonic="sbge", params_type=BType, latency=1)
-def sbge(state: ArchState, params: BType) -> None:
+@instruction(mnemonic="bge", params_type=BType, latency=1)
+def bge(state: ArchState, params: BType) -> None:
     _branch_if(state, params, lambda lhs, rhs: _s32(lhs) >= _s32(rhs))
 
 
-@instruction(mnemonic="sbltu", params_type=BType, latency=1)
-def sbltu(state: ArchState, params: BType) -> None:
+@instruction(mnemonic="bltu", params_type=BType, latency=1)
+def bltu(state: ArchState, params: BType) -> None:
     _branch_if(state, params, lambda lhs, rhs: _u32(lhs) < _u32(rhs))
 
 
-@instruction(mnemonic="sbgeu", params_type=BType, latency=1)
-def sbgeu(state: ArchState, params: BType) -> None:
+@instruction(mnemonic="bgeu", params_type=BType, latency=1)
+def bgeu(state: ArchState, params: BType) -> None:
     _branch_if(state, params, lambda lhs, rhs: _u32(lhs) >= _u32(rhs))
 
 
-@instruction(mnemonic="slb", params_type=IType, latency=1)
-def slb(state: ArchState, params: IType) -> None:
+@instruction(mnemonic="lb", params_type=IType, latency=1)
+def lb(state: ArchState, params: IType) -> None:
     address = _scalar_load_address(state, params)
     state.write_xreg(params.rd, _sign_extend(state.load_vmem_u8(address), 8))
 
 
-@instruction(mnemonic="slh", params_type=IType, latency=1)
-def slh(state: ArchState, params: IType) -> None:
+@instruction(mnemonic="lh", params_type=IType, latency=1)
+def lh(state: ArchState, params: IType) -> None:
     address = _scalar_load_address(state, params)
     value = state.load_vmem_u16(address)
     if value is not None:
         state.write_xreg(params.rd, _sign_extend(value, 16))
 
 
-@instruction(mnemonic="slw", params_type=IType, latency=1)
-def slw(state: ArchState, params: IType) -> None:
+@instruction(mnemonic="lw", params_type=IType, latency=1)
+def lw(state: ArchState, params: IType) -> None:
     address = _scalar_load_address(state, params)
     value = state.load_vmem_u32(address)
     if value is not None:
         state.write_xreg(params.rd, value)
 
 
-@instruction(mnemonic="slbu", params_type=IType, latency=1)
-def slbu(state: ArchState, params: IType) -> None:
+@instruction(mnemonic="lbu", params_type=IType, latency=1)
+def lbu(state: ArchState, params: IType) -> None:
     address = _scalar_load_address(state, params)
     state.write_xreg(params.rd, state.load_vmem_u8(address))
 
 
-@instruction(mnemonic="slhu", params_type=IType, latency=1)
-def slhu(state: ArchState, params: IType) -> None:
+@instruction(mnemonic="lhu", params_type=IType, latency=1)
+def lhu(state: ArchState, params: IType) -> None:
     address = _scalar_load_address(state, params)
     value = state.load_vmem_u16(address)
     if value is not None:
@@ -209,147 +209,147 @@ def seld(state: ArchState, params: ScaleMemType) -> None:
     state.write_ereg(params.ed, state.load_vmem_u8(address))
 
 
-@instruction(mnemonic="ssb", params_type=SType, latency=1)
-def ssb(state: ArchState, params: SType) -> None:
+@instruction(mnemonic="sb", params_type=SType, latency=1)
+def sb(state: ArchState, params: SType) -> None:
     address = _u32(state.read_xreg(params.rs1) + params.imm)
     state.store_vmem_u8(address, state.read_xreg(params.rs2))
 
 
-@instruction(mnemonic="ssh", params_type=SType, latency=1)
-def ssh(state: ArchState, params: SType) -> None:
+@instruction(mnemonic="sh", params_type=SType, latency=1)
+def sh(state: ArchState, params: SType) -> None:
     address = _u32(state.read_xreg(params.rs1) + params.imm)
     state.store_vmem_u16(address, state.read_xreg(params.rs2))
 
 
-@instruction(mnemonic="ssw", params_type=SType, latency=1)
-def ssw(state: ArchState, params: SType) -> None:
+@instruction(mnemonic="sw", params_type=SType, latency=1)
+def sw(state: ArchState, params: SType) -> None:
     address = _u32(state.read_xreg(params.rs1) + params.imm)
     state.store_vmem_u32(address, state.read_xreg(params.rs2))
 
 
-@instruction(mnemonic="saddi", params_type=IType, latency=1)
-def saddi(state: ArchState, params: IType) -> None:
+@instruction(mnemonic="addi", params_type=IType, latency=1)
+def addi(state: ArchState, params: IType) -> None:
     state.write_xreg(params.rd, state.read_xreg(params.rs1) + params.imm)
 
 
-@instruction(mnemonic="sslti", params_type=IType, latency=1)
-def sslti(state: ArchState, params: IType) -> None:
+@instruction(mnemonic="slti", params_type=IType, latency=1)
+def slti(state: ArchState, params: IType) -> None:
     state.write_xreg(
         params.rd,
         1 if _s32(state.read_xreg(params.rs1)) < _s32(params.imm) else 0,
     )
 
 
-@instruction(mnemonic="ssltiu", params_type=IType, latency=1)
-def ssltiu(state: ArchState, params: IType) -> None:
+@instruction(mnemonic="sltiu", params_type=IType, latency=1)
+def sltiu(state: ArchState, params: IType) -> None:
     state.write_xreg(
         params.rd,
         1 if _u32(state.read_xreg(params.rs1)) < _u32(params.imm) else 0,
     )
 
 
-@instruction(mnemonic="sxori", params_type=IType, latency=1)
-def sxori(state: ArchState, params: IType) -> None:
+@instruction(mnemonic="xori", params_type=IType, latency=1)
+def xori(state: ArchState, params: IType) -> None:
     state.write_xreg(params.rd, state.read_xreg(params.rs1) ^ params.imm)
 
 
-@instruction(mnemonic="sori", params_type=IType, latency=1)
-def sori(state: ArchState, params: IType) -> None:
+@instruction(mnemonic="ori", params_type=IType, latency=1)
+def ori(state: ArchState, params: IType) -> None:
     state.write_xreg(params.rd, state.read_xreg(params.rs1) | params.imm)
 
 
-@instruction(mnemonic="sandi", params_type=IType, latency=1)
-def sandi(state: ArchState, params: IType) -> None:
+@instruction(mnemonic="andi", params_type=IType, latency=1)
+def andi(state: ArchState, params: IType) -> None:
     state.write_xreg(params.rd, state.read_xreg(params.rs1) & params.imm)
 
 
-@instruction(mnemonic="sslli", params_type=IType, latency=1)
-def sslli(state: ArchState, params: IType) -> None:
+@instruction(mnemonic="slli", params_type=IType, latency=1)
+def slli(state: ArchState, params: IType) -> None:
     state.write_xreg(params.rd, state.read_xreg(params.rs1) << _imm_shift(params))
 
 
-@instruction(mnemonic="ssrli", params_type=IType, latency=1)
-def ssrli(state: ArchState, params: IType) -> None:
+@instruction(mnemonic="srli", params_type=IType, latency=1)
+def srli(state: ArchState, params: IType) -> None:
     state.write_xreg(params.rd, _u32(state.read_xreg(params.rs1)) >> _imm_shift(params))
 
 
-@instruction(mnemonic="ssrai", params_type=IType, latency=1)
-def ssrai(state: ArchState, params: IType) -> None:
+@instruction(mnemonic="srai", params_type=IType, latency=1)
+def srai(state: ArchState, params: IType) -> None:
     state.write_xreg(params.rd, _s32(state.read_xreg(params.rs1)) >> _imm_shift(params))
 
 
-@instruction(mnemonic="sadd", params_type=RType, latency=1)
-def sadd(state: ArchState, params: RType) -> None:
+@instruction(mnemonic="add", params_type=RType, latency=1)
+def add(state: ArchState, params: RType) -> None:
     state.write_xreg(params.rd, state.read_xreg(params.rs1) + state.read_xreg(params.rs2))
 
 
-@instruction(mnemonic="ssub", params_type=RType, latency=1)
-def ssub(state: ArchState, params: RType) -> None:
+@instruction(mnemonic="sub", params_type=RType, latency=1)
+def sub(state: ArchState, params: RType) -> None:
     state.write_xreg(params.rd, state.read_xreg(params.rs1) - state.read_xreg(params.rs2))
 
 
-@instruction(mnemonic="ssll", params_type=RType, latency=1)
-def ssll(state: ArchState, params: RType) -> None:
+@instruction(mnemonic="sll", params_type=RType, latency=1)
+def sll(state: ArchState, params: RType) -> None:
     shift = state.read_xreg(params.rs2) & 0x1F
     state.write_xreg(params.rd, state.read_xreg(params.rs1) << shift)
 
 
-@instruction(mnemonic="sslt", params_type=RType, latency=1)
-def sslt(state: ArchState, params: RType) -> None:
+@instruction(mnemonic="slt", params_type=RType, latency=1)
+def slt(state: ArchState, params: RType) -> None:
     state.write_xreg(
         params.rd,
         1 if _s32(state.read_xreg(params.rs1)) < _s32(state.read_xreg(params.rs2)) else 0,
     )
 
 
-@instruction(mnemonic="ssltu", params_type=RType, latency=1)
-def ssltu(state: ArchState, params: RType) -> None:
+@instruction(mnemonic="sltu", params_type=RType, latency=1)
+def sltu(state: ArchState, params: RType) -> None:
     state.write_xreg(
         params.rd,
         1 if _u32(state.read_xreg(params.rs1)) < _u32(state.read_xreg(params.rs2)) else 0,
     )
 
 
-@instruction(mnemonic="sxor", params_type=RType, latency=1)
-def sxor(state: ArchState, params: RType) -> None:
+@instruction(mnemonic="xor", params_type=RType, latency=1)
+def xor(state: ArchState, params: RType) -> None:
     state.write_xreg(params.rd, state.read_xreg(params.rs1) ^ state.read_xreg(params.rs2))
 
 
-@instruction(mnemonic="ssrl", params_type=RType, latency=1)
-def ssrl(state: ArchState, params: RType) -> None:
+@instruction(mnemonic="srl", params_type=RType, latency=1)
+def srl(state: ArchState, params: RType) -> None:
     shift = state.read_xreg(params.rs2) & 0x1F
     state.write_xreg(params.rd, _u32(state.read_xreg(params.rs1)) >> shift)
 
 
-@instruction(mnemonic="ssra", params_type=RType, latency=1)
-def ssra(state: ArchState, params: RType) -> None:
+@instruction(mnemonic="sra", params_type=RType, latency=1)
+def sra(state: ArchState, params: RType) -> None:
     shift = state.read_xreg(params.rs2) & 0x1F
     state.write_xreg(params.rd, _s32(state.read_xreg(params.rs1)) >> shift)
 
 
-@instruction(mnemonic="sor", params_type=RType, latency=1)
-def sor(state: ArchState, params: RType) -> None:
+@instruction(mnemonic="or", params_type=RType, latency=1)
+def or_(state: ArchState, params: RType) -> None:
     state.write_xreg(params.rd, state.read_xreg(params.rs1) | state.read_xreg(params.rs2))
 
 
-@instruction(mnemonic="sand", params_type=RType, latency=1)
-def sand(state: ArchState, params: RType) -> None:
+@instruction(mnemonic="and", params_type=RType, latency=1)
+def and_(state: ArchState, params: RType) -> None:
     state.write_xreg(params.rd, state.read_xreg(params.rs1) & state.read_xreg(params.rs2))
 
 
-@instruction(mnemonic="sfence", params_type=EmptyType, latency=1)
-def sfence(state: ArchState, params: EmptyType) -> None:
+@instruction(mnemonic="fence", params_type=EmptyType, latency=1)
+def fence(state: ArchState, params: EmptyType) -> None:
     del state, params
 
 
-@instruction(mnemonic="secall", params_type=EmptyType, latency=1)
-def secall(state: ArchState, params: EmptyType) -> None:
+@instruction(mnemonic="ecall", params_type=EmptyType, latency=1)
+def ecall(state: ArchState, params: EmptyType) -> None:
     del params
     state.stop(StopReason.ECALL)
 
 
-@instruction(mnemonic="sebreak", params_type=EmptyType, latency=1)
-def sebreak(state: ArchState, params: EmptyType) -> None:
+@instruction(mnemonic="ebreak", params_type=EmptyType, latency=1)
+def ebreak(state: ArchState, params: EmptyType) -> None:
     del params
     state.stop(StopReason.EBREAK)
 
@@ -841,54 +841,95 @@ __all__ = [
     "DMA_CHANNEL_COUNT",
     "SCALAR_LOAD_MNEMONICS",
     "SCALAR_STORE_MNEMONICS",
-    "slb",
-    "slbu",
-    "slh",
-    "slhu",
-    "slw",
-    "sadd",
-    "saddi",
-    "sand",
-    "sandi",
-    "sauipc",
-    "sbeq",
-    "sbge",
-    "sbgeu",
-    "sblt",
-    "sbltu",
-    "sbne",
-    "sebreak",
-    "secall",
+    "add",
+    "addi",
+    "and_",
+    "andi",
+    "auipc",
+    "beq",
+    "bge",
+    "bgeu",
+    "blt",
+    "bltu",
+    "bne",
+    "ebreak",
+    "ecall",
+    "fence",
+    "jal",
+    "jalr",
+    "lb",
+    "lbu",
+    "lh",
+    "lhu",
+    "lui",
+    "lw",
+    "or_",
+    "ori",
     "seld",
     "seli",
-    "sfence",
-    "sjal",
-    "sjalr",
-    "slui",
     "matmul_acc_mxu0",
     "matmul_acc_mxu1",
     "matmul_mxu0",
     "matmul_mxu1",
     "mxu_push_mxu0",
     "mxu_push_mxu1",
-    "ssb",
-    "sor",
-    "sori",
-    "ssh",
-    "ssll",
-    "sslli",
-    "sslt",
-    "ssltu",
-    "ssra",
-    "ssrai",
-    "ssrl",
-    "ssrli",
-    "ssub",
-    "sslti",
-    "ssltiu",
-    "ssw",
-    "sxor",
-    "sxori",
+    "sb",
+    "sh",
+    "sll",
+    "slli",
+    "slt",
+    "slti",
+    "sltiu",
+    "sltu",
+    "sra",
+    "srai",
+    "srl",
+    "srli",
+    "sub",
+    "sw",
+    "xor",
+    "xori",
     "vload",
     "vstore",
 ]
+
+sadd = add
+saddi = addi
+sand = and_
+sandi = andi
+sauipc = auipc
+sbeq = beq
+sbge = bge
+sbgeu = bgeu
+sblt = blt
+sbltu = bltu
+sbne = bne
+sebreak = ebreak
+secall = ecall
+sfence = fence
+sjal = jal
+sjalr = jalr
+slb = lb
+slbu = lbu
+slh = lh
+slhu = lhu
+slui = lui
+slw = lw
+sor = or_
+sori = ori
+ssb = sb
+ssh = sh
+ssll = sll
+sslli = slli
+sslt = slt
+sslti = slti
+ssltiu = sltiu
+ssltu = sltu
+ssra = sra
+ssrai = srai
+ssrl = srl
+ssrli = srli
+ssub = sub
+ssw = sw
+sxor = xor
+sxori = xori

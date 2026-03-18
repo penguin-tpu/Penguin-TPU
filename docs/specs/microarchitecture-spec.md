@@ -67,9 +67,9 @@ The following parameters are frozen for the current baseline implementation.
 | `VPU_LANES_BF16` | `32` | BF16 lanes in the baseline VPU |
 | `DMA_CHANNELS` | `8` | Architected DMA channels |
 | `DMA_ALIGN` | `32` bytes | DMA alignment and granularity |
-| `IMEM_BASE` | `0x0010_0000` | IMEM base address |
-| `IMEM_SIZE` | `32 KiB` | IMEM capacity |
-| `VMEM_BASE` | `0x0800_0000` | VMEM base address |
+| `IMEM_BASE` | `0x0002_0000` | IMEM base address |
+| `IMEM_SIZE` | `64 KiB` | IMEM capacity |
+| `VMEM_BASE` | `0x2000_0000` | VMEM base address |
 | `VMEM_SIZE` | `1 MiB` | VMEM capacity |
 | `DRAM_BASE` | `0x8000_0000` | DRAM base address |
 | `DRAM_SIZE` | `16 GiB` | DRAM capacity |
@@ -85,7 +85,7 @@ The following parameters are frozen for the current baseline implementation.
 | `OFFCHIP_LINK_WIDTH_BITS` | `32` | DRAM-link beat width |
 | `OFFCHIP_LINK_CORE_CYCLES_PER_BEAT` | `2` | Off-chip serialized beat time |
 | `DMA_OFFCHIP_COMMAND_WORDS` | `2` | DRAM-side DMA command overhead |
-| `VMEM_BUS_WIDTH_BITS` | `128` | VMEM/system-bus beat width |
+| `VMEM_BUS_WIDTH_BITS` | `512` | VMEM/system-bus beat width |
 | `VMEM_BUS_CORE_CYCLES_PER_BEAT` | `1` | VMEM/system-bus beat time |
 | `VMEM_TENSOR_ALIGN` | `32` bytes | VMEM alignment for `vload`, `vstore`, `mxu.push.*` |
 | `TRACE_TICKS_PER_CYCLE` | `1` | Trace timestamp granularity |
@@ -193,6 +193,27 @@ Minimum decode outputs:
 - target execution unit
 - legality classification
 
+The scalar decode control record shall additionally expose at least:
+
+- `valid`
+- `illegal`
+- `format_class`
+- `scalar_op_class`
+- `alu_fn`
+- `writes_rd`
+- `reads_rs1`
+- `reads_rs2`
+- `is_branch`
+- `is_jump`
+- `is_load`
+- `is_store`
+- `is_fence`
+- `is_ecall`
+- `is_ebreak`
+
+Immediate generation shall follow standard RV32I sign-extension and bit-reassembly rules
+for `R`, `I`, `S`, `B`, `U`, and `J` format instructions.
+
 The decode stage should classify standard RISC-V custom major opcodes distinctly from
 fully illegal encodings to preserve future accelerator-extension space.
 
@@ -229,6 +250,17 @@ The intended first scalar implementation slice is partitioned into:
 - VMEM-facing scalar load/store unit supporting byte, halfword, and word accesses
 - scalar control block that owns `pc`, delay-slot tracking, and halt status
 
+Recommended block responsibilities:
+
+- `penguin_scalar_defs.vh`: opcode, `funct3`, `funct7`, halt-reason, and ALU-function constants
+- `penguin_scalar_decoder.v`: binary field extraction, immediate generation, and legality classification
+- `penguin_scalar_regfile.v`: `32 x 32` scalar register storage with hardwired `x0`
+- `penguin_scalar_alu.v`: scalar ALU and compare datapath
+- `penguin_scalar_branch_unit.v`: branch/jump target generation plus alignment checks
+- `penguin_scalar_lsu.v`: blocking VMEM byte/halfword/word load/store path with alignment checks
+- `penguin_scalar_controller.v`: `pc` sequencing, delay-slot bookkeeping, and halt-status generation
+- `penguin_scalar_core.v`: top-level scalar integration of fetch, decode, execute, and memory interfaces
+
 ### 5.3 Delay-slot handling
 
 The microarchitecture shall preserve the architectural two-delay-slot rule without
@@ -241,8 +273,34 @@ The baseline implementation direction is:
   two delay-slot fetches
 - once the youngest resolved shadow has consumed its two delay slots, its redirect is
   applied
-- a younger branch or jump in a delay slot overwrites any older resolved redirect before
-  fetch is redirected
+- a branch or jump decoded in a delay-slot position is illegal and shall terminate
+  execution before any younger redirect is applied
+
+### 5.4 Scalar RTL conformance and verification
+
+The first scalar RTL milestone shall be considered complete only when all of the
+following are true:
+
+- the scalar core fetches and executes the frozen scalar ISA subset from `IMEM`
+- `x0` behavior is correct under arbitrary attempted writes
+- two-delay-slot branch and jump behavior is correct
+- misaligned control-flow targets and misaligned scalar memory accesses halt correctly
+- `ecall` and `ebreak` report distinct terminal outcomes
+- RTL regression exists and is suitable for automation
+
+Required scalar RTL verification surfaces:
+
+- decoder spot checks for legal and illegal encodings, including reserved custom opcodes
+- ALU and compare tests against the architectural scalar semantics
+- register-file tests proving `x0` hardwiring
+- branch/jump delay-slot tests, including illegal control flow placed in a delay slot
+- VMEM scalar load/store tests covering byte, halfword, and word accesses plus alignment
+  failures
+- end-to-end scalar program tests that compare RTL against the software model for:
+  - final scalar register state
+  - final `pc`
+  - touched `VMEM` contents
+  - halt reason
 
 ## 6. Scale Register File, Tensor Register File, and Local Interconnect
 
@@ -370,7 +428,7 @@ The performance model and timing expectations shall use the following formulas.
 Definitions:
 
 - `OFFCHIP_BYTES_PER_BEAT = OFFCHIP_LINK_WIDTH_BITS / 8 = 4`
-- `VMEM_BYTES_PER_BEAT = VMEM_BUS_WIDTH_BITS / 8 = 16`
+- `VMEM_BYTES_PER_BEAT = VMEM_BUS_WIDTH_BITS / 8 = 64`
 
 Required formulas:
 
@@ -382,9 +440,9 @@ For the frozen baseline values:
 
 - one off-chip beat costs `2` core cycles
 - one VMEM beat costs `1` core cycle
-- one `vload` / `vstore` of a `4096`-byte tensor register takes a deterministic `256`
+- one `vload` / `vstore` of a `4096`-byte tensor register takes a deterministic `64`
   cycles
-- one `mxu.push.*` of a `4096`-byte weight tile takes `256` cycles
+- one `mxu.push.*` of a `4096`-byte weight tile takes `64` cycles
 
 ## 8. Functional Units
 
@@ -526,7 +584,7 @@ provided externally.
 Required derived roofs:
 
 - DRAM roof from `2 B/cycle`
-- VMEM roof from `16 B/cycle`
+- VMEM roof from `64 B/cycle`
 - total MXU peak from two `64`-cycle matmul engines
 
 The performance model may scale those normalized values linearly into `ops/s` and

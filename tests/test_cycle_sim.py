@@ -23,8 +23,8 @@ def test_tick_advances_scalar_execution_one_cycle_at_a_time() -> None:
     core = Sim(state=state, config=state.config)
     initial_x2 = state.read_xreg(2)
     program = [
-        Instruction("saddi", IType(rd=1, rs1=0, imm=7)),
-        Instruction("saddi", IType(rd=2, rs1=1, imm=1)),
+        Instruction("addi", IType(rd=1, rs1=0, imm=7)),
+        Instruction("addi", IType(rd=2, rs1=1, imm=1)),
     ]
 
     core.load_program(program)
@@ -34,7 +34,7 @@ def test_tick_advances_scalar_execution_one_cycle_at_a_time() -> None:
     assert state.perf.instructions == 0
     assert state.read_xreg(1) != 7
     assert state.read_xreg(2) == initial_x2
-    assert state.pc == 4
+    assert state.pc == 1
     assert state.stop_reason is None
 
     assert core.tick() is True
@@ -42,7 +42,7 @@ def test_tick_advances_scalar_execution_one_cycle_at_a_time() -> None:
     assert state.perf.instructions == 0
     assert state.read_xreg(1) != 7
     assert state.read_xreg(2) == initial_x2
-    assert state.pc == 8
+    assert state.pc == 2
     assert state.stop_reason is None
 
     assert core.tick() is True
@@ -50,7 +50,7 @@ def test_tick_advances_scalar_execution_one_cycle_at_a_time() -> None:
     assert state.perf.instructions == 0
     assert state.read_xreg(1) != 7
     assert state.read_xreg(2) == initial_x2
-    assert state.pc == 8
+    assert state.pc == 2
     assert state.stop_reason is None
 
     assert core.tick() is True
@@ -58,14 +58,14 @@ def test_tick_advances_scalar_execution_one_cycle_at_a_time() -> None:
     assert state.perf.instructions == 1
     assert state.read_xreg(1) == 7
     assert state.read_xreg(2) == initial_x2
-    assert state.pc == 8
+    assert state.pc == 2
     assert state.stop_reason is None
 
     assert core.tick() is False
     assert state.perf.cycles == 5
     assert state.perf.instructions == 2
     assert state.read_xreg(2) == 8
-    assert state.pc == 8
+    assert state.pc == 2
     assert state.stop_reason is not None
 
 
@@ -90,7 +90,7 @@ def test_tick_models_dma_wait_as_a_per_channel_decode_fence() -> None:
         Instruction("dma.load.ch0", DMAType(dram_rs=1, vmem_rs=2, size_rs=3)),
         Instruction("dma.load.ch1", DMAType(dram_rs=4, vmem_rs=5, size_rs=6)),
         Instruction("dma.wait.ch1", EmptyType()),
-        Instruction("saddi", IType(rd=10, rs1=0, imm=1)),
+        Instruction("addi", IType(rd=10, rs1=0, imm=1)),
         Instruction("dma.wait.ch0", EmptyType()),
     ]
 
@@ -102,27 +102,27 @@ def test_tick_models_dma_wait_as_a_per_channel_decode_fence() -> None:
     ready_ch0 = state.dma_channels[0].pending.ready_cycle
     assert state.perf.cycles == 4
     assert state.perf.instructions == 1
-    assert state.pc == 16
+    assert state.pc == 4
     assert state.dma_channels[0].busy is True
     assert state.dma_channels[1].busy is True
 
     assert core.tick() is True
     assert state.perf.cycles == 5
     assert state.perf.instructions == 2
-    assert state.pc == 16
+    assert state.pc == 4
     assert state.dma_channels[1].busy is True
     assert ready_ch0 > ready_ch1
 
     while state.perf.cycles < ready_ch1 - 1:
         assert core.tick() is True
-        assert state.pc == 16
+        assert state.pc == 4
         assert state.dma_channels[1].busy is True
         assert state.read_xreg(10) != 1
 
     assert core.tick() is True
     assert state.perf.cycles == ready_ch1
     assert state.perf.instructions == 3
-    assert state.pc == 20
+    assert state.pc == 5
     assert state.dma_channels[1].busy is False
     assert state.dma_channels[0].busy is True
     assert torch.equal(state.vmem.read(VMEM_BASE + 0x300, size_ch1), payload_ch1)
@@ -130,14 +130,14 @@ def test_tick_models_dma_wait_as_a_per_channel_decode_fence() -> None:
     assert core.tick() is True
     assert state.perf.cycles == ready_ch1 + 1
     assert state.read_xreg(10) != 1
-    assert state.pc == 20
+    assert state.pc == 5
     assert state.dma_channels[0].busy is True
 
     assert core.tick() is True
     assert state.perf.cycles == ready_ch1 + 2
     assert state.perf.instructions == 4
     assert state.read_xreg(10) == 1
-    assert state.pc == 20
+    assert state.pc == 5
     assert state.dma_channels[0].busy is True
 
     while state.stop_reason is None:
@@ -163,7 +163,7 @@ def test_tick_defers_vpu_writeback_until_latency_boundary() -> None:
     assert core.tick() is True
     assert state.perf.cycles == 1
     assert state.perf.instructions == 0
-    assert state.pc == 4
+    assert state.pc == 1
     assert state.stop_reason is None
     assert torch.equal(state.load_mreg(3), initial_dest)
 

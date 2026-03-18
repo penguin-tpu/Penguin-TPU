@@ -38,9 +38,9 @@ start:
 
     assert program.labels == {"start": 0}
     assert list(program) == [
-        Instruction("saddi", IType(rd=1, rs1=0, imm=VMEM_BASE + 0x20)),
-        Instruction("saddi", IType(rd=0, rs1=0, imm=0)),
-        Instruction("sbne", BType(rs1=1, rs2=0, imm=-8)),
+        Instruction("addi", IType(rd=1, rs1=0, imm=VMEM_BASE + 0x20)),
+        Instruction("addi", IType(rd=0, rs1=0, imm=0)),
+        Instruction("bne", BType(rs1=1, rs2=0, imm=-2)),
     ]
 
 
@@ -51,19 +51,19 @@ def test_assembler_uses_absolute_label_values_for_non_control_immediates() -> No
     sjal x0, target
 target:
     nop
-"""
+    """
     )
 
     assert list(program) == [
-        Instruction("saddi", IType(rd=12, rs1=0, imm=9)),
-        Instruction("sjal", JType(rd=0, imm=4)),
-        Instruction("saddi", IType(rd=0, rs1=0, imm=0)),
+        Instruction("addi", IType(rd=12, rs1=0, imm=3)),
+        Instruction("jal", JType(rd=0, imm=1)),
+        Instruction("addi", IType(rd=0, rs1=0, imm=0)),
     ]
 
 
 def test_assembler_rejects_invalid_register_names() -> None:
     with pytest.raises(AssemblySyntaxError, match="invalid register"):
-        assemble_text("saddi y1, x0, 1\n")
+        assemble_text("addi y1, x0, 1\n")
 
 
 def test_assembler_parses_tensor_memory_and_mxu_operands() -> None:
@@ -147,8 +147,8 @@ target:
 
     assert list(program) == [
         Instruction("vload", TensorMemType(mreg=1, rs1=2, imm=VMEM_BASE + 64)),
-        Instruction("vstore", TensorMemType(mreg=1, rs1=3, imm=40)),
-        Instruction("sebreak", EmptyType()),
+        Instruction("vstore", TensorMemType(mreg=1, rs1=3, imm=34)),
+        Instruction("ebreak", EmptyType()),
     ]
 
 
@@ -167,10 +167,10 @@ target:
     assert program.base_address == IMEM_BASE
     assert program.labels == {
         "start": IMEM_BASE,
-        "target": IMEM_BASE + 8,
+        "target": IMEM_BASE + 2,
     }
     assert list(program) == [
-        Instruction("saddi", IType(rd=1, rs1=0, imm=IMEM_BASE + 8)),
-        Instruction("sjal", JType(rd=0, imm=4)),
-        Instruction("sebreak", EmptyType()),
+        Instruction("addi", IType(rd=1, rs1=0, imm=IMEM_BASE + 2)),
+        Instruction("jal", JType(rd=0, imm=1)),
+        Instruction("ebreak", EmptyType()),
     ]

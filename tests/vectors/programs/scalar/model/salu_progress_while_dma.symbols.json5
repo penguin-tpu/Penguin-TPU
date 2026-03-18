@@ -3,7 +3,7 @@
     program: {
       kind: "program",
       region: "imem",
-      address: 0x00100000,
+      address: 0x00020000,
       size_bytes: 64,
       file: "salu_progress_while_dma.S",
     },

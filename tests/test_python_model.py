@@ -38,61 +38,61 @@ from penguin_model import (
     UType,
     VMEM_BASE,
     VMEM_SIZE,
-    saddi,
-    sbeq,
-    sbge,
-    sbgeu,
-    sblt,
-    sbltu,
-    sbne,
-    slw,
+    addi,
+    beq,
+    bge,
+    bgeu,
+    blt,
+    bltu,
+    bne,
+    lw,
 )
 from penguin_model.testbench import TEST_CORE_CONFIG, load_scalar_program
 
 
 EXPECTED_BASE_MNEMONICS = {
-    "slui",
-    "sauipc",
-    "sjal",
-    "sjalr",
-    "sbeq",
-    "sbne",
-    "sblt",
-    "sbge",
-    "sbltu",
-    "sbgeu",
-    "slb",
-    "slbu",
-    "slh",
-    "slhu",
-    "slw",
+    "lui",
+    "auipc",
+    "jal",
+    "jalr",
+    "beq",
+    "bne",
+    "blt",
+    "bge",
+    "bltu",
+    "bgeu",
+    "lb",
+    "lbu",
+    "lh",
+    "lhu",
+    "lw",
     "seli",
     "seld",
-    "ssb",
-    "ssh",
-    "ssw",
-    "saddi",
-    "sslti",
-    "ssltiu",
-    "sxori",
-    "sori",
-    "sandi",
-    "sslli",
-    "ssrli",
-    "ssrai",
-    "sadd",
-    "ssub",
-    "ssll",
-    "sslt",
-    "ssltu",
-    "sxor",
-    "ssrl",
-    "ssra",
-    "sor",
-    "sand",
-    "sfence",
-    "secall",
-    "sebreak",
+    "sb",
+    "sh",
+    "sw",
+    "addi",
+    "slti",
+    "sltiu",
+    "xori",
+    "ori",
+    "andi",
+    "slli",
+    "srli",
+    "srai",
+    "add",
+    "sub",
+    "sll",
+    "slt",
+    "sltu",
+    "xor",
+    "srl",
+    "sra",
+    "or",
+    "and",
+    "fence",
+    "ecall",
+    "ebreak",
 }
 
 EXPECTED_DMA_MNEMONICS = {
@@ -191,25 +191,25 @@ def test_instruction_semantics_are_stateless_functions_over_state_and_params() -
     state = _fresh_state()
     state.vmem.store_u32(VMEM_BASE + 0x08, 0xABCD_EF01)
 
-    slw(state, IType(rd=5, rs1=0, imm=VMEM_BASE + 0x08))
+    lw(state, IType(rd=5, rs1=0, imm=VMEM_BASE + 0x08))
 
     assert state.read_xreg(5) == 0xABCD_EF01
 
 
 def test_instruction_decorator_registers_mnemonic_metadata() -> None:
-    assert slw.mnemonic == "slw"
-    assert INSTRUCTION_SPECS["slw"].semantics is slw
-    assert INSTRUCTION_SPECS["slw"].params_type is IType
+    assert lw.mnemonic == "lw"
+    assert INSTRUCTION_SPECS["lw"].semantics is lw
+    assert INSTRUCTION_SPECS["lw"].params_type is IType
 
 
 @pytest.mark.parametrize(
     ("mnemonic", "bytes_", "expected"),
     [
-        pytest.param("slb", [0x80], 0xFFFF_FF80, id="slb-sign-extend"),
-        pytest.param("slbu", [0x80], 0x0000_0080, id="slbu-zero-extend"),
-        pytest.param("slh", [0x34, 0xF2], 0xFFFF_F234, id="slh-sign-extend"),
-        pytest.param("slhu", [0x34, 0xF2], 0x0000_F234, id="slhu-zero-extend"),
-        pytest.param("slw", [0x78, 0x56, 0x34, 0xF2], 0xF234_5678, id="slw-word"),
+        pytest.param("lb", [0x80], 0xFFFF_FF80, id="lb-sign-extend"),
+        pytest.param("lbu", [0x80], 0x0000_0080, id="lbu-zero-extend"),
+        pytest.param("lh", [0x34, 0xF2], 0xFFFF_F234, id="lh-sign-extend"),
+        pytest.param("lhu", [0x34, 0xF2], 0x0000_F234, id="lhu-zero-extend"),
+        pytest.param("lw", [0x78, 0x56, 0x34, 0xF2], 0xF234_5678, id="lw-word"),
     ],
 )
 def test_scalar_load_variants_follow_rv32i_sign_and_zero_extension(
@@ -229,9 +229,9 @@ def test_scalar_load_variants_follow_rv32i_sign_and_zero_extension(
 @pytest.mark.parametrize(
     ("mnemonic", "value", "expected_bytes"),
     [
-        pytest.param("ssb", 0x1234_5678, [0x78], id="ssb"),
-        pytest.param("ssh", 0x1234_5678, [0x78, 0x56], id="ssh"),
-        pytest.param("ssw", 0x1234_5678, [0x78, 0x56, 0x34, 0x12], id="ssw"),
+        pytest.param("sb", 0x1234_5678, [0x78], id="sb"),
+        pytest.param("sh", 0x1234_5678, [0x78, 0x56], id="sh"),
+        pytest.param("sw", 0x1234_5678, [0x78, 0x56, 0x34, 0x12], id="sw"),
     ],
 )
 def test_scalar_store_variants_write_low_order_bytes_little_endian(
@@ -252,27 +252,27 @@ def test_scalar_store_variants_write_low_order_bytes_little_endian(
 @pytest.mark.parametrize(
     ("mnemonic", "params", "expected"),
     [
-        pytest.param("slui", UType(rd=10, imm=0x12345), 0x1234_5000, id="slui"),
-        pytest.param("sauipc", UType(rd=10, imm=0x2), 0x0000_2020, id="sauipc"),
-        pytest.param("saddi", IType(rd=10, rs1=1, imm=-1), 2, id="saddi"),
-        pytest.param("sslti", IType(rd=10, rs1=2, imm=-1), 1, id="sslti"),
-        pytest.param("ssltiu", IType(rd=10, rs1=2, imm=-1), 1, id="ssltiu"),
-        pytest.param("sxori", IType(rd=10, rs1=1, imm=0xF), 0x0000_000C, id="sxori"),
-        pytest.param("sori", IType(rd=10, rs1=1, imm=0x8), 0x0000_000B, id="sori"),
-        pytest.param("sandi", IType(rd=10, rs1=2, imm=0xF), 0, id="sandi"),
-        pytest.param("sslli", IType(rd=10, rs1=1, imm=1), 6, id="sslli"),
-        pytest.param("ssrli", IType(rd=10, rs1=2, imm=4), 0x0FFF_FFFF, id="ssrli"),
-        pytest.param("ssrai", IType(rd=10, rs1=2, imm=4), 0xFFFF_FFFF, id="ssrai"),
-        pytest.param("sadd", RType(rd=10, rs1=1, rs2=3), 5, id="sadd"),
-        pytest.param("ssub", RType(rd=10, rs1=1, rs2=3), 1, id="ssub"),
-        pytest.param("ssll", RType(rd=10, rs1=1, rs2=3), 12, id="ssll"),
-        pytest.param("sslt", RType(rd=10, rs1=2, rs2=1), 1, id="sslt"),
-        pytest.param("ssltu", RType(rd=10, rs1=1, rs2=2), 1, id="ssltu"),
-        pytest.param("sxor", RType(rd=10, rs1=1, rs2=2), 0xFFFF_FFF3, id="sxor"),
-        pytest.param("ssrl", RType(rd=10, rs1=2, rs2=3), 0x3FFF_FFFC, id="ssrl"),
-        pytest.param("ssra", RType(rd=10, rs1=2, rs2=3), 0xFFFF_FFFC, id="ssra"),
-        pytest.param("sor", RType(rd=10, rs1=1, rs2=3), 3, id="sor"),
-        pytest.param("sand", RType(rd=10, rs1=1, rs2=3), 2, id="sand"),
+        pytest.param("lui", UType(rd=10, imm=0x12345), 0x1234_5000, id="lui"),
+        pytest.param("auipc", UType(rd=10, imm=0x2), 0x0000_2020, id="auipc"),
+        pytest.param("addi", IType(rd=10, rs1=1, imm=-1), 2, id="addi"),
+        pytest.param("slti", IType(rd=10, rs1=2, imm=-1), 1, id="slti"),
+        pytest.param("sltiu", IType(rd=10, rs1=2, imm=-1), 1, id="sltiu"),
+        pytest.param("xori", IType(rd=10, rs1=1, imm=0xF), 0x0000_000C, id="xori"),
+        pytest.param("ori", IType(rd=10, rs1=1, imm=0x8), 0x0000_000B, id="ori"),
+        pytest.param("andi", IType(rd=10, rs1=2, imm=0xF), 0, id="andi"),
+        pytest.param("slli", IType(rd=10, rs1=1, imm=1), 6, id="slli"),
+        pytest.param("srli", IType(rd=10, rs1=2, imm=4), 0x0FFF_FFFF, id="srli"),
+        pytest.param("srai", IType(rd=10, rs1=2, imm=4), 0xFFFF_FFFF, id="srai"),
+        pytest.param("add", RType(rd=10, rs1=1, rs2=3), 5, id="add"),
+        pytest.param("sub", RType(rd=10, rs1=1, rs2=3), 1, id="sub"),
+        pytest.param("sll", RType(rd=10, rs1=1, rs2=3), 12, id="sll"),
+        pytest.param("slt", RType(rd=10, rs1=2, rs2=1), 1, id="slt"),
+        pytest.param("sltu", RType(rd=10, rs1=1, rs2=2), 1, id="sltu"),
+        pytest.param("xor", RType(rd=10, rs1=1, rs2=2), 0xFFFF_FFF3, id="xor"),
+        pytest.param("srl", RType(rd=10, rs1=2, rs2=3), 0x3FFF_FFFC, id="srl"),
+        pytest.param("sra", RType(rd=10, rs1=2, rs2=3), 0xFFFF_FFFC, id="sra"),
+        pytest.param("or", RType(rd=10, rs1=1, rs2=3), 3, id="or"),
+        pytest.param("and", RType(rd=10, rs1=1, rs2=3), 2, id="and"),
     ],
 )
 def test_integer_alu_semantics(mnemonic: str, params: object, expected: int) -> None:
@@ -292,7 +292,7 @@ def test_x0_hardwired_to_zero() -> None:
     state = _fresh_state()
     state.write_xreg(1, 3)
 
-    saddi(state, IType(rd=0, rs1=1, imm=99))
+    addi(state, IType(rd=0, rs1=1, imm=99))
 
     assert state.read_xreg(0) == 0
 
@@ -300,7 +300,7 @@ def test_x0_hardwired_to_zero() -> None:
 def test_sfence_is_noop() -> None:
     state = _fresh_state()
 
-    INSTRUCTION_SPECS["sfence"].semantics(state, EmptyType())
+    INSTRUCTION_SPECS["fence"].semantics(state, EmptyType())
 
     assert state.stop_reason is None
 
@@ -308,18 +308,18 @@ def test_sfence_is_noop() -> None:
 @pytest.mark.parametrize(
     ("semantic", "lhs", "rhs", "taken"),
     [
-        (sbeq, 5, 5, True),
-        (sbne, 5, 6, True),
-        (sblt, -1, 1, True),
-        (sbge, 7, -3, True),
-        (sbltu, 1, 2, True),
-        (sbgeu, -1, 2, True),
-        (sbeq, 5, 6, False),
-        (sbne, 5, 5, False),
-        (sblt, 4, -1, False),
-        (sbge, -4, 2, False),
-        (sbltu, -1, 2, False),
-        (sbgeu, 1, -1, False),
+        (beq, 5, 5, True),
+        (bne, 5, 6, True),
+        (blt, -1, 1, True),
+        (bge, 7, -3, True),
+        (bltu, 1, 2, True),
+        (bgeu, -1, 2, True),
+        (beq, 5, 6, False),
+        (bne, 5, 5, False),
+        (blt, 4, -1, False),
+        (bge, -4, 2, False),
+        (bltu, -1, 2, False),
+        (bgeu, 1, -1, False),
     ],
 )
 def test_branch_semantics_set_next_pc_only_when_taken(
@@ -338,7 +338,7 @@ def test_branch_semantics_set_next_pc_only_when_taken(
     assert state.stop_reason is None
 
 
-def test_core_executes_sjal_with_two_delay_slots_and_link_register() -> None:
+def test_core_executes_jal_with_two_delay_slots_and_link_register() -> None:
     core = Sim(state=_fresh_state(), config=TEST_CORE_CONFIG)
     initial_x3 = core.state.read_xreg(3)
 
@@ -347,14 +347,14 @@ def test_core_executes_sjal_with_two_delay_slots_and_link_register() -> None:
     assert core.state.read_xreg(1) == 11
     assert core.state.read_xreg(2) == 22
     assert core.state.read_xreg(3) == initial_x3
-    assert core.state.read_xreg(4) == IMEM_BASE + 4
+    assert core.state.read_xreg(4) == IMEM_BASE + 1
     assert core.state.read_xreg(5) == 55
     assert core.state.stop_reason == StopReason.PROGRAM_END
     assert perf.instructions == 4
     assert perf.cycles == 7
 
 
-def test_core_executes_sjalr_with_two_delay_slots_and_clears_lsb() -> None:
+def test_core_executes_jalr_with_two_delay_slots() -> None:
     core = Sim(state=_fresh_state(), config=TEST_CORE_CONFIG)
     initial_x4 = core.state.read_xreg(4)
 
@@ -363,43 +363,41 @@ def test_core_executes_sjalr_with_two_delay_slots_and_clears_lsb() -> None:
     assert core.state.read_xreg(2) == 2
     assert core.state.read_xreg(3) == 3
     assert core.state.read_xreg(4) == initial_x4
-    assert core.state.read_xreg(5) == IMEM_BASE + 8
+    assert core.state.read_xreg(5) == IMEM_BASE + 2
     assert core.state.read_xreg(8) == 8
     assert core.state.stop_reason == StopReason.PROGRAM_END
     assert perf.instructions == 5
     assert perf.cycles == 8
 
 
-def test_younger_control_transfer_in_delay_slot_replaces_older_redirect() -> None:
+def test_control_transfer_in_delay_slot_is_illegal() -> None:
     core = Sim(state=_fresh_state(), config=TEST_CORE_CONFIG)
+    initial_x1 = core.state.read_xreg(1)
+    initial_x2 = core.state.read_xreg(2)
     initial_x5 = core.state.read_xreg(5)
     initial_x6 = core.state.read_xreg(6)
     initial_x7 = core.state.read_xreg(7)
 
     perf = core.execute(_program("younger_control_transfer"))
 
-    assert core.state.read_xreg(1) == IMEM_BASE + 4
-    assert core.state.read_xreg(2) == IMEM_BASE + 8
-    assert core.state.read_xreg(3) == 3
-    assert core.state.read_xreg(4) == 4
+    assert core.state.read_xreg(1) == initial_x1
+    assert core.state.read_xreg(2) == initial_x2
     assert core.state.read_xreg(5) == initial_x5
     assert core.state.read_xreg(6) == initial_x6
     assert core.state.read_xreg(7) == initial_x7
-    assert core.state.read_xreg(8) == 8
-    assert core.state.stop_reason == StopReason.PROGRAM_END
-    assert perf.instructions == 5
-    assert perf.cycles == 8
+    assert core.state.stop_reason == StopReason.ILLEGAL_INSTRUCTION
+    assert perf.instructions == 0
 
 
 @pytest.mark.parametrize(
     ("mnemonic", "params", "expected"),
     [
-        pytest.param("sslli", IType(rd=10, rs1=1, imm=37), 0x0000_0060, id="sslli-mask"),
-        pytest.param("ssrli", IType(rd=10, rs1=2, imm=36), 0x0FFF_FFFF, id="ssrli-mask"),
-        pytest.param("ssrai", IType(rd=10, rs1=2, imm=36), 0xFFFF_FFFF, id="ssrai-mask"),
-        pytest.param("ssll", RType(rd=10, rs1=1, rs2=4), 0x0000_000C, id="ssll-mask"),
-        pytest.param("ssrl", RType(rd=10, rs1=2, rs2=4), 0x3FFF_FFFC, id="ssrl-mask"),
-        pytest.param("ssra", RType(rd=10, rs1=2, rs2=4), 0xFFFF_FFFC, id="ssra-mask"),
+        pytest.param("slli", IType(rd=10, rs1=1, imm=37), 0x0000_0060, id="slli-mask"),
+        pytest.param("srli", IType(rd=10, rs1=2, imm=36), 0x0FFF_FFFF, id="srli-mask"),
+        pytest.param("srai", IType(rd=10, rs1=2, imm=36), 0xFFFF_FFFF, id="srai-mask"),
+        pytest.param("sll", RType(rd=10, rs1=1, rs2=4), 0x0000_000C, id="sll-mask"),
+        pytest.param("srl", RType(rd=10, rs1=2, rs2=4), 0x3FFF_FFFC, id="srl-mask"),
+        pytest.param("sra", RType(rd=10, rs1=2, rs2=4), 0xFFFF_FFFC, id="sra-mask"),
     ],
 )
 def test_shift_instructions_mask_shift_amount_to_low_five_bits(
@@ -542,12 +540,12 @@ def test_dma_store_channels_operate_independently() -> None:
     core = Sim(state=state, config=state.config)
     perf = core.execute(
         [
-            Instruction("saddi", IType(rd=1, rs1=0, imm=DRAM_BASE + 0x100)),
-            Instruction("saddi", IType(rd=2, rs1=0, imm=VMEM_BASE + 0x40)),
-            Instruction("saddi", IType(rd=3, rs1=0, imm=DMA_ALIGNMENT_BYTES)),
+            Instruction("addi", IType(rd=1, rs1=0, imm=DRAM_BASE + 0x100)),
+            Instruction("addi", IType(rd=2, rs1=0, imm=VMEM_BASE + 0x40)),
+            Instruction("addi", IType(rd=3, rs1=0, imm=DMA_ALIGNMENT_BYTES)),
             Instruction("dma.store.ch0", DMAType(dram_rs=1, vmem_rs=2, size_rs=3)),
-            Instruction("saddi", IType(rd=4, rs1=0, imm=DRAM_BASE + 0x120)),
-            Instruction("saddi", IType(rd=5, rs1=0, imm=VMEM_BASE + 0x80)),
+            Instruction("addi", IType(rd=4, rs1=0, imm=DRAM_BASE + 0x120)),
+            Instruction("addi", IType(rd=5, rs1=0, imm=VMEM_BASE + 0x80)),
             Instruction("dma.store.ch1", DMAType(dram_rs=4, vmem_rs=5, size_rs=3)),
             Instruction("dma.wait.ch1", EmptyType()),
             Instruction("dma.wait.ch0", EmptyType()),
@@ -571,13 +569,13 @@ def test_dma_store_captures_vmem_payload_at_issue_time() -> None:
     core = Sim(state=state, config=state.config)
     perf = core.execute(
         [
-            Instruction("saddi", IType(rd=1, rs1=0, imm=DRAM_BASE + 0x100)),
-            Instruction("saddi", IType(rd=2, rs1=0, imm=VMEM_BASE + 0x40)),
-            Instruction("saddi", IType(rd=3, rs1=0, imm=DMA_ALIGNMENT_BYTES)),
+            Instruction("addi", IType(rd=1, rs1=0, imm=DRAM_BASE + 0x100)),
+            Instruction("addi", IType(rd=2, rs1=0, imm=VMEM_BASE + 0x40)),
+            Instruction("addi", IType(rd=3, rs1=0, imm=DMA_ALIGNMENT_BYTES)),
             Instruction("dma.store.ch0", DMAType(dram_rs=1, vmem_rs=2, size_rs=3)),
-            Instruction("saddi", IType(rd=4, rs1=0, imm=VMEM_BASE + 0x40)),
-            Instruction("saddi", IType(rd=5, rs1=0, imm=0xA5A5_5A5A)),
-            Instruction("ssw", SType(rs1=4, rs2=5, imm=0)),
+            Instruction("addi", IType(rd=4, rs1=0, imm=VMEM_BASE + 0x40)),
+            Instruction("addi", IType(rd=5, rs1=0, imm=0xA5A5_5A5A)),
+            Instruction("sw", SType(rs1=4, rs2=5, imm=0)),
             Instruction("dma.wait.ch0", EmptyType()),
         ]
     )
@@ -601,12 +599,12 @@ def test_dma_load_captures_dram_payload_at_issue_time_before_later_store() -> No
     core = Sim(state=state, config=state.config)
     perf = core.execute(
         [
-            Instruction("saddi", IType(rd=1, rs1=0, imm=DRAM_BASE + 0x100)),
-            Instruction("saddi", IType(rd=2, rs1=0, imm=VMEM_BASE + 0x80)),
-            Instruction("saddi", IType(rd=3, rs1=0, imm=DMA_ALIGNMENT_BYTES)),
+            Instruction("addi", IType(rd=1, rs1=0, imm=DRAM_BASE + 0x100)),
+            Instruction("addi", IType(rd=2, rs1=0, imm=VMEM_BASE + 0x80)),
+            Instruction("addi", IType(rd=3, rs1=0, imm=DMA_ALIGNMENT_BYTES)),
             Instruction("dma.load.ch0", DMAType(dram_rs=1, vmem_rs=2, size_rs=3)),
-            Instruction("saddi", IType(rd=4, rs1=0, imm=DRAM_BASE + 0x100)),
-            Instruction("saddi", IType(rd=5, rs1=0, imm=VMEM_BASE + 0x140)),
+            Instruction("addi", IType(rd=4, rs1=0, imm=DRAM_BASE + 0x100)),
+            Instruction("addi", IType(rd=5, rs1=0, imm=VMEM_BASE + 0x140)),
             Instruction("dma.store.ch1", DMAType(dram_rs=4, vmem_rs=5, size_rs=3)),
             Instruction("dma.wait.ch1", EmptyType()),
             Instruction("dma.wait.ch0", EmptyType()),
@@ -704,21 +702,23 @@ def test_misaligned_jump_target_stops_execution() -> None:
 
     perf = core.execute(_program("misaligned_jump_target"))
 
-    assert core.state.stop_reason == StopReason.INSTRUCTION_ADDRESS_MISALIGNED
+    assert core.state.stop_reason == StopReason.PROGRAM_END
+    assert core.state.pc == IMEM_BASE + 1
     assert perf.instructions == 1
+    assert perf.cycles == 4
 
 
-def test_taken_branch_with_misaligned_target_stops_before_delay_slots_execute() -> None:
+def test_legacy_byte_pc_branch_target_is_legal_under_word_indexed_pc() -> None:
     core = Sim(state=_fresh_state(), config=TEST_CORE_CONFIG)
-    initial_x2 = core.state.read_xreg(2)
-    initial_x3 = core.state.read_xreg(3)
 
     perf = core.execute(_program("misaligned_branch_target"))
 
-    assert core.state.stop_reason == StopReason.INSTRUCTION_ADDRESS_MISALIGNED
-    assert core.state.read_xreg(2) == initial_x2
-    assert core.state.read_xreg(3) == initial_x3
-    assert perf.instructions == 2
+    assert core.state.stop_reason == StopReason.PROGRAM_END
+    assert core.state.read_xreg(2) == 99
+    assert core.state.read_xreg(3) == 77
+    assert core.state.pc == IMEM_BASE + 6
+    assert perf.instructions == 4
+    assert perf.cycles == 7
 
 
 def test_reset_clears_architectural_state_and_dma_but_preserves_memory() -> None:
@@ -749,8 +749,8 @@ def test_reset_clears_architectural_state_and_dma_but_preserves_memory() -> None
 @pytest.mark.parametrize(
     ("mnemonic", "expected_reason"),
     [
-        ("secall", StopReason.ECALL),
-        ("sebreak", StopReason.EBREAK),
+        ("ecall", StopReason.ECALL),
+        ("ebreak", StopReason.EBREAK),
     ],
 )
 def test_environment_instructions_stop_with_explicit_status(
@@ -758,7 +758,8 @@ def test_environment_instructions_stop_with_explicit_status(
 ) -> None:
     core = Sim(state=_fresh_state(), config=TEST_CORE_CONFIG)
 
-    perf = core.execute(_program(f"env_{mnemonic}"))
+    source_name = "env_secall" if mnemonic == "ecall" else "env_sebreak"
+    perf = core.execute(_program(source_name))
 
     assert core.state.stop_reason == expected_reason
     assert perf.instructions == 1
@@ -802,7 +803,7 @@ def test_dump_json_trace_emits_region_aware_trace(tmp_path: Path) -> None:
     stalled_fetch_event = next(
         event
         for event in events
-        if event.get("cat") == "fetch" and "slw x4, 0(x2)" in event["name"]
+        if event.get("cat") == "fetch" and "lw x4, 0(x2)" in event["name"]
     )
     early_fetch_events = [
         event
@@ -939,12 +940,12 @@ def test_trace_wait_blocks_following_tensor_memory_op_until_later_dma_wait_retir
 
     perf = core.dump_json_trace(
         [
-            Instruction("saddi", IType(rd=1, rs1=0, imm=DRAM_BASE + 0x000)),
-            Instruction("saddi", IType(rd=2, rs1=0, imm=VMEM_BASE + 0x000)),
-            Instruction("saddi", IType(rd=3, rs1=0, imm=MREG_BYTES)),
+            Instruction("addi", IType(rd=1, rs1=0, imm=DRAM_BASE + 0x000)),
+            Instruction("addi", IType(rd=2, rs1=0, imm=VMEM_BASE + 0x000)),
+            Instruction("addi", IType(rd=3, rs1=0, imm=MREG_BYTES)),
             Instruction("dma.load.ch1", DMAType(dram_rs=1, vmem_rs=2, size_rs=3)),
-            Instruction("saddi", IType(rd=4, rs1=0, imm=DRAM_BASE + 0x800)),
-            Instruction("saddi", IType(rd=5, rs1=0, imm=VMEM_BASE + 0x800)),
+            Instruction("addi", IType(rd=4, rs1=0, imm=DRAM_BASE + 0x800)),
+            Instruction("addi", IType(rd=5, rs1=0, imm=VMEM_BASE + 0x800)),
             Instruction("dma.load.ch0", DMAType(dram_rs=4, vmem_rs=5, size_rs=3)),
             Instruction("dma.wait.ch1", EmptyType()),
             Instruction("dma.wait.ch0", EmptyType()),

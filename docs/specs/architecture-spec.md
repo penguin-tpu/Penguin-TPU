@@ -42,19 +42,20 @@ and a tile-oriented tensor datapath.
 
 The baseline machine contains:
 
-- one scalar integer control path
+- one architectural scalar integer register file of `32` registers, `x0` through `x31`
 - one architectural tensor register file of `64` registers, `m0` through `m63`
 - one architectural scale register file of `32` registers, `e0` through `e31`
-- two architecturally visible matrix execution units, `mxu0` and `mxu1`
+- one scalar integer control unit and datapath
+- one scalar load store unit, `slsu`
+- two architecturally visible matrix execution units, `mxu0` and `mxu1`, with local
+  weight and accumulation buffer
 - one vector processing unit, `vpu`
 - one transpose unit, `xlu`
+- one tensor load store unit, `vlsu`
 - one instruction memory, `IMEM`
 - one on-chip tensor/vector memory, `VMEM`
 - one off-chip backing memory, `DRAM`
 - eight architected DMA channels between `DRAM` and `VMEM`
-
-The baseline machine shall not expose a second full-width architectural vector-register
-file in this revision.
 
 Rationale:
 
@@ -87,10 +88,9 @@ The baseline Penguin execution model shall satisfy the following rules:
 - the scalar frontend issues at most one new instruction per cycle
 - issue shall stall only on structural conflicts and architecturally defined blocking
   conditions
-- long-chime tensor instructions may remain active for multiple cycles after issue
+- long-chime instructions (typically tensor operations) may remain active for multiple cycles after issue
 - different execution units may be active concurrently
-- architectural completion order remains defined by the instruction semantics, not by
-  internal speculation or out-of-order retirement
+- architectural completion is out-of-order without precise commit points
 
 ### 4.2 Control-flow delay slots
 
@@ -98,11 +98,12 @@ Branches and jumps shall have exactly `2` architecturally visible delay slots.
 
 For a control-transfer instruction at address `pc`:
 
-- the instructions at `pc + 4` and `pc + 8` shall retire before the resolved redirect is
-  applied
-- if the control transfer is not taken, those same delay-slot instructions still retire
-- if a younger branch or jump executes in a delay slot, the younger unresolved redirect
-  shall replace the older pending redirect
+- the instructions at `pc + 1` and `pc + 2` shall be issued and shall retire regardless
+  of redirect status
+- if the control transfer is not taken, those same delay-slot instructions still issue
+  and retire
+- a branch or jump that appears in either delay-slot position is illegal and shall
+  terminate execution with illegal-instruction halt status
 
 This rule applies to:
 
@@ -120,7 +121,7 @@ This rule applies to:
 The baseline architecture shall support explicit host-visible completion and error halt
 observation.
 
-Penguin shall not provide a general trap-and-resume architectural model in this revision.
+Penguin does not provide a general trap-and-resume architectural model in this revision.
 Illegal or misaligned architectural behavior stops execution and reports halt status.
 
 Architecturally meaningful stop classes are:
@@ -147,8 +148,8 @@ Requirements:
 
 - each scalar register stores one `32`-bit value
 - `x0` is hardwired to zero
-- `pc` is a byte address
-- `pc` shall remain `4`-byte aligned
+- `pc` stores the architectural instruction-word index
+- under normal execution, `pc` is incremented by 1
 
 ### 5.2 Tensor state
 
@@ -156,6 +157,7 @@ The tensor architectural state shall include:
 
 - `64` tensor registers, `m0` through `m63`
 - two weight slots per MXU: `mxu0.w0`, `mxu0.w1`, `mxu1.w0`, and `mxu1.w1`
+- one accumulation buffer per MXU: `mxu0.acc` and `mxu1.acc`
 
 Tensor-register requirements:
 
@@ -167,10 +169,10 @@ Tensor-register requirements:
   storage class
 
 The architecture intentionally keeps one main tensor-register file sized around a
-`64 x 32` BF16 whole-register view:
+`64 x 64` FP8 whole-register view:
 
+- one `m` register also stores one `64 x 64` FP8_E4M3 tile
 - one `m` register stores one `64 x 32` BF16 half-tile
-- one `m` register also stores one `64 x 64` FP8 source tile
 - one full `64 x 64` BF16 MXU result therefore occupies two consecutive `m` registers
 
 Rationale:
@@ -209,7 +211,6 @@ The architecture-visible execution-control plane shall include at least:
 - execution enable / halt control
 - execution status / stop reason
 - `pc` visibility
-- one shared high-address extension CSR named `MEM_BASE`
 - DMA busy state for the eight architected DMA channels
 
 The exact MMIO encoding is left to system integration, but the state itself is
@@ -223,18 +224,21 @@ Penguin shall expose three disjoint architectural memory regions.
 
 | Region | Base Address | Size | Role |
 |---|---:|---:|---|
-| `IMEM` | `0x0010_0000` | `32 KiB` | Instruction memory |
-| `VMEM` | `0x0800_0000` | `1 MiB` | On-chip tensor/vector data memory |
+| `IMEM` | `0x0002_0000` | `64 KiB` | Instruction memory |
+| `VMEM` | `0x2000_0000` | `1 MiB`  | On-chip tensor/vector data memory |
 | `DRAM` | `0x8000_0000` | `16 GiB` | Off-chip backing data memory |
 
 Memory-region rules:
 
-- `IMEM`, `VMEM`, and `DRAM` are byte-addressed
-- instruction fetch conceptually reads `IMEM`
+- `IMEM` is 32-bit word addressed
+- `VMEM`, and `DRAM` are byte-addressed
+- instruction fetch reads `IMEM`
 - scalar data load/store access `VMEM` only
 - `seld` access to `e` registers reads `VMEM` only
 - tensor register load/store and MXU weight push access `VMEM` only
 - DMA is the only architected path between `DRAM` and `VMEM`
+- `IMEM` and `VMEM` are inside the synchronous domain, which the access latency
+  is deterministic
 
 Illustrative architectural memory-hierarchy view:
 
@@ -285,10 +289,10 @@ The diagram is illustrative. The normative architectural rules are the bullets a
 
 The following alignment rules are architectural:
 
-- instruction fetch address alignment: `4` bytes
-- scalar `slb` / `slbu` / `ssb` alignment: `1` byte
-- scalar `slh` / `slhu` / `ssh` alignment: `2` bytes
-- scalar `slw` / `ssw` alignment: `4` bytes
+- instruction fetch address alignment: `4` bytes (accessed by 32-bit words)
+- scalar `lb` / `lbu` / `sb` alignment: `1` byte
+- scalar `lh` / `lhu` / `sh` alignment: `2` bytes
+- scalar `lw` / `sw` alignment: `4` bytes
 - scalar `seld` byte-load alignment: `1` byte
 - DMA source address alignment: `32` bytes
 - DMA destination address alignment: `32` bytes
@@ -311,15 +315,17 @@ The host shall populate `IMEM` before enabling accelerator execution.
 
 ## 7. Scalar ISA
 
-### 7.1 RV32I baseline
+### 7.1 RV32I-derived baseline
 
-The scalar core shall implement the full RISC-V `RV32I` base integer instruction set
-using the standard architectural mnemonics and binary encodings.
+The scalar core shall implement the full RISC-V `RV32I` base integer instruction
+repertoire using the standard architectural mnemonics and the standard field layouts and
+major-opcode placements.
 
 Penguin-specific execution context:
 
 - instruction fetch reads `IMEM`
 - scalar data loads and stores access `VMEM` only
+- the architectural `pc` is an instruction-word index rather than a byte address
 - branch and jump instructions obey the architectural two-delay-slot rule defined in
   Section `4.2`
 - accelerator custom instructions are additive extensions and do not redefine `RV32I`
@@ -327,10 +333,11 @@ Penguin-specific execution context:
 Compatibility note:
 
 - Penguin reuses `RV32I` mnemonics and base instruction encodings, but Penguin scalar
-  execution is not drop-in compatible with a conventional no-delay-slot `RV32I`
-  implementation
+  execution is not drop-in compatible with a conventional byte-`pc`, no-delay-slot
+  `RV32I` implementation
 - a generic `RV32I` binary cannot be assumed to execute correctly on Penguin without
-  compiler or assembler handling for the required two branch/jump delay slots
+  compiler or assembler handling for the required two branch/jump delay slots and the
+  architectural word-indexed `pc`
 
 The baseline scalar core intentionally excludes:
 
@@ -338,10 +345,11 @@ The baseline scalar core intentionally excludes:
 - compressed instructions
 - integer multiply/divide extensions
 - atomic extensions
+- privileged mode instructions
 
 ### 7.2 Binary encoding baseline
 
-The scalar binary encoding baseline shall be standard `RV32I`:
+The scalar binary layout shall reuse standard `RV32I` instruction formats:
 
 - fixed-width `32`-bit instruction words
 - standard RV32I field layouts for `R`, `I`, `S`, `B`, `U`, and `J` formats
@@ -361,6 +369,8 @@ Execution-compatibility caveat:
   control-flow semantics
 - software that targets Penguin shall account for the mandatory two delay slots on
   branch and jump instructions when generating executable code
+- branch and jump target calculations are defined against the architectural
+  instruction-word-index `pc`, not a byte-address `pc`
 
 Penguin accelerator instructions shall use the standard RISC-V custom major opcodes.
 Their allocation is defined in Section 8.
@@ -378,8 +388,8 @@ Their allocation is defined in Section 8.
 
 | Mnemonic | Semantics |
 |---|---|
-| `jal rd, imm` | `x[rd] <- pc + 4`; redirect to `pc + imm` after 2 delay slots |
-| `jalr rd, rs1, imm` | `target <- (x[rs1] + imm) & ~1`; `x[rd] <- pc + 4`; redirect after 2 delay slots |
+| `jal rd, imm` | `x[rd] <- pc + 1`; redirect to `pc + imm` after 2 delay slots |
+| `jalr rd, rs1, imm` | `target <- x[rs1] + imm`; `x[rd] <- pc + 1`; redirect to `target` after 2 delay slots |
 
 #### 7.3.3 Branches
 
@@ -432,21 +442,21 @@ explicitly stated.
 
 | Mnemonic | Semantics |
 |---|---|
-| `slb rd, imm(rs1)` | `x[rd] <- sign_extend(VMEM8[x[rs1] + imm])` |
-| `slh rd, imm(rs1)` | `x[rd] <- sign_extend(VMEM16[x[rs1] + imm])` |
-| `slw rd, imm(rs1)` | `x[rd] <- VMEM32[x[rs1] + imm]` |
-| `slbu rd, imm(rs1)` | `x[rd] <- zero_extend(VMEM8[x[rs1] + imm])` |
-| `slhu rd, imm(rs1)` | `x[rd] <- zero_extend(VMEM16[x[rs1] + imm])` |
-| `ssb rs2, imm(rs1)` | `VMEM8[x[rs1] + imm] <- x[rs2][7:0]` |
-| `ssh rs2, imm(rs1)` | `VMEM16[x[rs1] + imm] <- x[rs2][15:0]` |
-| `ssw rs2, imm(rs1)` | `VMEM32[x[rs1] + imm] <- x[rs2]` |
+| `lb rd, imm(rs1)` | `x[rd] <- sign_extend(VMEM8[x[rs1] + imm])` |
+| `lh rd, imm(rs1)` | `x[rd] <- sign_extend(VMEM16[x[rs1] + imm])` |
+| `lw rd, imm(rs1)` | `x[rd] <- VMEM32[x[rs1] + imm]` |
+| `lbu rd, imm(rs1)` | `x[rd] <- zero_extend(VMEM8[x[rs1] + imm])` |
+| `lhu rd, imm(rs1)` | `x[rd] <- zero_extend(VMEM16[x[rs1] + imm])` |
+| `sb rs2, imm(rs1)` | `VMEM8[x[rs1] + imm] <- x[rs2][7:0]` |
+| `sh rs2, imm(rs1)` | `VMEM16[x[rs1] + imm] <- x[rs2][15:0]` |
+| `sw rs2, imm(rs1)` | `VMEM32[x[rs1] + imm] <- x[rs2]` |
 
 Scalar memory requirements:
 
 - scalar data-memory instructions access `VMEM` only
-- `slb`, `slbu`, and `ssb` have byte alignment
-- `slh`, `slhu`, and `ssh` require `2`-byte alignment
-- `slw` and `ssw` require `4`-byte alignment
+- `lb`, `lbu`, and `sb` have byte alignment
+- `lh`, `lhu`, and `sh` require `2`-byte alignment
+- `lw` and `sw` require `4`-byte alignment
 - misaligned scalar memory access is a fatal architectural error rather than a
   trap-and-resume event
 
@@ -467,7 +477,7 @@ Scalar memory requirements:
 
 Scale-register rules:
 
-- `seli` and `seld` are the only baseline architectural writers of `e` registers
+- `seli` and `seld` are the only architectural writers of `e` registers
 - `seld` transfers exactly one byte from `VMEM`
 - `seld` is a dedicated `e`-register byte load in addition to the standard `RV32I`
   scalar load/store instructions
@@ -482,19 +492,16 @@ The tensor register file shall support the following architecturally visible vie
 
 | View | Elements per row | Logical tile shape | Storage rule |
 |---|---:|---|---|
-| `FP8_e4m3` MXU-source view | `64` | `64 x 64` | One byte per element across the full `64`-byte row |
-| `BF16` whole-register view | `32` | `64 x 32` | One BF16 element per `2` bytes across the full `4096`-byte register image |
+| `FP8_e4m3` view | `64` | `64 x 64` | One byte per element across the full `64`-byte row |
+| `BF16` view | `32` | `64 x 32` | One BF16 element per `2` bytes across the full `64`-byte row |
 
-The baseline architecture deliberately decouples MXU compute geometry from tensor-storage
+The architecture deliberately decouples MXU compute geometry from tensor-storage
 byte symmetry:
 
 - MXU compute tiles are square `64 x 64`
 - VPU and XLU operate on the full `64 x 32` BF16 whole-register view
 - FP8 source tiles use the full-width `64 x 64` FP8 packing inside one `m` register
 - BF16 MXU result tiles expand into two consecutive `m` registers
-
-This keeps one main tensor register file and avoids introducing a second wide register
-class purely to match one datatype width pairing.
 
 ### 8.2 Scale-register view
 
@@ -524,24 +531,31 @@ standard RISC-V custom major opcodes.
 The accelerator encodings shall follow these common rules:
 
 - scalar `x` registers remain encoded in standard `5`-bit RISC-V register positions
-- tensor `m` registers are architecturally `6` bits wide and therefore use one dedicated
-  high-bit field plus one standard `5`-bit low field
 - scale `e` registers are architecturally `5` bits wide and fit directly in one standard
   RISC-V register field position
+- tensor-register low bits occupy the standard `rd`, `rs1`, and `rs2` field positions
+- when an accelerator format names tensor registers in those positions, the corresponding
+  high bits are packed into `funct3`
+- in three-tensor-operand formats, `funct3[14:12] = {vs2_hi, vs1_hi, vd_hi}`
+- in formats with fewer tensor operands, the relevant low-order subset of that mapping is
+  used and any unused `funct3` bit is either reserved zero or assigned explicitly by the
+  format definition
 - reserved bits shall be written as zero by software and shall be treated as illegal if
   observed nonzero by a conforming implementation
 
 Tensor-register reconstruction rules:
 
-- `m = {m_hi, m_lo}`
-- `m_hi` is the most-significant tensor-register index bit
-- `m_lo` occupies the standard `rd`, `rs1`, or `rs2` field position used by the format
+- `vd = {funct3[12], rd}`
+- `vs1 = {funct3[13], rs1}`
+- `vs2 = {funct3[14], rs2}`
+- formats that do not carry one of these operands shall define the corresponding
+  high-order `funct3` bit explicitly
 
 Scaled-immediate rule for VMEM-facing tensor transfers:
 
-- `imm11_32` is a signed `11`-bit immediate encoded in units of `32` bytes
-- the effective byte offset is `sign_extend(imm11_32) << 5`
-- the representable byte-offset range is `[-32768, 32736]`
+- `imm12_32` is a signed `12`-bit immediate encoded in units of `32` bytes
+- the effective byte offset is `sign_extend(imm12_32) << 5`
+- the representable byte-offset range is `[-65536, 65504]`
 - software shall use scalar address-generation instructions when a larger offset is
   required
 
@@ -625,22 +639,21 @@ Architectural rules:
 
 | Bits | Field | Meaning |
 |---|---|---|
-| `[31]` | `t_hi` | High bit of tensor register index for `vload` / `vstore`; reserved for `mxu.push.*` |
-| `[30:20]` | `imm11_32` | Signed `11`-bit VMEM offset in units of `32` bytes |
+| `[31:20]` | `imm12_32` | Signed `12`-bit VMEM offset in units of `32` bytes |
 | `[19:15]` | `rs1` | Scalar base register |
-| `[14:12]` | `funct3` | Transfer sub-opcode |
-| `[11:7]` | `t_lo` | Low bits of tensor register index or encoded weight-slot selector |
+| `[14:13]` | `mem_op` | Tensor-transfer sub-opcode |
+| `[12]` | `vt_hi` | High bit of tensor register index for `vload` / `vstore`; zero for `mxu.push.*` |
+| `[11:7]` | `vt_lo_or_wslot` | Low tensor-register bits or encoded weight-slot selector |
 | `[6:0]` | `opcode` | `custom-0` = `0001011` |
 
-`TMEM-I` `funct3` assignments:
+`TMEM-I` `mem_op` assignments:
 
-| `funct3` | Mnemonic family | Operand interpretation |
+| `mem_op` | Mnemonic family | Operand interpretation |
 |---|---|---|
-| `000` | `vload` | `m = {t_hi, t_lo}` |
-| `001` | `vstore` | `m = {t_hi, t_lo}` |
-| `010` | `mxu.push.mxu0` | `wslot = t_lo[0]`; `t_hi = 0`; `t_lo[4:1] = 0` |
-| `011` | `mxu.push.mxu1` | `wslot = t_lo[0]`; `t_hi = 0`; `t_lo[4:1] = 0` |
-| `100` to `111` | Reserved | Illegal in the baseline |
+| `00` | `vload` | `vt = {vt_hi, vt_lo_or_wslot}` |
+| `01` | `vstore` | `vt = {vt_hi, vt_lo_or_wslot}` |
+| `10` | `mxu.push.mxu0` | `wslot = vt_lo_or_wslot[0]`; `vt_hi = 0`; `vt_lo_or_wslot[4:1] = 0` |
+| `11` | `mxu.push.mxu1` | `wslot = vt_lo_or_wslot[0]`; `vt_hi = 0`; `vt_lo_or_wslot[4:1] = 0` |
 
 Architectural rules:
 
@@ -650,7 +663,7 @@ Architectural rules:
   `VMEM`
 - `mxu.push.* w<slot>, imm(x<rs1>)` transfers one whole weight tile from `VMEM` into the
   selected MXU weight slot
-- the effective address is `x[rs1] + (sign_extend(imm11_32) << 5)`
+- the effective address is `x[rs1] + (sign_extend(imm12_32) << 5)`
 - these instructions are blocking and have deterministic latency in a fixed
   implementation configuration
 - the effective VMEM address shall satisfy the `32`-byte alignment rule
@@ -705,44 +718,36 @@ Architectural rules:
 
 | Bits | Field | Meaning |
 |---|---|---|
-| `[31]` | `md_hi` | High bit of destination tensor register |
-| `[30]` | `ms1_hi` | High bit of first source tensor register |
-| `[29]` | `ms2_hi` | High bit of second source tensor register for binary form; zero otherwise |
-| `[28:25]` | `vec_op` | VPU operation selector |
-| `[24:20]` | `ms2_lo` | Low bits of second source tensor register for binary form; zero otherwise |
-| `[19:15]` | `ms1_lo` | Low bits of first source tensor register |
-| `[14:12]` | `funct3` | VPU form selector |
-| `[11:7]` | `md_lo` | Low bits of destination tensor register |
+| `[31:27]` | `vec_fn` | VPU operation selector |
+| `[26:25]` | `0` | Reserved, shall be zero |
+| `[24:20]` | `vs2_lo` | Low bits of second source tensor register for binary form; zero otherwise |
+| `[19:15]` | `vs1_lo` | Low bits of first source tensor register |
+| `[14]` | `vs2_hi` | High bit of second source tensor register for binary form; zero otherwise |
+| `[13]` | `vs1_hi` | High bit of first source tensor register |
+| `[12]` | `vd_hi` | High bit of destination tensor register |
+| `[11:7]` | `vd_lo` | Low bits of destination tensor register |
 | `[6:0]` | `opcode` | `custom-2` = `1011011` |
 
-`TVEC-R` `funct3` assignments:
+Binary `vec_fn` assignments:
 
-| `funct3` | Meaning |
+| `vec_fn` | Mnemonic |
 |---|---|
-| `000` | Binary whole-register VPU operation |
-| `001` | Unary whole-register VPU operation |
-| `010` to `111` | Reserved and illegal in the baseline |
+| `00000` | `vadd` |
+| `00001` | `vsub` |
+| `00010` | `vmul` |
+| `00011` | `vmax` |
+| `00100` | `vmin` |
+| `00101` to `01111` | Reserved |
 
-Binary `vec_op` assignments (`funct3 = 000`):
+Unary `vec_fn` assignments:
 
-| `vec_op` | Mnemonic |
+| `vec_fn` | Mnemonic |
 |---|---|
-| `0000` | `vadd` |
-| `0001` | `vsub` |
-| `0010` | `vmul` |
-| `0011` | `vmax` |
-| `0100` | `vmin` |
-| `0101` to `1111` | Reserved |
-
-Unary `vec_op` assignments (`funct3 = 001`):
-
-| `vec_op` | Mnemonic |
-|---|---|
-| `0000` | `vmov` |
-| `0001` | `vrelu` |
-| `0010` | `vexp` |
-| `0011` | `vrecip` |
-| `0100` to `1111` | Reserved |
+| `10000` | `vmov` |
+| `10001` | `vrelu` |
+| `10010` | `vexp` |
+| `10011` | `vrecip` |
+| `10100` to `11111` | Reserved |
 
 Architectural rules:
 
@@ -751,7 +756,7 @@ Architectural rules:
 - VPU operates on whole tensor registers only
 - the initial floating-point VPU view is BF16 over the `64 x 32` interpretation
 - the baseline VPU therefore contains `32` BF16 lanes
-- unary forms shall encode `ms2_hi = 0` and `ms2_lo = 0`
+- unary forms shall encode `vs2_hi = 0` and `vs2_lo = 0`
 
 ### 8.8 `custom-3`: XLU whole-register encodings
 
@@ -761,13 +766,14 @@ Architectural rules:
 
 | Bits | Field | Meaning |
 |---|---|---|
-| `[31]` | `md_hi` | High bit of destination tensor register |
-| `[30]` | `ms_hi` | High bit of source tensor register |
-| `[29:25]` | `xlu_op` | XLU operation selector |
+| `[31:27]` | `xlu_op` | XLU operation selector |
+| `[26:25]` | `0` | Reserved, shall be zero |
 | `[24:20]` | `0` | Reserved, shall be zero |
-| `[19:15]` | `ms_lo` | Low bits of source tensor register |
-| `[14:12]` | `funct3` | `000` in the baseline |
-| `[11:7]` | `md_lo` | Low bits of destination tensor register |
+| `[19:15]` | `vs1_lo` | Low bits of source tensor register |
+| `[14]` | `0` | Reserved, shall be zero |
+| `[13]` | `vs1_hi` | High bit of source tensor register |
+| `[12]` | `vd_hi` | High bit of destination tensor register |
+| `[11:7]` | `vd_lo` | Low bits of destination tensor register |
 | `[6:0]` | `opcode` | `custom-3` = `1111011` |
 
 `TXLU-R` `xlu_op` assignments:

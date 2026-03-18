@@ -57,12 +57,6 @@ def _build_parser() -> argparse.ArgumentParser:
         type=int,
         help="Optional step limit for execution.",
     )
-    parser.add_argument(
-        "--mem-base",
-        type=_parse_int,
-        default=0,
-        help="Initial MEM_BASE CSR value to install before execution.",
-    )
     return parser
 
 
@@ -72,7 +66,6 @@ def _load_program_and_state(
     config: PenguinCoreConfig,
 ) -> tuple[ArchState, object, LoadedExecutableBundle | None]:
     state = ArchState.from_config(config)
-    state.write_mem_base(args.mem_base)
 
     if args.bundle is not None:
         loaded = load_executable_bundle(ExecutableBundle.from_directory(args.bundle))

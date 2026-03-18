@@ -43,7 +43,7 @@ def test_compiler_cli_writes_rtl_rom_init_file(tmp_path: Path) -> None:
     )
 
     assert output_path.read_text() == (
-        "        imem[0] = 32'h00800093;\n"
+        "        imem[0] = 32'h00200093;\n"
         "        imem[1] = 32'h0040006f;\n"
         "        imem[2] = 32'h00100073;\n"
     )
