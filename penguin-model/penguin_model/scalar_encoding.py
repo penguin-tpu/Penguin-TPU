@@ -5,6 +5,11 @@ from __future__ import annotations
 from .instructions import BType, EmptyType, IType, Instruction, JType, RType, SType, UType, VPUBinaryType
 
 LOAD_FUNCT3 = {
+    "slb": 0b000,
+    "slh": 0b001,
+    "slw": 0b010,
+    "slbu": 0b100,
+    "slhu": 0b101,
     "lb": 0b000,
     "lh": 0b001,
     "lw": 0b010,
@@ -13,6 +18,9 @@ LOAD_FUNCT3 = {
     "sld": 0b010,
 }
 STORE_FUNCT3 = {
+    "ssb": 0b000,
+    "ssh": 0b001,
+    "ssw": 0b010,
     "sb": 0b000,
     "sh": 0b001,
     "sw": 0b010,

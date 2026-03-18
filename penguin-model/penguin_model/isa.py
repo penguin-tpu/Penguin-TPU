@@ -51,8 +51,8 @@ from .tensor import (
 )
 
 MASK32 = 0xFFFF_FFFF
-SCALAR_LOAD_MNEMONICS = frozenset({"lb", "lh", "lw", "lbu", "lhu"})
-SCALAR_STORE_MNEMONICS = frozenset({"sb", "sh", "sw"})
+SCALAR_LOAD_MNEMONICS = frozenset({"slb", "slh", "slw", "slbu", "slhu"})
+SCALAR_STORE_MNEMONICS = frozenset({"ssb", "ssh", "ssw"})
 
 
 def _u32(value: int) -> int:
@@ -162,36 +162,36 @@ def sbgeu(state: ArchState, params: BType) -> None:
     _branch_if(state, params, lambda lhs, rhs: _u32(lhs) >= _u32(rhs))
 
 
-@instruction(mnemonic="lb", params_type=IType, latency=1)
-def lb(state: ArchState, params: IType) -> None:
+@instruction(mnemonic="slb", params_type=IType, latency=1)
+def slb(state: ArchState, params: IType) -> None:
     address = _scalar_load_address(state, params)
     state.write_xreg(params.rd, _sign_extend(state.load_vmem_u8(address), 8))
 
 
-@instruction(mnemonic="lh", params_type=IType, latency=1)
-def lh(state: ArchState, params: IType) -> None:
+@instruction(mnemonic="slh", params_type=IType, latency=1)
+def slh(state: ArchState, params: IType) -> None:
     address = _scalar_load_address(state, params)
     value = state.load_vmem_u16(address)
     if value is not None:
         state.write_xreg(params.rd, _sign_extend(value, 16))
 
 
-@instruction(mnemonic="lw", params_type=IType, latency=1)
-def lw(state: ArchState, params: IType) -> None:
+@instruction(mnemonic="slw", params_type=IType, latency=1)
+def slw(state: ArchState, params: IType) -> None:
     address = _scalar_load_address(state, params)
     value = state.load_vmem_u32(address)
     if value is not None:
         state.write_xreg(params.rd, value)
 
 
-@instruction(mnemonic="lbu", params_type=IType, latency=1)
-def lbu(state: ArchState, params: IType) -> None:
+@instruction(mnemonic="slbu", params_type=IType, latency=1)
+def slbu(state: ArchState, params: IType) -> None:
     address = _scalar_load_address(state, params)
     state.write_xreg(params.rd, state.load_vmem_u8(address))
 
 
-@instruction(mnemonic="lhu", params_type=IType, latency=1)
-def lhu(state: ArchState, params: IType) -> None:
+@instruction(mnemonic="slhu", params_type=IType, latency=1)
+def slhu(state: ArchState, params: IType) -> None:
     address = _scalar_load_address(state, params)
     value = state.load_vmem_u16(address)
     if value is not None:
@@ -209,20 +209,20 @@ def seld(state: ArchState, params: ScaleMemType) -> None:
     state.write_ereg(params.ed, state.load_vmem_u8(address))
 
 
-@instruction(mnemonic="sb", params_type=SType, latency=1)
-def sb(state: ArchState, params: SType) -> None:
+@instruction(mnemonic="ssb", params_type=SType, latency=1)
+def ssb(state: ArchState, params: SType) -> None:
     address = _u32(state.read_xreg(params.rs1) + params.imm)
     state.store_vmem_u8(address, state.read_xreg(params.rs2))
 
 
-@instruction(mnemonic="sh", params_type=SType, latency=1)
-def sh(state: ArchState, params: SType) -> None:
+@instruction(mnemonic="ssh", params_type=SType, latency=1)
+def ssh(state: ArchState, params: SType) -> None:
     address = _u32(state.read_xreg(params.rs1) + params.imm)
     state.store_vmem_u16(address, state.read_xreg(params.rs2))
 
 
-@instruction(mnemonic="sw", params_type=SType, latency=1)
-def sw(state: ArchState, params: SType) -> None:
+@instruction(mnemonic="ssw", params_type=SType, latency=1)
+def ssw(state: ArchState, params: SType) -> None:
     address = _u32(state.read_xreg(params.rs1) + params.imm)
     state.store_vmem_u32(address, state.read_xreg(params.rs2))
 
@@ -841,11 +841,11 @@ __all__ = [
     "DMA_CHANNEL_COUNT",
     "SCALAR_LOAD_MNEMONICS",
     "SCALAR_STORE_MNEMONICS",
-    "lb",
-    "lbu",
-    "lh",
-    "lhu",
-    "lw",
+    "slb",
+    "slbu",
+    "slh",
+    "slhu",
+    "slw",
     "sadd",
     "saddi",
     "sand",
@@ -871,10 +871,10 @@ __all__ = [
     "matmul_mxu1",
     "mxu_push_mxu0",
     "mxu_push_mxu1",
-    "sb",
+    "ssb",
     "sor",
     "sori",
-    "sh",
+    "ssh",
     "ssll",
     "sslli",
     "sslt",
@@ -886,7 +886,7 @@ __all__ = [
     "ssub",
     "sslti",
     "ssltiu",
-    "sw",
+    "ssw",
     "sxor",
     "sxori",
     "vload",

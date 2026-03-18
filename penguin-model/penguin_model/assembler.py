@@ -40,10 +40,18 @@ _WREGISTER_RE = re.compile(r"w(?P<index>[0-1])$")
 _LABEL_RE = re.compile(r"(?P<label>[A-Za-z_][A-Za-z0-9_]*)\s*:")
 _MEMORY_OPERAND_RE = re.compile(r"(?P<imm>.+)\((?P<rs1>x[0-9]+)\)$")
 _MNEMONIC_ALIASES: Mapping[str, str] = {
-    "sld": "lw",
-    "sst": "sw",
+    "lb": "slb",
+    "lbu": "slbu",
+    "lh": "slh",
+    "lhu": "slhu",
+    "lw": "slw",
+    "sb": "ssb",
+    "sh": "ssh",
+    "sw": "ssw",
+    "sld": "slw",
+    "sst": "ssw",
 }
-_I_TYPE_MEMORY_MNEMONICS = frozenset({"lb", "lh", "lw", "lbu", "lhu", "seld"})
+_I_TYPE_MEMORY_MNEMONICS = frozenset({"slb", "slh", "slw", "slbu", "slhu", "seld"})
 
 _DEFAULT_SYMBOLS: Mapping[str, int] = {
     "DRAM_BASE": DRAM_BASE,

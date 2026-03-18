@@ -81,8 +81,8 @@ async def core_executes_arithmetic_load_store_and_delay_slots(dut) -> None:
     load_store_program = """
         li x1, 0x100
         li x2, 0xA5
-        sw x2, 0(x1)
-        lw x3, 0(x1)
+        ssw x2, 0(x1)
+        slw x3, 0(x1)
         sebreak
     """
     memory = await run_program(dut, load_store_program)
@@ -126,7 +126,7 @@ async def core_executes_arithmetic_load_store_and_delay_slots(dut) -> None:
 
     misaligned_load_program = """
         li x1, 0x102
-        lw x2, 0(x1)
+        slw x2, 0(x1)
         sebreak
     """
     await run_program(dut, misaligned_load_program)
@@ -136,11 +136,11 @@ async def core_executes_arithmetic_load_store_and_delay_slots(dut) -> None:
     vadd_program = """
         li x1, 0x200
         li x2, 0x3F80
-        sw x2, 0(x1)
+        ssw x2, 0(x1)
         li x2, 0x4000
-        sw x2, 4(x1)
+        ssw x2, 4(x1)
         vadd m2, m0, m1
-        lw x3, 8(x1)
+        slw x3, 8(x1)
         sebreak
     """
     await run_program(dut, vadd_program, max_cycles=96)

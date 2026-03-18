@@ -286,9 +286,9 @@ The diagram is illustrative. The normative architectural rules are the bullets a
 The following alignment rules are architectural:
 
 - instruction fetch address alignment: `4` bytes
-- scalar `lb` / `lbu` / `sb` alignment: `1` byte
-- scalar `lh` / `lhu` / `sh` alignment: `2` bytes
-- scalar `lw` / `sw` alignment: `4` bytes
+- scalar `slb` / `slbu` / `ssb` alignment: `1` byte
+- scalar `slh` / `slhu` / `ssh` alignment: `2` bytes
+- scalar `slw` / `ssw` alignment: `4` bytes
 - scalar `seld` byte-load alignment: `1` byte
 - DMA source address alignment: `32` bytes
 - DMA destination address alignment: `32` bytes
@@ -432,21 +432,21 @@ explicitly stated.
 
 | Mnemonic | Semantics |
 |---|---|
-| `lb rd, imm(rs1)` | `x[rd] <- sign_extend(VMEM8[x[rs1] + imm])` |
-| `lh rd, imm(rs1)` | `x[rd] <- sign_extend(VMEM16[x[rs1] + imm])` |
-| `lw rd, imm(rs1)` | `x[rd] <- VMEM32[x[rs1] + imm]` |
-| `lbu rd, imm(rs1)` | `x[rd] <- zero_extend(VMEM8[x[rs1] + imm])` |
-| `lhu rd, imm(rs1)` | `x[rd] <- zero_extend(VMEM16[x[rs1] + imm])` |
-| `sb rs2, imm(rs1)` | `VMEM8[x[rs1] + imm] <- x[rs2][7:0]` |
-| `sh rs2, imm(rs1)` | `VMEM16[x[rs1] + imm] <- x[rs2][15:0]` |
-| `sw rs2, imm(rs1)` | `VMEM32[x[rs1] + imm] <- x[rs2]` |
+| `slb rd, imm(rs1)` | `x[rd] <- sign_extend(VMEM8[x[rs1] + imm])` |
+| `slh rd, imm(rs1)` | `x[rd] <- sign_extend(VMEM16[x[rs1] + imm])` |
+| `slw rd, imm(rs1)` | `x[rd] <- VMEM32[x[rs1] + imm]` |
+| `slbu rd, imm(rs1)` | `x[rd] <- zero_extend(VMEM8[x[rs1] + imm])` |
+| `slhu rd, imm(rs1)` | `x[rd] <- zero_extend(VMEM16[x[rs1] + imm])` |
+| `ssb rs2, imm(rs1)` | `VMEM8[x[rs1] + imm] <- x[rs2][7:0]` |
+| `ssh rs2, imm(rs1)` | `VMEM16[x[rs1] + imm] <- x[rs2][15:0]` |
+| `ssw rs2, imm(rs1)` | `VMEM32[x[rs1] + imm] <- x[rs2]` |
 
 Scalar memory requirements:
 
 - scalar data-memory instructions access `VMEM` only
-- `lb`, `lbu`, and `sb` have byte alignment
-- `lh`, `lhu`, and `sh` require `2`-byte alignment
-- `lw` and `sw` require `4`-byte alignment
+- `slb`, `slbu`, and `ssb` have byte alignment
+- `slh`, `slhu`, and `ssh` require `2`-byte alignment
+- `slw` and `ssw` require `4`-byte alignment
 - misaligned scalar memory access is a fatal architectural error rather than a
   trap-and-resume event
 

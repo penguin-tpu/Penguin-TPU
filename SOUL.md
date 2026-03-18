@@ -11,8 +11,9 @@ What exists now:
   - `penguin-compiler`
   - `penguin-model`
 - a working scalar integer functional model in `penguin-model`
-- scalar tests and the Python model now cover the full `RV32I`-style VMEM load/store
-  baseline: `lb` / `lh` / `lw` / `lbu` / `lhu` and `sb` / `sh` / `sw`
+- scalar tests and the Python model now cover the full Penguin scalar VMEM load/store
+  baseline with `s`-prefixed mnemonics: `slb` / `slh` / `slw` / `slbu` / `slhu` and
+  `ssb` / `ssh` / `ssw`
 - a directed scalar-program testbench for the functional/perf model, including
   label-resolved self-checking programs inspired by `riscv-tests` `rv32ui`
 - a GitHub Actions CI workflow that installs the `uv` workspace and runs
@@ -332,7 +333,7 @@ Implemented today:
 - scalar control flow now implements the spec-defined 2 branch/jump delay slots
 - a younger control-transfer instruction in a delay slot now overrides any older pending
   redirect in both the spec and the model
-- VMEM-only scalar `lb` / `lh` / `lw` / `lbu` / `lhu` and `sb` / `sh` / `sw`
+- VMEM-only scalar `slb` / `slh` / `slw` / `slbu` / `slhu` and `ssb` / `ssh` / `ssw`
 - the assembler and scalar binary encoder still accept legacy `sld` / `sst` aliases so
   older checked-in vectors do not need a bulk rename during the ISA transition
 - DMA channel issue/wait behavior for DRAM <-> VMEM byte transfers

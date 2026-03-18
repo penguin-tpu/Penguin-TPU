@@ -105,11 +105,11 @@ async def decoder_handles_scalar_formats_and_reserved_custom(dut) -> None:
             DecodeExpectation(FMT_I, OP_ALU_IMM, ALU_ADD, 5, 1, 28, -4, 1, 1),
         ),
         (
-            Instruction("lw", IType(rd=7, rs1=2, imm=12)),
+            Instruction("slw", IType(rd=7, rs1=2, imm=12)),
             DecodeExpectation(FMT_I, OP_LOAD, ALU_ADD, 7, 2, 12, 12, 1, 1, 0, 0, 0, 1),
         ),
         (
-            Instruction("sw", SType(rs1=3, rs2=4, imm=-8)),
+            Instruction("ssw", SType(rs1=3, rs2=4, imm=-8)),
             DecodeExpectation(FMT_S, OP_STORE, ALU_ADD, 24, 3, 4, -8, 0, 1, 1, 0, 0, 0, 1),
         ),
         (
