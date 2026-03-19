@@ -2,7 +2,18 @@ from __future__ import annotations
 
 import pytest
 
-from penguin_model import BType, EmptyType, IType, Instruction, JType, RType, SType, UType, VPUBinaryType
+from penguin_model import (
+    BType,
+    DelayType,
+    EmptyType,
+    IType,
+    Instruction,
+    JType,
+    RType,
+    SType,
+    UType,
+    VPUBinaryType,
+)
 from penguin_model.scalar_encoding import encode_scalar_instruction
 
 
@@ -25,6 +36,7 @@ from penguin_model.scalar_encoding import encode_scalar_instruction
         (Instruction("beq", BType(rs1=1, rs2=2, imm=4)), 0x00208863),
         (Instruction("jal", JType(rd=1, imm=8)), 0x020000EF),
         (Instruction("fence", EmptyType()), 0x0000000F),
+        (Instruction("delay", DelayType(cycles=10)), 0x00A00073),
         (Instruction("ebreak", EmptyType()), 0x00100073),
     ],
 )

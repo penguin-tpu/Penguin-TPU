@@ -2,7 +2,18 @@
 
 from __future__ import annotations
 
-from .instructions import BType, EmptyType, IType, Instruction, JType, RType, SType, UType, VPUBinaryType
+from .instructions import (
+    BType,
+    DelayType,
+    EmptyType,
+    IType,
+    Instruction,
+    JType,
+    RType,
+    SType,
+    UType,
+    VPUBinaryType,
+)
 
 _MNEMONIC_ALIASES = {
     "slui": "lui",
@@ -281,6 +292,13 @@ def encode_scalar_instruction(instruction: Instruction) -> int:
         if not isinstance(params, EmptyType):
             raise TypeError("fence expects EmptyType operands")
         return _mask_u32(_encode_i_type(OPCODE_MISC_MEM, 0b000, 0, 0, 0))
+
+    if mnemonic == "delay":
+        if not isinstance(params, DelayType):
+            raise TypeError("delay expects DelayType operands")
+        if params.cycles < 0 or params.cycles > 0xFFF:
+            raise ValueError("delay immediate must be in [0, 4095]")
+        return _mask_u32(_encode_i_type(OPCODE_SYSTEM, 0b000, params.cycles, 0, 0))
 
     if mnemonic == "ecall":
         if not isinstance(params, EmptyType):

@@ -337,8 +337,9 @@ The host shall populate `IMEM` before enabling accelerator execution.
 ### 7.1 RV32I-derived baseline
 
 The scalar core shall implement the full RISC-V `RV32I` base integer instruction
-repertoire using the standard architectural mnemonics and the standard field layouts and
-major-opcode placements.
+repertoire plus one Penguin-specific scalar `delay` instruction, using the standard
+architectural mnemonics and the standard field layouts and major-opcode placements where
+applicable.
 
 Penguin-specific execution context:
 
@@ -347,7 +348,8 @@ Penguin-specific execution context:
 - the architectural `pc` is an instruction-word index rather than a byte address
 - branch and jump instructions obey the architectural two-delay-slot rule defined in
   Section `4.2`
-- accelerator custom instructions are additive extensions and do not redefine `RV32I`
+- accelerator custom instructions and the scalar `delay` instruction are additive
+  extensions and do not redefine `RV32I`
 
 Compatibility note:
 
@@ -381,6 +383,7 @@ Required binary compatibility points:
   encodings
 - `fence` uses the standard `RV32I` fence encoding
 - `ecall` and `ebreak` use the standard system encodings
+- `delay` uses the scalar `SYSTEM` encoding space alongside `ecall` and `ebreak`
 
 Execution-compatibility caveat:
 
@@ -479,13 +482,31 @@ Scalar memory requirements:
 - misaligned scalar memory access is a fatal architectural error rather than a
   trap-and-resume event
 
-#### 7.3.7 Ordering and environment operations
+#### 7.3.7 Ordering, delay, and environment operations
 
 | Mnemonic | Semantics |
 |---|---|
 | `fence` | architecturally legal; baseline no-op |
+| `delay N` | hold decode / issue for `N` cycles, then retire |
 | `ecall` | terminate execution with environment-call halt status |
 | `ebreak` | terminate execution with breakpoint halt status |
+
+Scalar `SYSTEM` encoding rules:
+
+- `fence`, `ecall`, and `ebreak` retain their standard `RV32I` encodings
+- `delay N` uses major opcode `SYSTEM`, `funct3 = 000`, `rd = x0`, `rs1 = x0`, and
+  `imm12 = N`
+- `delay 0` is architecturally legal and retires without holding decode beyond its own
+  decode cycle
+
+Architectural rules:
+
+- `N` is an unsigned `12`-bit immediate cycle count in the range `[0, 4095]`
+- while `delay N` is active, the instruction occupies the decode / issue stage and
+  younger instructions shall not issue
+- `delay N` does not allocate a SALU, MXU, VPU, XLU, or DMA execute-stage slot
+- `delay N` is a deterministic frontend stall primitive, not a sleep state or
+  interrupt-wait primitive
 
 #### 7.3.8 Scale-register load operations
 

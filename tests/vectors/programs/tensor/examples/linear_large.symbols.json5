@@ -34,7 +34,7 @@
       kind: "program",
       region: "imem",
       address: 0x00020000,
-      size_bytes: 396,
+      size_bytes: 488,
       file: "linear_large.S",
     },
     weight_scratch: {

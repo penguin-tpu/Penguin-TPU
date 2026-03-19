@@ -115,7 +115,7 @@ def test_vpu_binary_ops_apply_bf16_elementwise_semantics() -> None:
         "vmax": 1,
         "vmin": 1,
     }
-    assert perf.cycles == 5 * TEST_CORE_CONFIG.vpu.simple_op_latency_cycles + 3
+    assert perf.cycles == 5 + TEST_CORE_CONFIG.vpu.simple_op_latency_cycles + 2
 
 
 @torch.no_grad()

@@ -66,6 +66,13 @@ class EmptyType:
 
 
 @dataclass(frozen=True, slots=True)
+class DelayType:
+    """Decode-resident frontend stall form with an unsigned cycle count."""
+
+    cycles: int
+
+
+@dataclass(frozen=True, slots=True)
 class DMAType:
     """DMA transfer form: DRAM addr reg, VMEM addr reg, size reg."""
 
@@ -172,6 +179,7 @@ InstructionParams: TypeAlias = (
     | UType
     | JType
     | EmptyType
+    | DelayType
     | DMAType
     | ScaleImmType
     | ScaleMemType
@@ -242,6 +250,7 @@ def instruction(
 __all__ = [
     "BType",
     "DMAType",
+    "DelayType",
     "EmptyType",
     "IType",
     "ALL_INSTRUCTION_SPECS",

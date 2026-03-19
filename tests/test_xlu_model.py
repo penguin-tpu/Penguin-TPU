@@ -99,7 +99,7 @@ def test_xlu_row_reductions_match_pytorch_bf16_reference() -> None:
     assert torch.equal(reduced_max, expected_max)
     assert torch.equal(reduced_sum, expected_sum)
     assert perf.instructions_by_opcode == {"reduce.max.xlu": 1, "reduce.sum.xlu": 1}
-    assert perf.cycles == 2 * TEST_CORE_CONFIG.xlu.transpose_latency_cycles + 3
+    assert perf.cycles == TEST_CORE_CONFIG.xlu.transpose_latency_cycles + 4
 
 
 def test_xlu_perf_model_uses_configured_transpose_latency() -> None:

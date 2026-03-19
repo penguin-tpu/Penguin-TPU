@@ -22,7 +22,7 @@
       kind: "program",
       region: "imem",
       address: 0x00020000,
-      size_bytes: 260,
+      size_bytes: 324,
       file: "gemma_mlp_gate_64x32.S",
     },
     up: {

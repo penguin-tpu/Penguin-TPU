@@ -1,9 +1,4 @@
-"""CLI helpers for packaging Penguin assembly into executable bundles.
-
-Direct PyTorch-to-Penguin lowering remains a later milestone. The current CLI turns a
-checked-in or user-authored assembly program plus optional symbol/payload metadata into
-the executable-bundle contract consumed by `penguin-model`.
-"""
+"""CLI helpers for bundling assembly and exporting fixed PyTorch models."""
 
 from __future__ import annotations
 
@@ -18,6 +13,13 @@ from .bundle import (
     BundleSymbol,
     BundleSymbolTable,
     write_executable_bundle,
+)
+from .codegen import export_pytorch_model_package
+from .export import (
+    deterministic_hidden,
+    make_fixed_gemma_attention,
+    make_fixed_gemma_decoder,
+    make_fixed_gemma_mlp,
 )
 from .rtl import write_verilog_rom_init
 
@@ -110,6 +112,28 @@ def _build_parser() -> argparse.ArgumentParser:
         type=_parse_int,
         default=0,
         help="Program base address used when resolving labels.",
+    )
+
+    export_parser = subparsers.add_parser(
+        "export-model",
+        help="Export one supported fixed PyTorch model into a staged Penguin package.",
+    )
+    export_parser.add_argument(
+        "--model",
+        choices=("gemma_attention", "gemma_mlp", "gemma_decoder"),
+        required=True,
+        help="Fixed model topology to export.",
+    )
+    export_parser.add_argument(
+        "--output-dir",
+        type=Path,
+        required=True,
+        help="Destination model-package directory.",
+    )
+    export_parser.add_argument(
+        "--strict",
+        action="store_true",
+        help="Use strict torch.export capture instead of the PyTorch 2.10 default.",
     )
     return parser
 
@@ -239,12 +263,39 @@ def _rtl_rom_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def _export_model_command(args: argparse.Namespace) -> int:
+    model = _fixed_model_from_name(args.model)
+    package = export_pytorch_model_package(
+        model,
+        deterministic_hidden(),
+        args.output_dir,
+        strict=args.strict,
+    )
+    print(f"wrote model package: {package.root}")
+    print(f"  manifest: {package.manifest_path.name}")
+    print(f"  model_kind: {package.manifest.model_kind}")
+    print(f"  stages: {len(package.manifest.stages)}")
+    return 0
+
+
+def _fixed_model_from_name(name: str):
+    if name == "gemma_attention":
+        return make_fixed_gemma_attention()
+    if name == "gemma_mlp":
+        return make_fixed_gemma_mlp()
+    if name == "gemma_decoder":
+        return make_fixed_gemma_decoder()
+    raise ValueError(f"Unsupported fixed model '{name}'")
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = _build_parser().parse_args(list(argv) if argv is not None else None)
     if args.command == "bundle":
         return _bundle_command(args)
     if args.command == "rtl-rom":
         return _rtl_rom_command(args)
+    if args.command == "export-model":
+        return _export_model_command(args)
     raise ValueError(f"Unsupported command '{args.command}'")
 
 

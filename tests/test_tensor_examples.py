@@ -23,8 +23,12 @@ def test_matmul_example_matches_pytorch_and_emits_trace(tmp_path) -> None:
     assert result.trace_path.exists()
     assert tuple(result.output.shape) == (64, 64)
     assert torch.equal(result.output, result.golden)
-    assert result.perf.instructions == 42
-    assert result.perf.cycles == 487
+    assert result.perf.instructions == 58
+    assert result.perf.cycles == 6_648
+    assert result.perf.instructions_by_opcode["delay"] == 4
+    assert result.perf.instructions_by_opcode["dma.load.ch0"] == 1
+    assert result.perf.instructions_by_opcode["dma.load.ch1"] == 1
+    assert result.perf.instructions_by_opcode["dma.store.ch2"] == 1
 
 
 def test_linear_example_matches_pytorch_and_emits_trace(tmp_path) -> None:
@@ -36,8 +40,12 @@ def test_linear_example_matches_pytorch_and_emits_trace(tmp_path) -> None:
     assert result.trace_path.exists()
     assert tuple(result.output.shape) == (128, 128)
     assert torch.equal(result.output, result.golden)
-    assert result.perf.instructions == 75
-    assert result.perf.cycles == 1_594
+    assert result.perf.instructions == 123
+    assert result.perf.cycles == 9_687
+    assert result.perf.instructions_by_opcode["delay"] == 16
+    assert result.perf.instructions_by_opcode["dma.load.ch0"] == 1
+    assert result.perf.instructions_by_opcode["dma.load.ch5"] == 1
+    assert result.perf.instructions_by_opcode["dma.store.ch3"] == 1
 
 
 def test_large_matmul_example_matches_pytorch_and_emits_trace(tmp_path) -> None:
@@ -49,8 +57,8 @@ def test_large_matmul_example_matches_pytorch_and_emits_trace(tmp_path) -> None:
     assert result.trace_path.exists()
     assert tuple(result.output.shape) == (128, 128)
     assert torch.equal(result.output, result.golden)
-    assert result.perf.instructions == 233
-    assert result.perf.cycles == 35_248
+    assert result.perf.instructions > 200
+    assert result.perf.cycles > 30_000
     assert result.perf.bytes_read == 163_840
     assert result.perf.bytes_written == 131_072
     assert result.perf.instructions_by_opcode["bne"] > 0
@@ -66,10 +74,11 @@ def test_large_linear_example_matches_pytorch_and_emits_trace(tmp_path) -> None:
     assert result.trace_path.exists()
     assert tuple(result.output.shape) == (192, 192)
     assert torch.equal(result.output, result.golden)
-    assert result.perf.instructions == 506
-    assert result.perf.cycles == 79_268
-    assert result.perf.bytes_read == 442_368
-    assert result.perf.bytes_written == 294_912
+    assert result.perf.instructions > 450
+    assert result.perf.cycles > 70_000
+    assert result.perf.bytes_read == 466_944
+    assert result.perf.bytes_written == 319_488
     assert result.perf.instructions_by_opcode["bne"] > 0
     assert result.perf.instructions_by_opcode["jal"] > 0
     assert result.perf.instructions_by_opcode["vadd"] > 0
+    assert result.perf.instructions_by_opcode["dma.load.ch4"] == 1

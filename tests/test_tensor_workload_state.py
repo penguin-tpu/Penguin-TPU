@@ -127,14 +127,14 @@ def test_large_matmul_first_output_tile_is_correct_in_tensor_and_dram_state() ->
     core, activation, weights = _preload_large_matmul_state()
     program = load_mapped_program(f"{PROGRAM_ROOT}/matmul_large.S")
 
-    perf = core.execute(program, max_instructions=79)
+    perf = core.execute(program, max_instructions=82)
 
     expected = _reference_tiled_accumulation(activation[:64, :128], weights[:128, :64]).to(torch.float32)
     tensor_tile = bf16_tile_pair_from_bytes(
         core.state.load_mreg(2),
         core.state.load_mreg(3),
     ).to(torch.float32)
-    assert perf.instructions == 80
+    assert perf.instructions == 84
     assert core.state.stop_reason == StopReason.STEP_LIMIT
     assert torch.equal(tensor_tile, expected)
     assert core.state.read_xreg(19) == OUTPUT_DRAM_BASE

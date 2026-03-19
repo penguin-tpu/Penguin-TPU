@@ -756,10 +756,6 @@ dependencies = [
     { name = "json5" },
     { name = "numpy" },
     { name = "penguin-model" },
-]
-
-[package.optional-dependencies]
-torch = [
     { name = "torch" },
 ]
 
@@ -768,9 +764,8 @@ requires-dist = [
     { name = "json5", specifier = ">=0.13.0" },
     { name = "numpy", specifier = ">=2.1" },
     { name = "penguin-model", editable = "penguin-model" },
-    { name = "torch", marker = "extra == 'torch'", specifier = ">=2.6" },
+    { name = "torch", specifier = ">=2.10.0" },
 ]
-provides-extras = ["torch"]
 
 [[package]]
 name = "penguin-model"

@@ -22,6 +22,7 @@ from .instructions import (
     ALL_INSTRUCTION_SPECS,
     BType,
     DMAType,
+    DelayType,
     EmptyType,
     IType,
     Instruction,
@@ -137,6 +138,8 @@ def _format_instruction(instruction: Instruction) -> str:
         return f"{mnemonic} x{params.rd}, {params.imm}"
     if isinstance(params, EmptyType):
         return mnemonic
+    if isinstance(params, DelayType):
+        return f"{mnemonic} {params.cycles}"
     if isinstance(params, DMAType):
         return f"{mnemonic} x{params.dram_rs}, x{params.vmem_rs}, x{params.size_rs}"
     if isinstance(params, ScaleImmType):
@@ -201,6 +204,14 @@ def _is_dma_wait_instruction(instruction: Instruction) -> bool:
     return instruction.mnemonic.startswith("dma.wait.")
 
 
+def _is_delay_instruction(instruction: Instruction) -> bool:
+    return instruction.mnemonic == "delay"
+
+
+def _is_decode_fence_instruction(instruction: Instruction) -> bool:
+    return _is_dma_wait_instruction(instruction) or _is_delay_instruction(instruction)
+
+
 def _dma_transfer_lane(channel: int) -> int:
     return DMA_TRANSFER_LANE_BASE + channel
 
@@ -210,10 +221,30 @@ def _is_async_tensor_lane(lane: int) -> bool:
 
 
 def _lane_occupancy_cycles(instruction: Instruction, execute_lane: int, total_latency: int) -> int:
-    if _is_async_tensor_lane(execute_lane):
-        return total_latency
     if execute_lane == DMA_LANE and not _is_dma_wait_instruction(instruction):
         return 1
+    if instruction.mnemonic in {"vload", "vstore"}:
+        return 1
+    if instruction.mnemonic.startswith(
+        (
+            "vmatpush.mxu",
+            "vload.weight.",
+            "vmatpush.bf16.acc.",
+            "vmatpop.bf16.acc.",
+            "vmatpop.fp8.acc.",
+        )
+    ):
+        return 1
+    if isinstance(instruction.params, VPUBinaryType):
+        return 1
+    if isinstance(instruction.params, VPUUnaryType):
+        if instruction.mnemonic in {"vexp", "vrecip"}:
+            return total_latency
+        return 1
+    if isinstance(instruction.params, XLUTransposeType):
+        return 1
+    if _is_async_tensor_lane(execute_lane):
+        return total_latency
     return total_latency
 
 
@@ -339,14 +370,24 @@ class Core:
 
     def _reset_scoreboards(self, base_cycle: int) -> None:
         self._xreg_ready = [base_cycle] * self.state.config.scalar.xreg_count
+        self._xreg_read_consumed = [base_cycle] * self.state.config.scalar.xreg_count
         self._ereg_ready = [base_cycle] * self.state.config.scale.num_ereg
+        self._ereg_read_consumed = [base_cycle] * self.state.config.scale.num_ereg
         self._mreg_ready = [base_cycle] * self.state.config.tensor.num_mreg
+        self._mreg_read_consumed = [base_cycle] * self.state.config.tensor.num_mreg
+        self._accum_ready = [base_cycle] * self.state.config.tensor.mxu_count
+        self._accum_read_consumed = [base_cycle] * self.state.config.tensor.mxu_count
         self._weight_ready = [
+            [base_cycle] * self.state.config.tensor.weight_slots_per_mxu
+            for _ in range(self.state.config.tensor.mxu_count)
+        ]
+        self._weight_read_consumed = [
             [base_cycle] * self.state.config.tensor.weight_slots_per_mxu
             for _ in range(self.state.config.tensor.mxu_count)
         ]
         self._vmem_ready_cycle = base_cycle
         self._xreg_ready[0] = base_cycle
+        self._xreg_read_consumed[0] = base_cycle
 
     def _set_trace_logger(self, trace_logger: TraceLogger | None) -> None:
         self.state.trace_logger = trace_logger
@@ -504,93 +545,130 @@ class Core:
         self._idu.current_uop = None
 
     def _instruction_operand_ready_cycle(self, instruction: Instruction) -> int:
-        ready_cycle = self.state.perf.cycles
         params = instruction.params
+        ready_cycle = self.state.perf.cycles
 
-        def require_xreg(index: int) -> None:
+        def wait_xreg(index: int) -> None:
+            nonlocal ready_cycle
+            ready_cycle = max(ready_cycle, self._xreg_ready[index])
+
+        def wait_xreg_write(index: int) -> None:
             nonlocal ready_cycle
             if index != 0:
-                ready_cycle = max(ready_cycle, self._xreg_ready[index])
+                ready_cycle = max(ready_cycle, self._xreg_read_consumed[index])
 
-        def require_ereg(index: int) -> None:
+        def wait_ereg(index: int) -> None:
             nonlocal ready_cycle
             ready_cycle = max(ready_cycle, self._ereg_ready[index])
 
-        def require_mreg(index: int) -> None:
+        def wait_ereg_write(index: int) -> None:
+            nonlocal ready_cycle
+            ready_cycle = max(ready_cycle, self._ereg_read_consumed[index])
+
+        def wait_mreg(index: int) -> None:
             nonlocal ready_cycle
             if 0 <= index < len(self._mreg_ready):
                 ready_cycle = max(ready_cycle, self._mreg_ready[index])
 
-        def require_weight(mxu: int, slot: int) -> None:
+        def wait_mreg_write(index: int) -> None:
+            nonlocal ready_cycle
+            if 0 <= index < len(self._mreg_read_consumed):
+                ready_cycle = max(ready_cycle, self._mreg_read_consumed[index])
+
+        def wait_weight(mxu: int, slot: int) -> None:
             nonlocal ready_cycle
             ready_cycle = max(ready_cycle, self._weight_ready[mxu][slot])
 
-        def require_vmem() -> None:
+        def wait_weight_write(mxu: int, slot: int) -> None:
+            nonlocal ready_cycle
+            ready_cycle = max(ready_cycle, self._weight_read_consumed[mxu][slot])
+
+        def wait_accum(mxu: int) -> None:
+            nonlocal ready_cycle
+            ready_cycle = max(ready_cycle, self._accum_ready[mxu])
+
+        def wait_accum_write(mxu: int) -> None:
+            nonlocal ready_cycle
+            ready_cycle = max(ready_cycle, self._accum_read_consumed[mxu])
+
+        def wait_vmem() -> None:
             nonlocal ready_cycle
             ready_cycle = max(ready_cycle, self._vmem_ready_cycle)
 
         if isinstance(params, RType):
-            require_xreg(params.rs1)
-            require_xreg(params.rs2)
-            require_xreg(params.rd)
+            wait_xreg(params.rs1)
+            wait_xreg(params.rs2)
+            wait_xreg_write(params.rd)
         elif isinstance(params, IType):
-            require_xreg(params.rs1)
-            require_xreg(params.rd)
+            wait_xreg(params.rs1)
+            wait_xreg_write(params.rd)
             if instruction.mnemonic in SCALAR_LOAD_MNEMONICS:
-                require_vmem()
+                wait_vmem()
         elif isinstance(params, SType):
-            require_xreg(params.rs1)
-            require_xreg(params.rs2)
-            require_vmem()
+            wait_xreg(params.rs1)
+            wait_xreg(params.rs2)
+            wait_vmem()
         elif isinstance(params, BType):
-            require_xreg(params.rs1)
-            require_xreg(params.rs2)
-        elif isinstance(params, UType | JType):
-            require_xreg(params.rd)
-        elif isinstance(params, DMAType):
-            require_xreg(params.dram_rs)
-            require_xreg(params.vmem_rs)
-            require_xreg(params.size_rs)
-            require_vmem()
-        elif isinstance(params, ScaleImmType):
-            require_ereg(params.ed)
+            wait_xreg(params.rs1)
+            wait_xreg(params.rs2)
+        elif isinstance(params, JType):
+            wait_xreg_write(params.rd)
+        elif isinstance(params, UType):
+            wait_xreg_write(params.rd)
         elif isinstance(params, ScaleMemType):
-            require_ereg(params.ed)
-            require_xreg(params.rs1)
-            require_vmem()
+            wait_xreg(params.rs1)
+            wait_vmem()
+            wait_ereg_write(params.ed)
+        elif isinstance(params, ScaleImmType):
+            wait_ereg_write(params.ed)
         elif isinstance(params, TensorMemType):
-            require_xreg(params.rs1)
-            require_mreg(params.mreg)
-            require_vmem()
-        elif isinstance(params, WeightMemType):
-            require_xreg(params.rs1)
-            require_weight(0 if instruction.mnemonic.endswith("mxu0") else 1, params.slot)
-            require_vmem()
-        elif isinstance(params, WeightTensorType):
-            require_mreg(params.ms)
-            require_weight(0 if instruction.mnemonic.endswith("mxu0") else 1, params.slot)
-        elif isinstance(params, MXUAccumulatorType):
-            if instruction.mnemonic.startswith("vmatpush.bf16.acc."):
-                require_mreg(params.mreg)
-                require_mreg(params.mreg + 1)
-            elif instruction.mnemonic.startswith("vmatpop.bf16.acc."):
-                require_mreg(params.mreg)
-                require_mreg(params.mreg + 1)
+            wait_xreg(params.rs1)
+            wait_vmem()
+            if instruction.mnemonic == "vstore":
+                wait_mreg(params.mreg)
             else:
-                require_mreg(params.mreg)
-        elif isinstance(params, MXUMatmulType):
-            require_mreg(params.ms)
-            require_weight(0 if instruction.mnemonic.endswith("mxu0") else 1, params.ws)
-        elif isinstance(params, MXUMatmulAccType):
-            require_mreg(params.ms)
-            require_weight(0 if instruction.mnemonic.endswith("mxu0") else 1, params.ws)
+                wait_mreg_write(params.mreg)
+        elif isinstance(params, WeightMemType):
+            wait_xreg(params.rs1)
+            wait_vmem()
+            wait_weight_write(0 if instruction.mnemonic.endswith("mxu0") else 1, params.slot)
+        elif isinstance(params, WeightTensorType):
+            wait_mreg(params.ms)
+            wait_weight_write(0 if instruction.mnemonic.endswith("mxu0") else 1, params.slot)
+        elif isinstance(params, MXUAccumulatorType):
+            mxu = 0 if instruction.mnemonic.endswith("mxu0") else 1
+            wait_accum(mxu)
+            if instruction.mnemonic.startswith("vmatpush.bf16.acc."):
+                wait_mreg(params.mreg)
+                wait_mreg(params.mreg + 1)
+                wait_accum_write(mxu)
+            elif instruction.mnemonic.startswith("vmatpop.bf16.acc."):
+                wait_mreg_write(params.mreg)
+                wait_mreg_write(params.mreg + 1)
+            elif instruction.mnemonic.startswith("vmatpop.fp8.acc."):
+                wait_mreg_write(params.mreg)
+        elif isinstance(params, MXUMatmulType | MXUMatmulAccType):
+            mxu = 0 if instruction.mnemonic.endswith("mxu0") else 1
+            wait_mreg(params.ms)
+            wait_weight(mxu, params.ws)
+            wait_accum_write(mxu)
+            if isinstance(params, MXUMatmulAccType):
+                wait_accum(mxu)
         elif isinstance(params, VPUBinaryType):
-            require_mreg(params.ms1)
-            require_mreg(params.ms2)
-            require_mreg(params.md)
-        elif isinstance(params, VPUUnaryType | XLUTransposeType):
-            require_mreg(params.ms)
-            require_mreg(params.md)
+            wait_mreg(params.ms1)
+            wait_mreg(params.ms2)
+            wait_mreg_write(params.md)
+        elif isinstance(params, VPUUnaryType):
+            wait_mreg(params.ms)
+            wait_mreg_write(params.md)
+        elif isinstance(params, XLUTransposeType):
+            wait_mreg(params.ms)
+            wait_mreg_write(params.md)
+        elif isinstance(params, DMAType):
+            wait_xreg(params.dram_rs)
+            wait_xreg(params.vmem_rs)
+            wait_xreg(params.size_rs)
+            wait_vmem()
 
         return ready_cycle
 
@@ -610,6 +688,9 @@ class Core:
 
         def reserve_weight(mxu: int, slot: int) -> None:
             self._weight_ready[mxu][slot] = completion_cycle
+
+        def reserve_accum(mxu: int) -> None:
+            self._accum_ready[mxu] = completion_cycle
 
         def reserve_vmem(ready_cycle: int) -> None:
             self._vmem_ready_cycle = max(self._vmem_ready_cycle, ready_cycle)
@@ -634,15 +715,88 @@ class Core:
         elif isinstance(params, WeightTensorType):
             reserve_weight(0 if instruction.mnemonic.endswith("mxu0") else 1, params.slot)
         elif isinstance(params, MXUAccumulatorType):
+            reserve_accum(0 if instruction.mnemonic.endswith("mxu0") else 1)
             if instruction.mnemonic.startswith("vmatpop.bf16.acc."):
                 reserve_mreg(params.mreg)
                 reserve_mreg(params.mreg + 1)
             elif instruction.mnemonic.startswith("vmatpop.fp8.acc."):
                 reserve_mreg(params.mreg)
+        elif isinstance(params, MXUMatmulType | MXUMatmulAccType):
+            reserve_accum(0 if instruction.mnemonic.endswith("mxu0") else 1)
         elif isinstance(params, DMAType):
             reserve_vmem(completion_cycle)
         elif isinstance(params, VPUBinaryType | VPUUnaryType | XLUTransposeType):
             reserve_mreg(params.md)
+
+    def _reserve_instruction_reads(self, instruction: Instruction, execute_start_cycle: int) -> None:
+        params = instruction.params
+
+        def reserve_xreg(index: int) -> None:
+            self._xreg_read_consumed[index] = max(self._xreg_read_consumed[index], execute_start_cycle)
+
+        def reserve_ereg(index: int) -> None:
+            self._ereg_read_consumed[index] = max(self._ereg_read_consumed[index], execute_start_cycle)
+
+        def reserve_mreg(index: int) -> None:
+            if 0 <= index < len(self._mreg_read_consumed):
+                self._mreg_read_consumed[index] = max(
+                    self._mreg_read_consumed[index], execute_start_cycle
+                )
+
+        def reserve_weight(mxu: int, slot: int) -> None:
+            self._weight_read_consumed[mxu][slot] = max(
+                self._weight_read_consumed[mxu][slot], execute_start_cycle
+            )
+
+        def reserve_accum(mxu: int) -> None:
+            self._accum_read_consumed[mxu] = max(
+                self._accum_read_consumed[mxu], execute_start_cycle
+            )
+
+        if isinstance(params, RType):
+            reserve_xreg(params.rs1)
+            reserve_xreg(params.rs2)
+        elif isinstance(params, IType):
+            reserve_xreg(params.rs1)
+        elif isinstance(params, SType):
+            reserve_xreg(params.rs1)
+            reserve_xreg(params.rs2)
+        elif isinstance(params, BType):
+            reserve_xreg(params.rs1)
+            reserve_xreg(params.rs2)
+        elif isinstance(params, ScaleMemType):
+            reserve_xreg(params.rs1)
+        elif isinstance(params, TensorMemType):
+            reserve_xreg(params.rs1)
+            if instruction.mnemonic == "vstore":
+                reserve_mreg(params.mreg)
+        elif isinstance(params, WeightMemType):
+            reserve_xreg(params.rs1)
+        elif isinstance(params, WeightTensorType):
+            reserve_mreg(params.ms)
+        elif isinstance(params, MXUAccumulatorType):
+            mxu = 0 if instruction.mnemonic.endswith("mxu0") else 1
+            reserve_accum(mxu)
+            if instruction.mnemonic.startswith("vmatpush.bf16.acc."):
+                reserve_mreg(params.mreg)
+                reserve_mreg(params.mreg + 1)
+        elif isinstance(params, MXUMatmulType | MXUMatmulAccType):
+            mxu = 0 if instruction.mnemonic.endswith("mxu0") else 1
+            reserve_mreg(params.ms)
+            reserve_weight(mxu, params.ws)
+            if isinstance(params, MXUMatmulAccType):
+                reserve_accum(mxu)
+        elif isinstance(params, VPUBinaryType):
+            reserve_mreg(params.ms1)
+            reserve_mreg(params.ms2)
+        elif isinstance(params, VPUUnaryType):
+            reserve_mreg(params.ms)
+        elif isinstance(params, XLUTransposeType):
+            reserve_mreg(params.ms)
+        elif isinstance(params, DMAType):
+            reserve_xreg(params.dram_rs)
+            reserve_xreg(params.vmem_rs)
+            reserve_xreg(params.size_rs)
 
     def _build_async_callbacks(
         self,
@@ -862,6 +1016,7 @@ class Core:
         completion_cycle: int,
     ) -> tuple[Callable[[int], None] | None, Callable[[int], None] | None]:
         instruction = uop.instruction
+        params = instruction.params
         spec = ALL_INSTRUCTION_SPECS[instruction.mnemonic]
         execute_lane = _execute_lane_for_instruction(instruction)
         logger = self.state.trace_logger
@@ -903,6 +1058,79 @@ class Core:
 
             return on_start, on_complete
 
+        if instruction.mnemonic == "vload":
+            assert isinstance(params, TensorMemType)
+            captured: dict[str, object] = {}
+
+            def on_start(cycle: int) -> None:
+                del cycle
+                address = (self.state.read_xreg(params.rs1) + params.imm) & 0xFFFF_FFFF
+                if not self.state._check_tensor_alignment(address):
+                    return
+                captured["address"] = address
+                captured["payload"] = self.state.vmem.read(
+                    address,
+                    self.state.config.mreg_bytes,
+                ).clone()
+
+            def on_complete(cycle: int) -> None:
+                if "payload" not in captured:
+                    return
+                self.state.trace_end_cycle = self._trace_cycle(cycle)
+                self.state.instruction_extra_cycles = (
+                    self.state.config.vmem_transfer_cycles(self.state.config.mreg_bytes)
+                    - self.state.config.vload_latency_cycles
+                )
+                self.state.perf.bytes_read += self.state.config.mreg_bytes
+                self.state.store_mreg(params.mreg, captured["payload"])
+                self.state._log_memory_access(
+                    "vmem",
+                    "vload",
+                    int(captured["address"]),
+                    0,
+                    size=self.state.config.mreg_bytes,
+                )
+                self.state.perf.record_instruction(instruction.mnemonic)
+                self._mark_step_limit_if_reached()
+                self._log_stop(cycle)
+
+            return on_start, on_complete
+
+        if instruction.mnemonic == "vstore":
+            assert isinstance(params, TensorMemType)
+            captured: dict[str, object] = {}
+
+            def on_start(cycle: int) -> None:
+                del cycle
+                address = (self.state.read_xreg(params.rs1) + params.imm) & 0xFFFF_FFFF
+                if not self.state._check_tensor_alignment(address):
+                    return
+                captured["address"] = address
+                captured["payload"] = self.state.load_mreg(params.mreg).clone()
+
+            def on_complete(cycle: int) -> None:
+                if "payload" not in captured:
+                    return
+                self.state.trace_end_cycle = self._trace_cycle(cycle)
+                self.state.instruction_extra_cycles = (
+                    self.state.config.vmem_transfer_cycles(self.state.config.mreg_bytes)
+                    - self.state.config.vstore_latency_cycles
+                )
+                self.state.perf.bytes_written += self.state.config.mreg_bytes
+                self.state.vmem.write(int(captured["address"]), captured["payload"])
+                self.state._log_memory_access(
+                    "vmem",
+                    "vstore",
+                    int(captured["address"]),
+                    0,
+                    size=self.state.config.mreg_bytes,
+                )
+                self.state.perf.record_instruction(instruction.mnemonic)
+                self._mark_step_limit_if_reached()
+                self._log_stop(cycle)
+
+            return on_start, on_complete
+
         if _is_async_tensor_lane(execute_lane):
             async_start, async_complete = self._build_async_callbacks(uop, completion_cycle)
 
@@ -931,17 +1159,22 @@ class Core:
 
     def _try_retire_decode_only(self, uop: PipelineUop, cycle: int) -> bool:
         instruction = uop.instruction
-        if not _is_dma_wait_instruction(instruction):
+        if not _is_decode_fence_instruction(instruction):
             return False
         if uop.dispatch_start_cycle is None or cycle <= uop.dispatch_start_cycle:
             return False
 
-        wait_channel = _dma_channel_for_instruction(instruction)
-        if wait_channel is None:
-            raise ValueError(f"Malformed DMA wait mnemonic '{instruction.mnemonic}'")
-        retire_cycle = self.state.dma_wait_completion_cycle(wait_channel, uop.dispatch_start_cycle)
-        if self._dma_scheduled_valid[wait_channel]:
-            retire_cycle = max(retire_cycle, self._dma_scheduled_ready_cycle[wait_channel])
+        if _is_delay_instruction(instruction):
+            retire_cycle = uop.dispatch_start_cycle + 1 + instruction.params.cycles
+        else:
+            wait_channel = _dma_channel_for_instruction(instruction)
+            if wait_channel is None:
+                raise ValueError(f"Malformed DMA wait mnemonic '{instruction.mnemonic}'")
+            retire_cycle = self.state.dma_wait_completion_cycle(
+                wait_channel, uop.dispatch_start_cycle
+            )
+            if self._dma_scheduled_valid[wait_channel]:
+                retire_cycle = max(retire_cycle, self._dma_scheduled_ready_cycle[wait_channel])
         if cycle < retire_cycle:
             return False
 
@@ -952,16 +1185,19 @@ class Core:
             logger.log_retire(uop.insn_id, lane=DISPATCH_LANE, cycle=trace_cycle)
         self.state.trace_end_cycle = self._trace_cycle(cycle)
         self.state.perf.record_instruction(instruction.mnemonic)
-        self.state.retire_dma_wait(wait_channel, retire_cycle=cycle)
-        self._dma_scheduled_valid[wait_channel] = False
-        self._dma_scheduled_ready_cycle[wait_channel] = 0
+        if _is_delay_instruction(instruction):
+            pass
+        else:
+            self.state.retire_dma_wait(wait_channel, retire_cycle=cycle)
+            self._dma_scheduled_valid[wait_channel] = False
+            self._dma_scheduled_ready_cycle[wait_channel] = 0
         self._mark_step_limit_if_reached()
         self._log_stop(cycle)
         return True
 
     def _try_dispatch(self, uop: PipelineUop, cycle: int) -> str | None:
         instruction = uop.instruction
-        if _is_dma_wait_instruction(instruction):
+        if _is_decode_fence_instruction(instruction):
             return None
         if instruction.mnemonic not in ALL_INSTRUCTION_SPECS:
             self.state.stop(StopReason.ILLEGAL_INSTRUCTION)
@@ -976,10 +1212,6 @@ class Core:
             return None
 
         unit_key = _unit_key_for_instruction(instruction)
-        output = self._idu.outputs[unit_key]
-        if output.should_stall():
-            return None
-
         execute_lane = _UNIT_LANES[unit_key]
         total_latency = _instruction_latency_cycles(self.state, instruction, spec.latency)
         lane_occupancy = _lane_occupancy_cycles(instruction, execute_lane, total_latency)
@@ -992,6 +1224,7 @@ class Core:
         completion_cycle = execute_start_cycle + total_latency
 
         uop.unit_key = unit_key
+        uop.dispatch_end_cycle = cycle + 1
         uop.execute_start_cycle = execute_start_cycle
         uop.completion_cycle = completion_cycle
         uop.on_execute_start, uop.on_execute_complete = self._make_execute_callbacks(
@@ -999,8 +1232,16 @@ class Core:
             execute_start_cycle=execute_start_cycle,
             completion_cycle=completion_cycle,
         )
+        if self.state.trace_logger is not None:
+            self.state.trace_logger.log_stage_end(
+                uop.insn_id,
+                "dispatch",
+                lane=DISPATCH_LANE,
+                cycle=self._trace_cycle(uop.dispatch_end_cycle),
+            )
 
         self._reserve_instruction_destinations(instruction, completion_cycle)
+        self._reserve_instruction_reads(instruction, execute_start_cycle)
         self._unit_next_available_cycle[unit_key] = execute_start_cycle + lane_occupancy
         if isinstance(instruction.params, DMAType):
             channel = _dma_channel_for_instruction(instruction)
@@ -1093,7 +1334,7 @@ class Core:
             self._log_stop(active_cycle)
             return False
         for unit_key, exu in self._exus.items():
-            exu.start_cycle(active_cycle, self._idu.outputs[unit_key])
+            exu.start_cycle(active_cycle)
         if self.state.stop_reason is not None:
             self._log_stop(active_cycle)
             return False
@@ -1107,6 +1348,10 @@ class Core:
                 try_retire_decode_only=self._try_retire_decode_only,
                 try_dispatch=self._try_dispatch,
             )
+            for unit_key, queue in self._idu.outputs.items():
+                exu = self._exus[unit_key]
+                while queue:
+                    exu.enqueue(queue.popleft())
         if self.state.stop_reason is not None:
             self._log_stop(active_cycle)
             return False
@@ -1115,7 +1360,7 @@ class Core:
         else:
             frontend_fenced = (
                 self._idu.current_uop is not None
-                and _is_dma_wait_instruction(self._idu.current_uop.instruction)
+                and _is_decode_fence_instruction(self._idu.current_uop.instruction)
             )
             self._ifu.tick(
                 active_cycle,

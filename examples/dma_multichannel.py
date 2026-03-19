@@ -35,53 +35,41 @@ def main() -> int:
     core = Sim(config=config)
     state = core.state
 
-    load_transfers = [
+    streams = [
         {
             "channel": 0,
-            "size": 96,
+            "kind": "xreg",
+            "size": 32,
             "dram_address": config.memory_map.dram.base + 0x100,
-            "vmem_address": config.memory_map.vmem.base + 0x040,
-            "marker_address": config.memory_map.vmem.base + 0x308,
-            "payload": _pattern(0x10, 96),
+            "vmem_address": config.memory_map.vmem.base + 0x000,
+            "roundtrip_vmem_address": config.memory_map.vmem.base + 0x080,
+            "dram_output_address": config.memory_map.dram.base + 0x7000,
+            "payload": _pattern(0x10, 32),
         },
         {
             "channel": 1,
-            "size": 32,
-            "dram_address": config.memory_map.dram.base + 0x500,
-            "vmem_address": config.memory_map.vmem.base + 0x100,
-            "marker_address": config.memory_map.vmem.base + 0x300,
-            "payload": _pattern(0x90, 32),
+            "kind": "mreg",
+            "size": 2 * config.mreg_bytes,
+            "dram_address": config.memory_map.dram.base + 0x1000,
+            "vmem_address": config.memory_map.vmem.base + 0x1000,
+            "roundtrip_vmem_address": config.memory_map.vmem.base + 0x2000,
+            "dram_output_address": config.memory_map.dram.base + 0x8000,
+            "payload": _pattern(0x40, 2 * config.mreg_bytes),
         },
         {
             "channel": 2,
-            "size": 64,
-            "dram_address": config.memory_map.dram.base + 0x300,
-            "vmem_address": config.memory_map.vmem.base + 0x200,
-            "marker_address": config.memory_map.vmem.base + 0x304,
-            "payload": _pattern(0xC0, 64),
-        },
-    ]
-    store_transfers = [
-        {
-            "channel": 1,
-            "size": 32,
-            "vmem_address": config.memory_map.vmem.base + 0x180,
-            "dram_address": config.memory_map.dram.base + 0x400,
-            "payload": _pattern(0x30, 32),
-        },
-        {
-            "channel": 2,
-            "size": 64,
-            "vmem_address": config.memory_map.vmem.base + 0x280,
-            "dram_address": config.memory_map.dram.base + 0x600,
-            "payload": _pattern(0xE0, 64),
+            "kind": "mreg",
+            "size": 3 * config.mreg_bytes,
+            "dram_address": config.memory_map.dram.base + 0x4000,
+            "vmem_address": config.memory_map.vmem.base + 0x4000,
+            "roundtrip_vmem_address": config.memory_map.vmem.base + 0x8000,
+            "dram_output_address": config.memory_map.dram.base + 0xB000,
+            "payload": _pattern(0x90, 3 * config.mreg_bytes),
         },
     ]
 
-    for transfer in load_transfers:
-        state.dram.write(transfer["dram_address"], transfer["payload"])
-    for transfer in store_transfers:
-        state.vmem.write(transfer["vmem_address"], transfer["payload"])
+    for stream in streams:
+        state.dram.write(stream["dram_address"], stream["payload"])
 
     program_path = (
         Path(__file__).resolve().parents[1]
@@ -96,31 +84,25 @@ def main() -> int:
 
     all_match = True
     print("Multi-channel DMA example completed.")
-    print("  loads:")
-    for transfer in load_transfers:
-        staged = state.vmem.read(transfer["vmem_address"], transfer["size"])
-        marker = state.vmem.load_u32(transfer["marker_address"])
-        expected_marker = _first_word(transfer["payload"])
-        matches = torch.equal(staged, transfer["payload"]) and marker == expected_marker
+    for stream in streams:
+        staged = state.vmem.read(stream["vmem_address"], stream["size"])
+        roundtrip = state.vmem.read(stream["roundtrip_vmem_address"], stream["size"])
+        drained = state.dram.read(stream["dram_output_address"], stream["size"])
+        matches = (
+            torch.equal(staged, stream["payload"])
+            and torch.equal(roundtrip, stream["payload"])
+            and torch.equal(drained, stream["payload"])
+        )
         all_match = all_match and matches
         print(
-            f"  ch{transfer['channel']}: {transfer['size']} bytes "
-            f"dram=0x{transfer['dram_address']:08X} -> vmem=0x{transfer['vmem_address']:08X} "
+            f"  ch{stream['channel']} ({stream['kind']}): {stream['size']} bytes "
+            f"dram=0x{stream['dram_address']:08X} -> vmem=0x{stream['vmem_address']:08X} "
             f"match={matches}"
         )
         print(
-            f"    marker@0x{transfer['marker_address']:08X}=0x{marker:08X} "
-            f"(expected 0x{expected_marker:08X})"
-        )
-    print("  stores:")
-    for transfer in store_transfers:
-        drained = state.dram.read(transfer["dram_address"], transfer["size"])
-        matches = torch.equal(drained, transfer["payload"])
-        all_match = all_match and matches
-        print(
-            f"  ch{transfer['channel']}: {transfer['size']} bytes "
-            f"vmem=0x{transfer['vmem_address']:08X} -> dram=0x{transfer['dram_address']:08X} "
-            f"match={matches}"
+            f"    roundtrip_vmem=0x{stream['roundtrip_vmem_address']:08X} "
+            f"dram_out=0x{stream['dram_output_address']:08X} "
+            f"first_word=0x{_first_word(stream['payload']):08X}"
         )
 
     print(f"  stop_reason: {core.state.stop_reason}")

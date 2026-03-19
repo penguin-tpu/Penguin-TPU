@@ -18,6 +18,7 @@ class PipelineUop:
     fetch_stage_open: bool = True
     dispatch_start_cycle: int | None = None
     dispatch_delay_remaining: int = 0
+    dispatch_end_cycle: int | None = None
     unit_key: str | None = None
     execute_start_cycle: int | None = None
     completion_cycle: int | None = None

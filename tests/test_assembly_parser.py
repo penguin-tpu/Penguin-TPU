@@ -7,6 +7,7 @@ import pytest
 from penguin_model import (
     AssemblySyntaxError,
     BType,
+    DelayType,
     EmptyType,
     IMEM_BASE,
     IType,
@@ -126,6 +127,12 @@ def test_assembler_parses_vpu_operands() -> None:
         Instruction("vexp", VPUUnaryType(md=26, ms=27)),
         Instruction("vrecip", VPUUnaryType(md=28, ms=29)),
     ]
+
+
+def test_assembler_parses_delay_instruction() -> None:
+    program = assemble_text("delay 7\n")
+
+    assert list(program) == [Instruction("delay", DelayType(cycles=7))]
 
 
 def test_assembler_parses_xlu_operands() -> None:

@@ -39,9 +39,11 @@ class _ExampleAddresses:
     output11: int
     dma_act_scratch: int
     dma_weight_scratch: int
+    dma_bias_scratch: int
     dma_output_scratch: int
     dma_act_dram_base: int
     dma_weight_dram_base: int
+    dma_bias_dram_base: int
     dma_output_dram_base: int
 
 
@@ -59,28 +61,15 @@ def run_matmul_example(
     *,
     config: PenguinCoreConfig = DEFAULT_PENGUIN_CORE_CONFIG,
 ) -> ExampleRunResult:
-    addresses = _example_addresses(config)
-    activation = _deterministic_activation(rows=config.tensor.mreg_rows, config=config)
-    weights = _deterministic_weight(cols=config.tensor.weight_tile_cols_fp8, config=config)
-    golden = _bf16_reference_matmul(activation, weights)
-
-    core = Sim(config=config)
-    state = core.state
-    state.vmem.write(addresses.activation0, fp8_tile_to_bytes(activation, config=config))
-    state.vmem.write(addresses.weight0, weight_tile_to_bytes(weights, config=config))
-
-    resolved_trace_path = _resolve_trace_path(trace_path, "matmul_trace.json")
-    perf = core.dump_json_trace(load_mapped_program(_PROGRAM_ROOT / "matmul.S"), resolved_trace_path)
-    _require_program_end(core)
-
-    output = _read_bf16_result_tile(state, addresses.output00, config=config)
-    _require_exact_match("matmul", output, golden)
-    return ExampleRunResult(
+    return _run_dram_backed_example(
         name="matmul",
-        trace_path=resolved_trace_path,
-        perf=perf,
-        output=output,
-        golden=golden,
+        program_name="matmul.S",
+        trace_filename="matmul_trace.json",
+        trace_path=trace_path,
+        config=config,
+        m_tiles=1,
+        n_tiles=1,
+        k_tiles=1,
     )
 
 
@@ -89,62 +78,16 @@ def run_linear_example(
     *,
     config: PenguinCoreConfig = DEFAULT_PENGUIN_CORE_CONFIG,
 ) -> ExampleRunResult:
-    addresses = _example_addresses(config)
-    inputs = _deterministic_activation(rows=config.tensor.mreg_rows * 2, config=config)
-    weight_matrix = _deterministic_weight(
-        cols=config.tensor.weight_tile_cols_fp8 * 2,
-        config=config,
-    )
-    bias = _deterministic_bias(cols=config.tensor.weight_tile_cols_fp8 * 2)
-    golden = _bf16_reference_linear(inputs, weight_matrix, bias)
-
-    core = Sim(config=config)
-    state = core.state
-    rows = config.tensor.mreg_rows
-    cols = config.tensor.weight_tile_cols_fp8
-    state.vmem.write(addresses.activation0, fp8_tile_to_bytes(inputs[:rows], config=config))
-    state.vmem.write(addresses.activation1, fp8_tile_to_bytes(inputs[rows:], config=config))
-    state.vmem.write(
-        addresses.weight0,
-        weight_tile_to_bytes(weight_matrix[:, :cols], config=config),
-    )
-    state.vmem.write(
-        addresses.weight1,
-        weight_tile_to_bytes(weight_matrix[:, cols:], config=config),
-    )
-    _write_bias_tiles_to_vmem(
-        state,
-        bias,
-        addresses=(addresses.bias0, addresses.bias1),
-        config=config,
-    )
-
-    resolved_trace_path = _resolve_trace_path(trace_path, "linear_trace.json")
-    perf = core.dump_json_trace(load_mapped_program(_PROGRAM_ROOT / "linear.S"), resolved_trace_path)
-    _require_program_end(core)
-
-    top = torch.cat(
-        (
-            _read_bf16_result_tile(state, addresses.output00, config=config),
-            _read_bf16_result_tile(state, addresses.output01, config=config),
-        ),
-        dim=1,
-    )
-    bottom = torch.cat(
-        (
-            _read_bf16_result_tile(state, addresses.output10, config=config),
-            _read_bf16_result_tile(state, addresses.output11, config=config),
-        ),
-        dim=1,
-    )
-    output = torch.cat((top, bottom), dim=0)
-    _require_exact_match("linear", output, golden)
-    return ExampleRunResult(
+    return _run_dram_backed_example(
         name="linear",
-        trace_path=resolved_trace_path,
-        perf=perf,
-        output=output,
-        golden=golden,
+        program_name="linear.S",
+        trace_filename="linear_trace.json",
+        trace_path=trace_path,
+        config=config,
+        m_tiles=2,
+        n_tiles=2,
+        k_tiles=1,
+        bias=_deterministic_bias(cols=config.tensor.weight_tile_cols_fp8 * 2),
     )
 
 
@@ -210,9 +153,11 @@ def _example_addresses(config: PenguinCoreConfig) -> _ExampleAddresses:
         output11=vmem_base + 16 * mreg_bytes,
         dma_act_scratch=vmem_base + 0 * mreg_bytes,
         dma_weight_scratch=vmem_base + 1 * mreg_bytes,
+        dma_bias_scratch=vmem_base + 4 * mreg_bytes,
         dma_output_scratch=vmem_base + 2 * mreg_bytes,
         dma_act_dram_base=dram_base + 0x0100_0000,
         dma_weight_dram_base=dram_base + 0x0200_0000,
+        dma_bias_dram_base=dram_base + 0x0240_0000,
         dma_output_dram_base=dram_base + 0x0300_0000,
     )
 
@@ -328,8 +273,8 @@ def _read_bf16_result_tile_from_memory(
     return bf16_tile_pair_from_bytes(raw_lo, raw_hi, config=config).clone()
 
 
-def _write_bias_tiles_to_vmem(
-    state: ArchState,
+def _write_bias_tiles_to_memory(
+    memory,
     bias: torch.Tensor,
     *,
     addresses: tuple[int, ...],
@@ -343,8 +288,8 @@ def _write_bias_tiles_to_vmem(
         bias_slice = bias[start : start + cols].to(BF16_DTYPE).reshape(1, cols)
         bias_tile = bias_slice.expand(config.tensor.mreg_rows, cols).clone()
         raw_lo, raw_hi = bf16_tile_pair_to_bytes(bias_tile, config=config)
-        state.vmem.write(address, raw_lo)
-        state.vmem.write(address + config.mreg_bytes, raw_hi)
+        memory.write(address, raw_lo)
+        memory.write(address + config.mreg_bytes, raw_hi)
 
 
 def _activation_tile_address(
@@ -520,10 +465,88 @@ def _run_dma_stripmined_example(
         k_tiles=k_tiles,
     )
     if bias is not None:
-        _write_bias_tiles_to_vmem(
-            state,
+        _write_bias_tiles_to_memory(
+            state.dram,
             bias,
-            addresses=(addresses.bias0, addresses.bias1, addresses.bias2),
+            addresses=tuple(
+                addresses.dma_bias_dram_base + index * config.matmul_result_bytes
+                for index in range(n_tiles)
+            ),
+            config=config,
+        )
+
+    resolved_trace_path = _resolve_trace_path(trace_path, trace_filename)
+    perf = core.dump_json_trace(
+        load_mapped_program(_PROGRAM_ROOT / program_name),
+        resolved_trace_path,
+    )
+    _require_program_end(core)
+
+    output = _read_output_from_dram(
+        state,
+        addresses=addresses,
+        config=config,
+        m_tiles=m_tiles,
+        n_tiles=n_tiles,
+    )
+    _require_exact_match(name, output, golden)
+    return ExampleRunResult(
+        name=name,
+        trace_path=resolved_trace_path,
+        perf=perf,
+        output=output,
+        golden=golden,
+    )
+
+
+def _run_dram_backed_example(
+    *,
+    name: str,
+    program_name: str,
+    trace_filename: str,
+    trace_path: str | Path | None,
+    config: PenguinCoreConfig,
+    m_tiles: int,
+    n_tiles: int,
+    k_tiles: int,
+    bias: torch.Tensor | None = None,
+) -> ExampleRunResult:
+    addresses = _example_addresses(config)
+    rows = m_tiles * config.tensor.mreg_rows
+    inner = k_tiles * config.tensor.weight_tile_rows
+    cols = n_tiles * config.tensor.weight_tile_cols_fp8
+
+    activation = _deterministic_activation(rows=rows, cols=inner, config=config)
+    weights = _deterministic_weight(rows=inner, cols=cols, config=config)
+    golden = (
+        _bf16_reference_tiled_matmul(
+            activation,
+            weights,
+            config=config,
+            k_tiles=k_tiles,
+        )
+        if bias is None
+        else _bf16_reference_linear(activation, weights, bias)
+    )
+
+    core = Sim(config=config)
+    state = core.state
+    _write_tiled_inputs_to_dram(
+        state,
+        activation,
+        weights,
+        addresses=addresses,
+        config=config,
+        m_tiles=m_tiles,
+        n_tiles=n_tiles,
+        k_tiles=k_tiles,
+    )
+    if bias is not None:
+        bias_addresses = (addresses.dma_bias_dram_base + index * config.matmul_result_bytes for index in range(n_tiles))
+        _write_bias_tiles_to_memory(
+            state.dram,
+            bias,
+            addresses=tuple(bias_addresses),
             config=config,
         )
 

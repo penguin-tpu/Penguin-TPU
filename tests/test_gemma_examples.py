@@ -26,8 +26,8 @@ def test_gemma_attention_example_matches_reference_and_emits_stage_bundles(tmp_p
     assert result.trace_path.exists()
     assert tuple(result.output.shape) == (64, 32)
     assert torch.equal(result.output, result.golden)
-    assert result.perf.instructions == 323
-    assert result.perf.cycles == 2_898
+    assert result.perf.instructions == 350
+    assert result.perf.cycles == 2_907
     assert result.perf.instructions_by_opcode["transpose.xlu"] == 1
     assert result.perf.instructions_by_opcode["vmatmul.mxu0"] == 6
     assert result.perf.instructions_by_opcode["reduce.max.xlu"] == 1
@@ -57,8 +57,9 @@ def test_gemma_mlp_example_matches_reference_and_emits_stage_bundles(tmp_path) -
     assert result.trace_path.exists()
     assert tuple(result.output.shape) == (64, 32)
     assert torch.equal(result.output, result.golden)
-    assert result.perf.instructions == 188
-    assert result.perf.cycles == 1_928
+    assert result.perf.instructions == 213
+    assert result.perf.cycles == 1_927
+    assert result.perf.instructions_by_opcode["delay"] == 25
     assert result.perf.instructions_by_opcode["vmul"] == 9
     assert result.perf.instructions_by_opcode["vadd"] == 3
     assert result.perf.instructions_by_opcode["vsub"] == 2
@@ -82,8 +83,8 @@ def test_gemma_decoder_example_matches_reference_and_emits_stage_bundles(tmp_pat
     assert result.trace_path.exists()
     assert tuple(result.output.shape) == (64, 32)
     assert torch.equal(result.output, result.golden)
-    assert result.perf.instructions == 587
-    assert result.perf.cycles == 5_288
+    assert result.perf.instructions == 643
+    assert result.perf.cycles == 5_296
     assert result.perf.instructions_by_opcode["transpose.xlu"] == 1
     assert result.perf.instructions_by_opcode["vadd"] == 5
     assert result.perf.instructions_by_opcode["reduce.max.xlu"] == 1

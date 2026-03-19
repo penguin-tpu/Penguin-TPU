@@ -40,6 +40,7 @@ from penguin_model import (
     VMEM_SIZE,
     WeightMemType,
     addi,
+    assemble_text,
     beq,
     bge,
     bgeu,
@@ -92,6 +93,7 @@ EXPECTED_BASE_MNEMONICS = {
     "or",
     "and",
     "fence",
+    "delay",
     "ecall",
     "ebreak",
 }
@@ -767,6 +769,24 @@ def test_environment_instructions_stop_with_explicit_status(
     assert perf.cycles == 4
 
 
+def test_delay_instruction_holds_decode_for_requested_cycles() -> None:
+    core = Sim(state=_fresh_state(), config=TEST_CORE_CONFIG)
+    program = assemble_text(
+        """
+        delay 3
+        sebreak
+        """,
+        base_address=IMEM_BASE,
+    )
+
+    perf = core.execute(program)
+
+    assert core.state.stop_reason == StopReason.EBREAK
+    assert perf.instructions == 2
+    assert perf.instructions_by_opcode["delay"] == 1
+    assert perf.cycles == 8
+
+
 def test_step_limit_stops_infinite_loop() -> None:
     core = Sim(state=_fresh_state(), config=TEST_CORE_CONFIG)
 
@@ -1048,3 +1068,71 @@ def test_dump_json_trace_tags_mxu_weight_vmem_accesses_with_address_and_size() -
     assert weight_load_event["args"]["region"] == "vmem"
     assert weight_load_event["args"]["address"] == VMEM_BASE + 0x400
     assert weight_load_event["args"]["size"] == state.config.weight_slot_bytes
+
+
+def test_dma_multichannel_example_roundtrips_streams_through_xregs_and_mregs() -> None:
+    state = _fresh_state()
+    core = Sim(state=state, config=state.config)
+    streams = [
+        {
+                "channel": 0,
+                "kind": "xreg",
+                "size": 32,
+                "dram_address": DRAM_BASE + 0x100,
+                "vmem_address": VMEM_BASE + 0x000,
+                "roundtrip_vmem_address": VMEM_BASE + 0x080,
+                "dram_output_address": DRAM_BASE + 0x7000,
+                "payload": torch.arange(0x10, 0x10 + 32, dtype=torch.uint8),
+            },
+        {
+            "channel": 1,
+            "kind": "mreg",
+            "size": 2 * MREG_BYTES,
+            "dram_address": DRAM_BASE + 0x1000,
+            "vmem_address": VMEM_BASE + 0x1000,
+            "roundtrip_vmem_address": VMEM_BASE + 0x2000,
+            "dram_output_address": DRAM_BASE + 0x8000,
+            "payload": torch.arange(0x40, 0x40 + 2 * MREG_BYTES, dtype=torch.int64).to(torch.uint8),
+        },
+        {
+            "channel": 2,
+            "kind": "mreg",
+            "size": 3 * MREG_BYTES,
+            "dram_address": DRAM_BASE + 0x4000,
+            "vmem_address": VMEM_BASE + 0x4000,
+            "roundtrip_vmem_address": VMEM_BASE + 0x8000,
+            "dram_output_address": DRAM_BASE + 0xB000,
+            "payload": torch.arange(0x90, 0x90 + 3 * MREG_BYTES, dtype=torch.int64).to(torch.uint8),
+        },
+    ]
+
+    for stream in streams:
+        state.dram.write(stream["dram_address"], stream["payload"])
+
+    perf = core.execute(load_scalar_program("scalar/examples/dma_multichannel_demo.S"))
+
+    assert core.state.stop_reason == StopReason.PROGRAM_END
+    for stream in streams:
+        assert torch.equal(state.vmem.read(stream["vmem_address"], stream["size"]), stream["payload"])
+        assert torch.equal(
+            state.vmem.read(stream["roundtrip_vmem_address"], stream["size"]),
+            stream["payload"],
+        )
+        assert torch.equal(
+            state.dram.read(stream["dram_output_address"], stream["size"]),
+            stream["payload"],
+        )
+
+    assert perf.instructions_by_opcode["dma.load.ch0"] == 1
+    assert perf.instructions_by_opcode["dma.load.ch1"] == 1
+    assert perf.instructions_by_opcode["dma.load.ch2"] == 1
+    assert perf.instructions_by_opcode["dma.store.ch0"] == 1
+    assert perf.instructions_by_opcode["dma.store.ch1"] == 1
+    assert perf.instructions_by_opcode["dma.store.ch2"] == 1
+    assert perf.instructions_by_opcode["dma.wait.ch0"] == 2
+    assert perf.instructions_by_opcode["dma.wait.ch1"] == 2
+    assert perf.instructions_by_opcode["dma.wait.ch2"] == 2
+    assert perf.instructions_by_opcode["lw"] == 8
+    assert perf.instructions_by_opcode["sw"] == 8
+    assert perf.instructions_by_opcode["vload"] == 5
+    assert perf.instructions_by_opcode["vstore"] == 5

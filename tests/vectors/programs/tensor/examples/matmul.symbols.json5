@@ -16,7 +16,7 @@
       kind: "program",
       region: "imem",
       address: 0x00020000,
-      size_bytes: 168,
+      size_bytes: 232,
       file: "matmul.S",
     },
     weights: {

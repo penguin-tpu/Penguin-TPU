@@ -26,21 +26,15 @@ repo-level TODO tracking. Keep historical context and completed-change notes in
 
 ## Compiler
 
-- Implement the direct PyTorch-to-Penguin export path for the intended fixed model flow.
-- Move executable-package manifest and symbol-table usage from example/test-only flows to
-  actual compiler export paths.
-- Define and stabilize the compiler-side lowering boundary for the current staged
-  Gemma-style examples.
 - Extend the executable-package contract so `constants.bin` has a defined runtime memory
   mapping instead of being bundle collateral only.
+- Broaden the direct exporter beyond the current fixed Gemma attention / MLP / decoder
+  model-package flow.
 
 ## Modeling
 
 - Add manifest-driven runtime staging for `constants.bin` once the bundle contract defines
   its memory mapping.
-- Lock down the post-refactor performance baselines of the cycle-accurate
-  `penguin-model` simulator now that the code is split into `simulation.py`,
-  `core.py`, `ifu.py`, `idu.py`, `stage_data.py`, and unit-local EXU modules.
 - Refine the cycle-accurate tensor hazard / overlap model beyond the current architectural
   scoreboard if RTL-visible pipeline details require it.
 

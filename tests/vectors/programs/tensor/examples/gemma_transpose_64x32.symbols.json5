@@ -16,7 +16,7 @@
       kind: "program",
       region: "imem",
       address: 0x00020000,
-      size_bytes: 144,
+      size_bytes: 152,
       file: "gemma_transpose_64x32.S",
     },
   },

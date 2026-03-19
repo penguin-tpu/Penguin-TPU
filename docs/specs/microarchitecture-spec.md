@@ -183,8 +183,8 @@ interconnect.
 
 ### 5.1 Scalar decode
 
-The scalar decode path shall recognize the full `RV32I` binary baseline defined by the
-architecture specification.
+The scalar decode path shall recognize the full `RV32I` binary baseline plus the
+Penguin-specific scalar `delay` instruction defined by the architecture specification.
 
 Minimum decode outputs:
 
@@ -211,6 +211,7 @@ The scalar decode control record shall additionally expose at least:
 - `is_load`
 - `is_store`
 - `is_fence`
+- `is_delay`
 - `is_ecall`
 - `is_ebreak`
 
@@ -435,14 +436,18 @@ Each channel supports:
 The microarchitecture is free to implement the DMA channels with shared internal data
 paths or arbitration, provided the architecture-visible channel behavior is preserved.
 
-`dma.wait.chN` shall behave as a frontend fence in the decode/issue machinery:
+`dma.wait.chN` and scalar `delay` shall behave as frontend fences in the decode/issue
+machinery:
 
-- it shall not allocate an execute-stage slot on the DMA lane
+- neither instruction allocates a normal execute-stage slot while it is holding decode
 - if channel `N` is already done when the wait instruction reaches decode, the
   instruction shall spend that cycle in decode and retire directly
 - if channel `N` is not yet done, decode shall remain occupied until the transfer
   completes, then the instruction shall retire directly from decode
 - younger instructions shall not issue past that decode fence until the wait retires
+- `delay N` shall also remain resident in decode for exactly `N` additional core cycles
+  after its decode cycle, then retire directly from decode
+- `delay 0` shall spend only its decode cycle in IDU and retire directly
 
 ### 7.4 Baseline transfer formulas
 
@@ -592,11 +597,12 @@ Frontend trace annotations shall follow the cycle-driven model:
 - fetch occupies exactly one modeled cycle in the trace
 - if an IFU output is not claimed on the next cycle, the fetch stage ends on that first
   blocked cycle and the remaining stall interval is shown as a gap before decode begins
-- `dma.wait.chN` is the baseline case that may hold decode and therefore create a fetch
-  gap for younger instructions
+- `dma.wait.chN` and scalar `delay` are the baseline cases that may hold decode and
+  therefore create a fetch gap for younger instructions
 - a decode-resident `dma.wait.chN` may still leave one younger instruction buffered in
   the IFU; no further fetches occur until the wait retires and the buffered IFU output is
   claimed
+- a decode-resident `delay` follows that same IFU buffering rule
 
 The baseline trace lane split is:
 

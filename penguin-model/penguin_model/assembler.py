@@ -13,6 +13,7 @@ from .instructions import (
     ALL_INSTRUCTION_SPECS,
     BType,
     DMAType,
+    DelayType,
     EmptyType,
     INSTRUCTION_SPECS,
     IType,
@@ -512,6 +513,28 @@ def _assemble_instruction(
             line_number=line.line_number,
         )
         return Instruction(mnemonic, EmptyType())
+
+    if spec.params_type is DelayType:
+        _expect_operand_count(
+            mnemonic,
+            operands,
+            expected=1,
+            source_name=source_name,
+            line_number=line.line_number,
+        )
+        cycles = _evaluate_expression(
+            operands[0],
+            labels=labels,
+            pc=pc,
+            relative_to_pc=False,
+            source_name=source_name,
+            line_number=line.line_number,
+        )
+        if cycles < 0 or cycles > 0xFFF:
+            raise AssemblySyntaxError(
+                f"{source_name}:{line.line_number}: 'delay' immediate must be in [0, 4095]"
+            )
+        return Instruction(mnemonic, DelayType(cycles=cycles))
 
     if spec.params_type is DMAType:
         _expect_operand_count(

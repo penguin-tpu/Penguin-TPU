@@ -9,6 +9,7 @@ from .instructions import (
     TENSOR_INSTRUCTION_SPECS,
     BType,
     DMAType,
+    DelayType,
     EmptyType,
     IType,
     JType,
@@ -345,6 +346,11 @@ def and_(state: ArchState, params: RType) -> None:
 
 @instruction(mnemonic="fence", params_type=EmptyType, latency=1)
 def fence(state: ArchState, params: EmptyType) -> None:
+    del state, params
+
+
+@instruction(mnemonic="delay", params_type=DelayType, latency=1)
+def delay(state: ArchState, params: DelayType) -> None:
     del state, params
 
 

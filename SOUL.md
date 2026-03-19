@@ -14,6 +14,9 @@ What exists now:
 - scalar tests and the Python model now cover the full Penguin scalar VMEM load/store
   baseline with `s`-prefixed mnemonics: `slb` / `slh` / `slw` / `slbu` / `slhu` and
   `ssb` / `ssh` / `ssw`
+- the scalar architectural baseline in the spec is now full `RV32I` plus a Penguin
+  `delay N` frontend-stall instruction, with the existing word-indexed `pc` and
+  two-delay-slot control-flow differences retained
 - a directed scalar-program testbench for the functional/perf model, including
   label-resolved self-checking programs inspired by `riscv-tests` `rv32ui`
 - a GitHub Actions CI workflow that installs the `uv` workspace and runs
@@ -70,8 +73,25 @@ What exists now:
   - `examples/gemma_attention.py`
   - `examples/gemma_mlp.py`
   - `examples/gemma_decoder.py`
-  - each example emits real bundle directories for each stage, runs those bundles through
-    `penguin-model`, and compares the final output against a matching PyTorch reference
+  - each example now routes through `penguin-compiler` instead of building stage bundles
+    inline
+  - `penguin-compiler` now captures one fixed PyTorch Gemma-style module through
+    `torch.export`, validates the exported graph, emits a staged model package rooted at
+    `model_package.json5`, and writes per-stage executable bundles over the current
+    `vmat*` / VPU / XLU checked-in assembly templates
+  - the compiler export CLI now includes `penguin-compile export-model --model
+    gemma_attention|gemma_mlp|gemma_decoder --output-dir ...`
+  - the compiler now runs a static latency scheduler over the fixed tensor/Gemma
+    templates and emits spec-defined scalar `delay N` instructions wherever the fixed
+    resource/data hazards require them
+  - `penguin-model` now parses, encodes, and executes `delay` as a decode-resident
+    frontend fence alongside `dma.wait.chN`
+  - the checked-in tensor example `.S` sources under
+    `tests/vectors/programs/tensor/examples/` are regenerated from that scheduler, so
+    the source corpus matches the compiler-emitted bundle contents
+  - the staged package runner now replays only dynamic stage inputs at runtime while
+    keeping static weights/constants in file-backed bundle payloads, and compares the
+    final output against a packaged PyTorch golden
   - the stage programs live under `tests/vectors/programs/tensor/examples/` and cover:
     projection matmuls, attention score matmul, decomposed BF16 softmax, attention
     context matmul, decomposed BF16 GELU gating, BF16 residual add, and BF16 transpose
@@ -82,6 +102,13 @@ What exists now:
 - runtime outputs are now split at the repo root under `outputs/`:
   - `outputs/examples/` for example traces and bundle artifacts
   - `outputs/tests/` for pytest program-execution traces
+- the matmul/linear tensor examples now consistently follow the DRAM-backed data path:
+  - all example inputs, weights, and linear bias tiles are initialized in `DRAM`
+  - the executable programs stage them through `DRAM -> VMEM -> MREG`
+  - results are spilled through `MREG -> VMEM -> DRAM`
+  - the small matmul/linear examples now use DMA-backed staging like the larger
+    strip-mined examples, and the large linear example no longer relies on VMEM-preloaded
+    bias tiles
 - deterministic pseudo-random power-on initialization for DRAM, VMEM, scalar registers,
   tensor registers, and MXU weight-slot state in the Python model
 - initial XLU transpose functional/performance modeling for `transpose.xlu`
@@ -123,8 +150,7 @@ What exists now:
   - generated scalar directed vectors no longer place control-flow ops in delay slots
   - trace tests now explicitly cover illegal control flow in both the first and second
     delay-slot positions, including the case where the older branch is not taken
-  - the software CI target `uv run pytest --ignore=tests/cocotb` now passes at
-    `381` tests
+  - the software + cocotb regression target `uv run pytest` now passes at `394` tests
 - user-facing READMEs now describe the real current software surfaces rather than the
   original scaffold-only state:
   - current example entry points
@@ -802,3 +828,25 @@ Open follow-up for the next FPGA step:
     delay slots is now squashed before it can execute
   - reran the full software model regression on March 18, 2026:
     `uv run pytest tests/test_*.py -q` -> `382 passed`
+- realigned the cycle-accurate functional/perf model to the updated non-blocking issue
+  contract from the architecture/microarchitecture spec:
+  - decode/issue now stalls only for decode-resident frontend fences:
+    `dma.wait.chN` and scalar `delay N`
+  - all other instructions may issue in order even when their target unit is busy;
+    per-unit work is queued and execute start is scheduled independently from issue
+  - execute start now enforces operand availability and source-preservation hazards with
+    cycle scoreboards instead of reintroducing issue-stage stalls:
+    - RAW timing over `x`, `e`, `m`, weight-slot, accumulator, and VMEM-visible state
+    - read-after-issue holds so younger writers cannot overwrite a source before an older
+      issued instruction has actually consumed it
+  - tensor transfer and VPU / XLU overlap are now modeled with latency greater than
+    initiation interval where the spec calls for pipelineable behavior:
+    - simple VPU elementwise ops are pipelineable
+    - blocking VMEM-facing tensor transfers launch every cycle but retire later
+    - blocking `vload` / `vstore` now snapshot address/payload at execute start so loop
+      address updates do not corrupt in-flight transfers
+  - checked-in tensor example and Gemma assembly templates were refreshed to use explicit
+    `delay` scheduling under the new issue model, and the corresponding symbol sidecars
+    plus software perf baselines were updated
+  - refreshed software regression on March 19, 2026:
+    `uv run pytest tests/test_*.py -q` -> `389 passed`
