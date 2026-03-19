@@ -38,6 +38,7 @@ from penguin_model import (
     UType,
     VMEM_BASE,
     VMEM_SIZE,
+    WeightMemType,
     addi,
     beq,
     bge,
@@ -904,7 +905,17 @@ def test_dump_json_trace_emits_region_aware_trace(tmp_path: Path) -> None:
     assert any(
         event.get("cat") == "memory"
         and event["args"]["region"] == "vmem"
-        and event["name"] == "load"
+        and event["args"]["access_type"] == "load"
+        and str(event["name"]).startswith("load ")
+        and "0x" in str(event["name"])
+        for event in events
+    )
+    assert any(
+        event.get("cat") == "memory"
+        and event["args"]["region"] == "vmem"
+        and event["args"]["access_type"] == "store"
+        and str(event["name"]).startswith("store ")
+        and "0x" in str(event["name"])
         for event in events
     )
     pc_events = [
@@ -969,3 +980,71 @@ def test_trace_wait_blocks_following_tensor_memory_op_until_later_dma_wait_retir
         event.get("cat") == "execute" and "dma.wait.ch0" in event["name"] for event in events
     )
     assert wait0_dispatch["ts"] + wait0_dispatch["dur"] <= vload_execute["ts"]
+
+
+def test_dump_json_trace_tags_vector_vmem_accesses_with_address_and_size() -> None:
+    state = _fresh_state()
+    payload = torch.arange(0, MREG_BYTES, dtype=torch.uint8)
+    state.vmem.write(VMEM_BASE + 0x000, payload)
+    core = Sim(state=state, config=state.config)
+    trace_path = trace_output_path("python_model_trace_vector_vmem_tags.json")
+
+    core.dump_json_trace(
+        [
+            Instruction("addi", IType(rd=1, rs1=0, imm=VMEM_BASE + 0x000)),
+            Instruction("addi", IType(rd=2, rs1=0, imm=VMEM_BASE + MREG_BYTES)),
+            Instruction("vload", TensorMemType(mreg=0, rs1=1, imm=0)),
+            Instruction("vstore", TensorMemType(mreg=0, rs1=2, imm=0)),
+        ],
+        trace_path,
+    )
+
+    events = json.loads(trace_path.read_text())
+    vload_event = next(
+        event
+        for event in events
+        if event.get("cat") == "memory" and event["args"]["access_type"] == "vload"
+    )
+    vstore_event = next(
+        event
+        for event in events
+        if event.get("cat") == "memory" and event["args"]["access_type"] == "vstore"
+    )
+
+    assert vload_event["name"] == f"vload 0x{VMEM_BASE:X} {MREG_BYTES}B"
+    assert vload_event["args"]["address"] == VMEM_BASE
+    assert vload_event["args"]["size"] == MREG_BYTES
+    assert vstore_event["name"] == f"vstore 0x{VMEM_BASE + MREG_BYTES:X} {MREG_BYTES}B"
+    assert vstore_event["args"]["address"] == VMEM_BASE + MREG_BYTES
+    assert vstore_event["args"]["size"] == MREG_BYTES
+
+
+def test_dump_json_trace_tags_mxu_weight_vmem_accesses_with_address_and_size() -> None:
+    state = _fresh_state()
+    payload = torch.arange(0, state.config.weight_slot_bytes, dtype=torch.uint8)
+    state.vmem.write(VMEM_BASE + 0x400, payload)
+    core = Sim(state=state, config=state.config)
+    trace_path = trace_output_path("python_model_trace_weight_vmem_tags.json")
+
+    core.dump_json_trace(
+        [
+            Instruction("addi", IType(rd=1, rs1=0, imm=VMEM_BASE + 0x400)),
+            Instruction("vload.weight.mxu0", WeightMemType(slot=0, rs1=1)),
+        ],
+        trace_path,
+    )
+
+    events = json.loads(trace_path.read_text())
+    weight_load_event = next(
+        event
+        for event in events
+        if event.get("cat") == "memory" and event["args"]["access_type"] == "vload.weight.mxu0"
+    )
+
+    assert (
+        weight_load_event["name"]
+        == f"vload.weight.mxu0 0x{VMEM_BASE + 0x400:X} {state.config.weight_slot_bytes}B"
+    )
+    assert weight_load_event["args"]["region"] == "vmem"
+    assert weight_load_event["args"]["address"] == VMEM_BASE + 0x400
+    assert weight_load_event["args"]["size"] == state.config.weight_slot_bytes

@@ -319,7 +319,7 @@ class TraceLogger:
         cycle: int | None = None,
     ) -> None:
         event_name = access_type
-        if access_type in {"dma-read", "dma-write"}:
+        if region == "vmem" or access_type in {"dma-read", "dma-write"}:
             event_name = f"{access_type} 0x{address:X} {size}B"
         self._write_event(
             {
