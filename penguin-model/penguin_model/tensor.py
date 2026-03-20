@@ -87,15 +87,11 @@ def make_weight_slot_file_for_config(config: PenguinCoreConfig) -> torch.Tensor:
 def make_accum_buffer_file_for_config(config: PenguinCoreConfig) -> torch.Tensor:
     """Allocate MXU accumulation buffers for a specific core configuration."""
 
-    shape = (
-        config.tensor.mxu_count,
-        config.tensor.accum_slots_per_mxu,
-        config.accum_buffer_bytes,
-    )
+    shape = (config.tensor.mxu_count, config.accum_buffer_bytes)
     if not config.initialization.randomize_accum_buffers:
         return torch.zeros(shape, dtype=torch.uint8)
     return _random_u8_tensor(
-        config.tensor.mxu_count * config.tensor.accum_slots_per_mxu * config.accum_buffer_bytes,
+        config.tensor.mxu_count * config.accum_buffer_bytes,
         seed=_mix_seed(config.initialization.seed, 0x4143_4355),
     ).reshape(shape)
 
@@ -307,6 +303,7 @@ def compute_accum_matmul(
     activation_raw: torch.Tensor,
     weight_raw: torch.Tensor,
     accum_raw: torch.Tensor | None = None,
+    scale_raw: int = 0,
     *,
     config: PenguinCoreConfig = DEFAULT_PENGUIN_CORE_CONFIG,
 ) -> torch.Tensor:
@@ -314,7 +311,7 @@ def compute_accum_matmul(
 
     activation = fp8_tile_from_bytes(activation_raw, config=config)
     weight = weight_tile_from_bytes(weight_raw, config=config)
-    product = activation @ weight
+    product = (activation @ weight) * decode_scale_fp8_e8m0(scale_raw)
     if accum_raw is None:
         acc = torch.zeros(
             (config.matmul_result_rows, config.matmul_result_cols),

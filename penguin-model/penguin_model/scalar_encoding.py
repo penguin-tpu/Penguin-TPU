@@ -78,8 +78,10 @@ _MNEMONIC_ALIASES = {
     "reduce.sum.xlu": "vreduce.sum.xlu",
     "vmatpush.mxu0": "vmatpush.weight.mxu0",
     "vmatpush.mxu1": "vmatpush.weight.mxu1",
-    "vmatpush.bf16.acc.mxu0": "vmatpush.acc.bf16.mxu0",
-    "vmatpush.bf16.acc.mxu1": "vmatpush.acc.bf16.mxu1",
+    "vmatpush.fp8.weight.mxu0": "vmatpush.weight.mxu0",
+    "vmatpush.fp8.weight.mxu1": "vmatpush.weight.mxu1",
+    "vmatpush.acc.bf16.mxu0": "vmatpush.bf16.acc.mxu0",
+    "vmatpush.acc.bf16.mxu1": "vmatpush.bf16.acc.mxu1",
 }
 
 LOAD_FUNCT3 = {
@@ -214,6 +216,19 @@ def _encode_vi_type(opcode: int, funct3: int, vd: int, imm16: int) -> int:
         ((imm16 & 0xFFFF) << 16)
         | ((funct3 & 0x7) << 13)
         | ((vd & 0x3F) << 7)
+        | (opcode & 0x7F)
+    )
+
+
+def _encode_vm_type(opcode: int, funct7: int, vs1: int, wsel: int) -> int:
+    if vs1 < 0 or vs1 > 0x3F:
+        raise ValueError(f"vs1={vs1} does not fit 6-bit tensor field")
+    if wsel < 0 or wsel > 0x1:
+        raise ValueError(f"wsel={wsel} does not fit 1-bit weight selector")
+    return (
+        ((funct7 & 0x7F) << 25)
+        | ((vs1 & 0x3F) << 13)
+        | ((wsel & 0x1) << 7)
         | (opcode & 0x7F)
     )
 
@@ -377,6 +392,42 @@ def encode_scalar_instruction(instruction: Instruction) -> int:
             "vreduce.sum.xlu": 0b0000010,
         }[mnemonic]
         return _mask_u32(_encode_vr_type(OPCODE_XLU, funct7, params.md, params.ms, 0))
+
+    if mnemonic in {"vmatpush.weight.mxu0", "vmatpush.weight.mxu1"}:
+        if not isinstance(params, WeightTensorType):
+            raise TypeError(f"{mnemonic} expects WeightTensorType operands")
+        funct7 = 0b0000000 if mnemonic.endswith("mxu0") else 0b0000001
+        return _mask_u32(_encode_vr_type(OPCODE_MXU, funct7, params.slot, params.ms, 0))
+
+    if mnemonic in {"vmatpush.bf16.acc.mxu0", "vmatpush.bf16.acc.mxu1"}:
+        if not isinstance(params, MXUAccumulatorType):
+            raise TypeError(f"{mnemonic} expects MXUAccumulatorType operands")
+        funct7 = 0b0000100 if mnemonic.endswith("mxu0") else 0b0000101
+        return _mask_u32(_encode_vr_type(OPCODE_MXU, funct7, 0, params.mreg, 0))
+
+    if mnemonic in {"vmatpop.fp8.acc.mxu0", "vmatpop.fp8.acc.mxu1"}:
+        if not isinstance(params, MXUAccumulatorType):
+            raise TypeError(f"{mnemonic} expects MXUAccumulatorType operands")
+        funct7 = 0b0000110 if mnemonic.endswith("mxu0") else 0b0000111
+        return _mask_u32(_encode_vr_type(OPCODE_MXU, funct7, params.mreg, 0, 0))
+
+    if mnemonic in {"vmatpop.bf16.acc.mxu0", "vmatpop.bf16.acc.mxu1"}:
+        if not isinstance(params, MXUAccumulatorType):
+            raise TypeError(f"{mnemonic} expects MXUAccumulatorType operands")
+        funct7 = 0b0001000 if mnemonic.endswith("mxu0") else 0b0001001
+        return _mask_u32(_encode_vr_type(OPCODE_MXU, funct7, params.mreg, 0, 0))
+
+    if mnemonic in {"vmatmul.mxu0", "vmatmul.mxu1"}:
+        if not isinstance(params, MXUMatmulType):
+            raise TypeError(f"{mnemonic} expects MXUMatmulType operands")
+        funct7 = 0b0001010 if mnemonic.endswith("mxu0") else 0b0001011
+        return _mask_u32(_encode_vm_type(OPCODE_MXU, funct7, params.ms, params.ws))
+
+    if mnemonic in {"vmatmul.acc.mxu0", "vmatmul.acc.mxu1"}:
+        if not isinstance(params, MXUMatmulAccType):
+            raise TypeError(f"{mnemonic} expects MXUMatmulAccType operands")
+        funct7 = 0b0001100 if mnemonic.endswith("mxu0") else 0b0001101
+        return _mask_u32(_encode_vm_type(OPCODE_MXU, funct7, params.ms, params.ws))
 
     if mnemonic == "fence":
         if not isinstance(params, EmptyType):

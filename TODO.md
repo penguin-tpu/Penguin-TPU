@@ -74,3 +74,12 @@ repo-level TODO tracking. Keep historical context and completed-change notes in
   - decide whether the first real hardware VPU register view is BF16-only or shared with
     FP8-oriented tensor paths
   - add additional VPU ops only after the `vadd` path and encoding are stabilized
+
+## Spec Clarifications
+
+- Resolve the current MXU `VM`-format documentation mismatch:
+  - `architecture-spec.md` / `microarchitecture-spec.md` currently model `vmatmul.*`
+    with only `vs1` plus `wsel`, with all other `VM` bits reserved zero
+  - `greencard.md` currently shows an `e_sel` field and scaled-matmul semantics
+  - the Python functional/perf model currently follows the architecture and
+    microarchitecture specs and treats `e0` as hardwired unity only

@@ -52,10 +52,8 @@ from penguin_model.testbench import TEST_CORE_CONFIG, VMEM_BASE
 REQUIRED_MXU_MNEMONICS = {
     "vmatpush.weight.mxu0",
     "vmatpush.weight.mxu1",
-    "vmatpush.acc.fp8.mxu0",
-    "vmatpush.acc.fp8.mxu1",
-    "vmatpush.acc.bf16.mxu0",
-    "vmatpush.acc.bf16.mxu1",
+    "vmatpush.bf16.acc.mxu0",
+    "vmatpush.bf16.acc.mxu1",
     "vmatpop.bf16.acc.mxu0",
     "vmatpop.bf16.acc.mxu1",
     "vmatpop.fp8.acc.mxu0",
@@ -100,8 +98,8 @@ def _store_weight(state: ArchState, mxu: int, slot: int, tile: torch.Tensor) -> 
     state.store_weight_slot(mxu, slot, weight_tile_to_bytes(tile, config=state.config))
 
 
-def _store_accum_tile(state: ArchState, mxu: int, tile: torch.Tensor, *, acc: int = 0) -> None:
-    state.store_accum_buffer(mxu, accum_tile_to_bytes(tile, config=state.config), acc=acc)
+def _store_accum_tile(state: ArchState, mxu: int, tile: torch.Tensor) -> None:
+    state.store_accum_buffer(mxu, accum_tile_to_bytes(tile, config=state.config))
 
 
 def _store_partial_pair(state: ArchState, index: int, tile: torch.Tensor) -> None:
@@ -137,7 +135,7 @@ def test_mxu_instruction_family_registers_with_expected_latency_classes() -> Non
     assert INSTRUCTION_LATENCY["vload"] == VLOAD_LATENCY_CYCLES
     assert INSTRUCTION_LATENCY["vstore"] == VSTORE_LATENCY_CYCLES
     assert INSTRUCTION_LATENCY["vmatpush.weight.mxu0"] == VMATPUSH_WEIGHT_LATENCY_CYCLES
-    assert INSTRUCTION_LATENCY["vmatpush.acc.bf16.mxu0"] == VMATPUSH_ACC_LATENCY_CYCLES
+    assert INSTRUCTION_LATENCY["vmatpush.bf16.acc.mxu0"] == VMATPUSH_ACC_LATENCY_CYCLES
     assert INSTRUCTION_LATENCY["vmatpop.bf16.acc.mxu0"] == VMATPOP_ACC_BF16_LATENCY_CYCLES
     assert INSTRUCTION_LATENCY["vmatpop.fp8.acc.mxu0"] == VMATPOP_ACC_FP8_LATENCY_CYCLES
     assert INSTRUCTION_LATENCY["vmatmul.mxu0"] == MATMUL_LATENCY_CYCLES
@@ -151,15 +149,18 @@ def test_scale_register_instructions_write_expected_raw_payloads() -> None:
 
     perf = core.execute(
         [
+            Instruction("seli", ScaleImmType(ed=0, imm=0x7F)),
             Instruction("seli", ScaleImmType(ed=1, imm=0x05)),
+            Instruction("seld", ScaleMemType(ed=0, rs1=0, imm=VMEM_BASE + 0x40)),
             Instruction("seld", ScaleMemType(ed=2, rs1=0, imm=VMEM_BASE + 0x40)),
         ]
     )
 
+    assert state.read_ereg(0) == 0
     assert state.read_ereg(1) == 0x05
     assert state.read_ereg(2) == 0xFF
-    assert perf.instructions_by_opcode == {"seli": 1, "seld": 1}
-    assert perf.bytes_read == 1
+    assert perf.instructions_by_opcode == {"seli": 2, "seld": 2}
+    assert perf.bytes_read == 2
     assert perf.bytes_written == 0
 
 
@@ -209,7 +210,7 @@ def test_vmatpush_and_vmatpop_move_weight_and_accumulator_images() -> None:
     perf = core.execute(
         [
             Instruction("vmatpush.weight.mxu0", WeightTensorType(slot=1, ms=1)),
-            Instruction("vmatpush.acc.bf16.mxu0", MXUAccumulatorType(mreg=8)),
+            Instruction("vmatpush.bf16.acc.mxu0", MXUAccumulatorType(mreg=8)),
             Instruction("delay", DelayType(cycles=VMATPUSH_ACC_LATENCY_CYCLES - 1)),
             Instruction("vmatpop.bf16.acc.mxu0", MXUAccumulatorType(mreg=10)),
             Instruction("delay", DelayType(cycles=VMATPOP_ACC_BF16_LATENCY_CYCLES - 1)),
@@ -282,41 +283,11 @@ def test_vmatmul_acc_accumulates_into_existing_local_accumulator() -> None:
     }
 
 
-@torch.no_grad()
-def test_acc1_state_is_independent_from_acc0() -> None:
-    activation = _fp8_tile([[1.0, -2.0], [0.5, 3.0]])
-    weights = _weight_tile([[2.0, 1.0], [-1.5, 0.25]])
-    partial_acc1 = _bf16_result_tile([[7.0, -1.0], [2.5, 4.0]])
-    distinct_acc0 = _bf16_result_tile([[-9.0, 5.0], [1.25, -3.5]])
-    state = _fresh_state()
-    _store_activation(state, 1, activation)
-    _store_weight(state, 0, 0, weights)
-    _store_accum_tile(state, 0, partial_acc1, acc=1)
-    _store_accum_tile(state, 0, distinct_acc0, acc=0)
-    core = Sim(state=state)
-
-    perf = core.execute(
-        [
-            Instruction("vmatmul.acc.mxu0", MXUMatmulAccType(ms=1, ws=0, acc=1)),
-            Instruction("vmatpop.bf16.acc.mxu0", MXUAccumulatorType(mreg=4, acc=1)),
-            Instruction("vmatpop.bf16.acc.mxu0", MXUAccumulatorType(mreg=6, acc=0)),
-        ]
-    )
-
-    expected_acc1 = _reference_matmul(activation, weights, accum=partial_acc1)
-    assert torch.equal(_read_result_pair(state, 4), expected_acc1)
-    assert torch.equal(_read_result_pair(state, 6), distinct_acc0.to(torch.float32))
-    assert perf.instructions_by_opcode == {
-        "vmatmul.acc.mxu0": 1,
-        "vmatpop.bf16.acc.mxu0": 2,
-    }
-
-
 def test_vmatpush_and_vmatpop_reject_illegal_paired_register_base() -> None:
     state = _fresh_state()
     core = Sim(state=state)
 
-    perf = core.execute([Instruction("vmatpush.acc.bf16.mxu0", MXUAccumulatorType(mreg=63))])
+    perf = core.execute([Instruction("vmatpush.bf16.acc.mxu0", MXUAccumulatorType(mreg=63))])
 
     assert state.stop_reason == StopReason.ILLEGAL_INSTRUCTION
     assert perf.instructions == 0

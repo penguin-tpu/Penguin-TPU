@@ -151,7 +151,7 @@ class TensorCoreConfig:
     weight_slots_per_mxu: int = 2
     """The number of architected weight slots per MXU."""
 
-    accum_slots_per_mxu: int = 2
+    accum_slots_per_mxu: int = 1
     """The number of architected accumulation buffers per MXU."""
 
     weight_tile_rows: int = 64

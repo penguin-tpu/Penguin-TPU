@@ -189,10 +189,8 @@ def _instruction_latency_cycles(
         return config.vstore_latency_cycles
     if mnemonic.startswith("vmatpush.weight."):
         return config.vmatpush_weight_latency_cycles
-    if mnemonic.startswith(("vmatpush.acc.bf16.", "vmatpush.bf16.acc.")):
+    if mnemonic.startswith("vmatpush.bf16.acc."):
         return config.vmatpush_acc_latency_cycles
-    if mnemonic.startswith("vmatpush.acc.fp8."):
-        return config.vmatpop_acc_fp8_latency_cycles
     if mnemonic.startswith("vmatpop.bf16.acc."):
         return config.vmatpop_acc_bf16_latency_cycles
     if mnemonic.startswith("vmatpop.fp8.acc."):
@@ -246,21 +244,19 @@ def _read_resources(instruction: Instruction) -> tuple[tuple[str, int], ...]:
     if isinstance(params, WeightTensorType):
         return (("mreg", params.ms),)
     if isinstance(params, MXUAccumulatorType):
-        accum = _accum_resource_index(mnemonic, params.acc)
-        if mnemonic.startswith(("vmatpush.acc.bf16.", "vmatpush.bf16.acc.")):
+        if mnemonic.startswith("vmatpush.bf16.acc."):
             return (("mreg", params.mreg), ("mreg", params.mreg + 1))
-        return (("accum", accum),)
+        return (("accum", _mxu_index(mnemonic)),)
     if isinstance(params, MXUMatmulType):
         return (
             ("mreg", params.ms),
             ("weight", _weight_resource_index(mnemonic, params.ws)),
         )
     if isinstance(params, MXUMatmulAccType):
-        accum = _accum_resource_index(mnemonic, params.acc)
         return (
             ("mreg", params.ms),
             ("weight", _weight_resource_index(mnemonic, params.ws)),
-            ("accum", accum),
+            ("accum", _mxu_index(mnemonic)),
         )
     if isinstance(params, VPUBinaryType):
         return (("mreg", params.ms1), ("mreg", params.ms2))
@@ -290,14 +286,13 @@ def _write_resources(instruction: Instruction) -> tuple[tuple[str, int], ...]:
     if isinstance(params, WeightTensorType):
         return (("weight", _weight_resource_index(mnemonic, params.slot)),)
     if isinstance(params, MXUAccumulatorType):
-        accum = _accum_resource_index(mnemonic, params.acc)
-        if mnemonic.startswith(("vmatpush.acc.bf16.", "vmatpush.bf16.acc.")):
-            return (("accum", accum),)
+        if mnemonic.startswith("vmatpush.bf16.acc."):
+            return (("accum", _mxu_index(mnemonic)),)
         if mnemonic.startswith("vmatpop.bf16.acc."):
             return (("mreg", params.mreg), ("mreg", params.mreg + 1))
         return (("mreg", params.mreg),)
     if isinstance(params, MXUMatmulType | MXUMatmulAccType):
-        return (("accum", _accum_resource_index(mnemonic, params.acc)),)
+        return (("accum", _mxu_index(mnemonic)),)
     if isinstance(params, VPUBinaryType | VPUUnaryType | XLUTransposeType):
         return (("mreg", params.md),)
     raise TypeError(f"Unsupported instruction params for write scheduling: {type(params).__name__}")
@@ -317,11 +312,6 @@ def _mxu_index(mnemonic: str) -> int:
 
 def _weight_resource_index(mnemonic: str, slot: int) -> int:
     return _mxu_index(mnemonic) * 100 + slot
-
-
-def _accum_resource_index(mnemonic: str, acc: int) -> int:
-    return _mxu_index(mnemonic) * 100 + acc
-
 
 def _format_instruction(
     instruction: Instruction,
@@ -363,11 +353,9 @@ def _format_instruction(
     if isinstance(params, WeightTensorType):
         return f"{mnemonic} w{params.slot}, m{params.ms}"
     if isinstance(params, MXUAccumulatorType):
-        if mnemonic.startswith("vmatpop."):
-            return f"{mnemonic} m{params.mreg}, a{params.acc}"
-        return f"{mnemonic} a{params.acc}, m{params.mreg}"
+        return f"{mnemonic} m{params.mreg}"
     if isinstance(params, MXUMatmulType | MXUMatmulAccType):
-        return f"{mnemonic} a{params.acc}, m{params.ms}, w{params.ws}"
+        return f"{mnemonic} m{params.ms}, w{params.ws}"
     if isinstance(params, VPUBinaryType):
         return f"{mnemonic} m{params.md}, m{params.ms1}, m{params.ms2}"
     if isinstance(params, VPUUnaryType):

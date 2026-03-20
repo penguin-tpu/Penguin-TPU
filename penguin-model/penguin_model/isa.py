@@ -420,43 +420,23 @@ def vmatpush_weight_mxu1(state: ArchState, params: WeightTensorType) -> None:
 
 
 @instruction(
-    mnemonic="vmatpush.acc.fp8.mxu0",
-    params_type=MXUAccumulatorType,
-    latency=VMATPOP_ACC_FP8_LATENCY_CYCLES,
-    registry=TENSOR_INSTRUCTION_SPECS,
-)
-def vmatpush_acc_fp8_mxu0(state: ArchState, params: MXUAccumulatorType) -> None:
-    state.push_accum_fp8_from_mreg(0, params.acc, params.mreg)
-
-
-@instruction(
-    mnemonic="vmatpush.acc.fp8.mxu1",
-    params_type=MXUAccumulatorType,
-    latency=VMATPOP_ACC_FP8_LATENCY_CYCLES,
-    registry=TENSOR_INSTRUCTION_SPECS,
-)
-def vmatpush_acc_fp8_mxu1(state: ArchState, params: MXUAccumulatorType) -> None:
-    state.push_accum_fp8_from_mreg(1, params.acc, params.mreg)
-
-
-@instruction(
-    mnemonic="vmatpush.acc.bf16.mxu0",
+    mnemonic="vmatpush.bf16.acc.mxu0",
     params_type=MXUAccumulatorType,
     latency=VMATPUSH_ACC_LATENCY_CYCLES,
     registry=TENSOR_INSTRUCTION_SPECS,
 )
 def vmatpush_acc_bf16_mxu0(state: ArchState, params: MXUAccumulatorType) -> None:
-    state.push_accum_from_mregs(0, params.acc, params.mreg)
+    state.push_accum_from_mregs(0, params.mreg)
 
 
 @instruction(
-    mnemonic="vmatpush.acc.bf16.mxu1",
+    mnemonic="vmatpush.bf16.acc.mxu1",
     params_type=MXUAccumulatorType,
     latency=VMATPUSH_ACC_LATENCY_CYCLES,
     registry=TENSOR_INSTRUCTION_SPECS,
 )
 def vmatpush_acc_bf16_mxu1(state: ArchState, params: MXUAccumulatorType) -> None:
-    state.push_accum_from_mregs(1, params.acc, params.mreg)
+    state.push_accum_from_mregs(1, params.mreg)
 
 
 @instruction(
@@ -466,7 +446,7 @@ def vmatpush_acc_bf16_mxu1(state: ArchState, params: MXUAccumulatorType) -> None
     registry=TENSOR_INSTRUCTION_SPECS,
 )
 def vmatpop_bf16_acc_mxu0(state: ArchState, params: MXUAccumulatorType) -> None:
-    state.pop_accum_to_mregs(0, params.acc, params.mreg)
+    state.pop_accum_to_mregs(0, params.mreg)
 
 
 @instruction(
@@ -476,7 +456,7 @@ def vmatpop_bf16_acc_mxu0(state: ArchState, params: MXUAccumulatorType) -> None:
     registry=TENSOR_INSTRUCTION_SPECS,
 )
 def vmatpop_bf16_acc_mxu1(state: ArchState, params: MXUAccumulatorType) -> None:
-    state.pop_accum_to_mregs(1, params.acc, params.mreg)
+    state.pop_accum_to_mregs(1, params.mreg)
 
 
 @instruction(
@@ -486,7 +466,7 @@ def vmatpop_bf16_acc_mxu1(state: ArchState, params: MXUAccumulatorType) -> None:
     registry=TENSOR_INSTRUCTION_SPECS,
 )
 def vmatpop_fp8_acc_mxu0(state: ArchState, params: MXUAccumulatorType) -> None:
-    state.pop_accum_to_fp8_mreg(0, params.acc, params.mreg)
+    state.pop_accum_to_fp8_mreg(0, params.mreg)
 
 
 @instruction(
@@ -496,7 +476,7 @@ def vmatpop_fp8_acc_mxu0(state: ArchState, params: MXUAccumulatorType) -> None:
     registry=TENSOR_INSTRUCTION_SPECS,
 )
 def vmatpop_fp8_acc_mxu1(state: ArchState, params: MXUAccumulatorType) -> None:
-    state.pop_accum_to_fp8_mreg(1, params.acc, params.mreg)
+    state.pop_accum_to_fp8_mreg(1, params.mreg)
 
 
 def _apply_vpu_simple_latency(state: ArchState) -> None:
@@ -559,9 +539,9 @@ def vmatmul_mxu0(state: ArchState, params: MXUMatmulType) -> None:
         compute_accum_matmul(
             state.load_mreg(params.ms),
             state.load_weight_slot(0, params.ws),
+            scale_raw=state.read_ereg(0),
             config=state.config,
         ),
-        acc=params.acc,
     )
 
 
@@ -580,9 +560,9 @@ def vmatmul_mxu1(state: ArchState, params: MXUMatmulType) -> None:
         compute_accum_matmul(
             state.load_mreg(params.ms),
             state.load_weight_slot(1, params.ws),
+            scale_raw=state.read_ereg(0),
             config=state.config,
         ),
-        acc=params.acc,
     )
 
 
@@ -601,10 +581,10 @@ def vmatmul_acc_mxu0(state: ArchState, params: MXUMatmulAccType) -> None:
         compute_accum_matmul(
             state.load_mreg(params.ms),
             state.load_weight_slot(0, params.ws),
-            state.load_accum_buffer(0, acc=params.acc),
+            state.load_accum_buffer(0),
+            scale_raw=state.read_ereg(0),
             config=state.config,
         ),
-        acc=params.acc,
     )
 
 
@@ -623,10 +603,10 @@ def vmatmul_acc_mxu1(state: ArchState, params: MXUMatmulAccType) -> None:
         compute_accum_matmul(
             state.load_mreg(params.ms),
             state.load_weight_slot(1, params.ws),
-            state.load_accum_buffer(1, acc=params.acc),
+            state.load_accum_buffer(1),
+            scale_raw=state.read_ereg(0),
             config=state.config,
         ),
-        acc=params.acc,
     )
 
 
@@ -1032,8 +1012,10 @@ for alias, target in {
     "reduce.sum.xlu": "vreduce.sum.xlu",
     "vmatpush.mxu0": "vmatpush.weight.mxu0",
     "vmatpush.mxu1": "vmatpush.weight.mxu1",
-    "vmatpush.bf16.acc.mxu0": "vmatpush.acc.bf16.mxu0",
-    "vmatpush.bf16.acc.mxu1": "vmatpush.acc.bf16.mxu1",
+    "vmatpush.fp8.weight.mxu0": "vmatpush.weight.mxu0",
+    "vmatpush.fp8.weight.mxu1": "vmatpush.weight.mxu1",
+    "vmatpush.acc.bf16.mxu0": "vmatpush.bf16.acc.mxu0",
+    "vmatpush.acc.bf16.mxu1": "vmatpush.bf16.acc.mxu1",
 }.items():
     _register_instruction_alias(alias, target)
 
@@ -1092,8 +1074,6 @@ __all__ = [
     "vmatpop_fp8_acc_mxu1",
     "vmatpush_acc_bf16_mxu0",
     "vmatpush_acc_bf16_mxu1",
-    "vmatpush_acc_fp8_mxu0",
-    "vmatpush_acc_fp8_mxu1",
     "vmatpush_weight_mxu0",
     "vmatpush_weight_mxu1",
     "vmax_bf16",

@@ -17,6 +17,9 @@ What exists now:
 - the scalar architectural baseline in the spec is now full `RV32I` plus a Penguin
   `delay N` frontend-stall instruction, with the existing word-indexed `pc` and
   two-delay-slot control-flow differences retained
+- the detailed MXU opcode documentation now treats each MXU as having one local
+  accumulator and uses a dedicated `VM` launch encoding for `vmatmul.*` that carries
+  only `m<src>` plus `w<src>`
 - a directed scalar-program testbench for the functional/perf model, including
   label-resolved self-checking programs inspired by `riscv-tests` `rv32ui`
 - a GitHub Actions CI workflow that installs the `uv` workspace and runs
@@ -55,10 +58,11 @@ What exists now:
 - current normative tensor parameters are now:
   - one main `m` register file with `64` registers of `64 x 64` FP8 or `64 x 32` BF16
     whole-register interpretation
-  - `32` `e` registers carrying whole-tensor `FP8_E8M0` scales
+  - `32` `e` registers carrying whole-tensor `FP8_E8M0` scales, with `e0` hardwired to
+    unity scale
   - square `64 x 64` FP8 MXUs with local `64 x 64` BF16 accumulation buffers
-  - MXU weight preload via either `vmatpush.mxu*` from tensor registers or
-    `vload.weight.mxu*` from `VMEM`
+  - MXU weight preload via `vmatpush.weight.mxu*` from tensor registers after an
+    explicit `vload` into the tensor register file
   - BF16 accumulator preload/spill via `vmatpush.bf16.acc.*` / `vmatpop.bf16.acc.*`
     using even-numbered tensor-register pairs
   - untyped `vmatmul.*` / `vmatmul.acc.*` launch into the BF16 accumulator
@@ -79,7 +83,7 @@ What exists now:
     exactly instead of re-scheduling away explicit `delay` instructions
 - the direct `VMEM -> MXU weight-slot` architectural path has been removed from the
   model baseline:
-  - `vload.weight.*` no longer exists as a modeled instruction
+  - the old direct weight-load instruction no longer exists in the modeled ISA
   - all weight staging is now explicit `VMEM -> MREG -> MXU` via `vload` followed by
     `vmatpush.weight.*`
   - tensor/Gemma example programs and their sidecar sizes/perf baselines were updated to
@@ -830,8 +834,7 @@ Open follow-up for the next FPGA step:
     `matmul.acc.*` path
   - architectural tensor state now includes one local BF16 accumulation buffer per MXU,
     with software-visible movement forms:
-    - `vmatpush.mxu*`
-    - `vload.weight.mxu*`
+    - `vmatpush.weight.mxu*`
     - `vmatpush.bf16.acc.mxu*`
     - `vmatpop.bf16.acc.mxu*`
     - `vmatpop.fp8.acc.mxu*`
@@ -891,3 +894,26 @@ Open follow-up for the next FPGA step:
     and `greencard.md` so the selector encoding and reserved-zero rules match the model
   - refreshed full software regression on March 19, 2026:
     `uv run pytest -q` -> `403 passed`
+- realigned the functional/perf model to the next MXU / scale-register spec revision:
+  - architecturally visible MXU accumulation is back to one local `BF16` buffer per MXU:
+    `mxu0.acc` and `mxu1.acc`
+  - the old dual-accumulator `acc0` / `acc1` selector path has been removed from:
+    - parsed instruction operands
+    - architectural state helpers
+    - cycle scoreboards
+    - compiler scheduling resources
+    - checked-in tensor example syntax
+  - `vmatpush.acc.fp8.*` has been removed from the modeled ISA
+  - canonical BF16 accumulator preload now uses `vmatpush.bf16.acc.*`
+  - `vmatmul.*` and `vmatmul.acc.*` now target the unique MXU-local accumulator and the
+    checked-in assembly syntax is back to `vmatmul.mxu0 mX, wY`
+  - scale register `e0` is now hardwired to the unity `FP8_E8M0` payload in the model:
+    - reads of `e0` always return `0`
+    - `seli e0, imm` and `seld e0, imm(rs1)` are architecturally ignored
+    - randomized power-on state no longer perturbs `e0`
+  - the current model intentionally follows `architecture-spec.md` and
+    `microarchitecture-spec.md` for MXU matmul operands and therefore treats the `VM`
+    subformat reserved bits as zero; the newer `greencard.md` `e_sel` field spelling is
+    tracked as an unresolved documentation mismatch rather than a modeled behavior
+  - refreshed software regression on March 20, 2026:
+    `uv run pytest -q` -> `402 passed`

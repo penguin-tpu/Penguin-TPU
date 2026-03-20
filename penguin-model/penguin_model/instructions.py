@@ -124,28 +124,25 @@ class WeightTensorType:
 
 @dataclass(frozen=True, slots=True)
 class MXUAccumulatorType:
-    """Accumulator selector plus tensor-register operand for MXU accumulator forms."""
+    """Tensor-register operand for MXU accumulator movement forms."""
 
     mreg: int
-    acc: int = 0
 
 
 @dataclass(frozen=True, slots=True)
 class MXUMatmulType:
-    """MXU launch form: accumulator selector, activation tensor, and weight-slot selector."""
+    """MXU launch form: activation tensor and weight-slot selector."""
 
     ms: int
     ws: int
-    acc: int = 0
 
 
 @dataclass(frozen=True, slots=True)
 class MXUMatmulAccType:
-    """Accumulating MXU launch form over one selected local accumulation buffer."""
+    """Accumulating MXU launch form over the unique local accumulation buffer."""
 
     ms: int
     ws: int
-    acc: int = 0
 
 
 @dataclass(frozen=True, slots=True)

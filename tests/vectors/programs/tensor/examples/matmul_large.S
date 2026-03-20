@@ -66,7 +66,7 @@ n_loop:
     delay 63
     vmatpush.weight.mxu0 w0, m8
     delay 63
-    vmatmul.mxu0 a0, m1, w0
+    vmatmul.mxu0 m1, w0
     addi x10, x10, 4096
     addi x11, x11, 8192
     addi x9, x9, -1
@@ -84,7 +84,7 @@ k_loop:
     delay 63
     vmatpush.weight.mxu0 w0, m8
     delay 63
-    vmatmul.acc.mxu0 a0, m1, w0
+    vmatmul.acc.mxu0 m1, w0
     addi x10, x10, 4096
     addi x11, x11, 8192
     addi x9, x9, -1
@@ -93,7 +93,7 @@ k_loop:
     addi x0, x0, 0
 k_done:
     delay 57
-    vmatpop.bf16.acc.mxu0 m2, a0
+    vmatpop.bf16.acc.mxu0 m2
     delay 127
     vstore m2, 0(x6)
     vstore m3, 4096(x6)

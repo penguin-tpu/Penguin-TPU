@@ -152,7 +152,9 @@ class ArchState:
             self.config.scale.num_ereg,
             seed=_mix_seed(self.config.initialization.seed, 0x4552_4547),
         )
-        return [int(value) & 0xFF for value in raw.tolist()]
+        ereg = [int(value) & 0xFF for value in raw.tolist()]
+        ereg[0] = 0
+        return ereg
 
     @classmethod
     def from_config(
@@ -221,9 +223,11 @@ class ArchState:
 
     def read_ereg(self, index: int) -> int:
         assert self.ereg is not None
-        return self.ereg[index] & 0xFF
+        return 0 if index == 0 else (self.ereg[index] & 0xFF)
 
     def write_ereg(self, index: int, value: int) -> None:
+        if index == 0:
+            return
         assert self.ereg is not None
         value &= 0xFF
         self.ereg[index] = value
@@ -376,28 +380,17 @@ class ArchState:
             torch.uint8
         )
 
-    def _check_accum_slot(self, acc: int) -> bool:
-        if acc < 0 or acc >= self.config.tensor.accum_slots_per_mxu:
-            self.stop(StopReason.ILLEGAL_INSTRUCTION)
-            return False
-        return True
-
-    def load_accum_buffer(self, mxu: int, acc: int = 0) -> torch.Tensor:
-        if not self._check_accum_slot(acc):
-            assert self.mxu_accum is not None
-            return torch.zeros(self.config.accum_buffer_bytes, dtype=torch.uint8)
+    def load_accum_buffer(self, mxu: int) -> torch.Tensor:
         assert self.mxu_accum is not None
-        return self.mxu_accum[mxu, acc].clone()
+        return self.mxu_accum[mxu].clone()
 
-    def store_accum_buffer(self, mxu: int, raw: torch.Tensor, acc: int = 0) -> None:
-        if not self._check_accum_slot(acc):
-            return
+    def store_accum_buffer(self, mxu: int, raw: torch.Tensor) -> None:
         if raw.numel() != self.config.accum_buffer_bytes:
             raise ValueError(
                 f"accumulator write expects {self.config.accum_buffer_bytes} bytes, got {raw.numel()}"
             )
         assert self.mxu_accum is not None
-        self.mxu_accum[mxu, acc] = raw.reshape(self.config.accum_buffer_bytes).to(torch.uint8)
+        self.mxu_accum[mxu] = raw.reshape(self.config.accum_buffer_bytes).to(torch.uint8)
 
     def check_mreg_pair_base(self, index: int) -> bool:
         if index < 0 or index + self.config.matmul_result_registers > self.config.tensor.num_mreg:
@@ -449,7 +442,7 @@ class ArchState:
         )
         self.store_weight_slot(mxu, slot, payload)
 
-    def push_accum_from_mregs(self, mxu: int, acc: int, base: int) -> None:
+    def push_accum_from_mregs(self, mxu: int, base: int) -> None:
         if not self.check_even_mreg_pair_base(base):
             return
         tile = bf16_tile_pair_from_bytes(
@@ -461,21 +454,13 @@ class ArchState:
             self.config.vmem_transfer_cycles(self.config.accum_buffer_bytes)
             - self.config.vmatpush_acc_latency_cycles
         )
-        self.store_accum_buffer(mxu, accum_tile_to_bytes(tile, config=self.config), acc=acc)
+        self.store_accum_buffer(mxu, accum_tile_to_bytes(tile, config=self.config))
 
-    def push_accum_fp8_from_mreg(self, mxu: int, acc: int, mreg: int) -> None:
-        tile = fp8_tile_from_bytes(self.load_mreg(mreg), config=self.config).to(torch.bfloat16)
-        self.instruction_extra_cycles = (
-            self.config.vmem_transfer_cycles(self.config.mreg_bytes)
-            - self.config.vmatpop_acc_fp8_latency_cycles
-        )
-        self.store_accum_buffer(mxu, accum_tile_to_bytes(tile, config=self.config), acc=acc)
-
-    def pop_accum_to_mregs(self, mxu: int, acc: int, base: int) -> None:
+    def pop_accum_to_mregs(self, mxu: int, base: int) -> None:
         if not self.check_even_mreg_pair_base(base):
             return
         raw_lo, raw_hi = bf16_tile_pair_to_bytes(
-            accum_tile_from_bytes(self.load_accum_buffer(mxu, acc=acc), config=self.config),
+            accum_tile_from_bytes(self.load_accum_buffer(mxu), config=self.config),
             config=self.config,
         )
         self.instruction_extra_cycles = (
@@ -485,14 +470,14 @@ class ArchState:
         self.store_mreg(base, raw_lo)
         self.store_mreg(base + 1, raw_hi)
 
-    def pop_accum_to_fp8_mreg(self, mxu: int, acc: int, mreg: int) -> None:
+    def pop_accum_to_fp8_mreg(self, mxu: int, mreg: int) -> None:
         self.instruction_extra_cycles = (
             self.config.vmem_transfer_cycles(self.config.mreg_bytes)
             - self.config.vmatpop_acc_fp8_latency_cycles
         )
         self.store_mreg(
             mreg,
-            export_accum_to_fp8(self.load_accum_buffer(mxu, acc=acc), config=self.config),
+            export_accum_to_fp8(self.load_accum_buffer(mxu), config=self.config),
         )
 
     def _issue_dma(

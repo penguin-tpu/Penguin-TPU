@@ -84,18 +84,18 @@
     vmatpush.weight.mxu0 w0, m6
     vmatpush.weight.mxu0 w1, m7
     delay 63
-    vmatmul.mxu0 a0, m1, w0
+    vmatmul.mxu0 m1, w0
     delay 63
-    vmatpop.bf16.acc.mxu0 m20, a0
+    vmatpop.bf16.acc.mxu0 m20
     delay 127
     vadd m20, m20, m10
     vadd m21, m21, m11
     delay 0
     vstore m20, 0(x24)
     vstore m21, 4096(x24)
-    vmatmul.mxu0 a0, m1, w1
+    vmatmul.mxu0 m1, w1
     delay 63
-    vmatpop.bf16.acc.mxu0 m22, a0
+    vmatpop.bf16.acc.mxu0 m22
     delay 127
     vadd m22, m22, m12
     vadd m23, m23, m13
@@ -106,18 +106,18 @@
     delay 63
     vload m4, 0(x5)
     delay 63
-    vmatmul.mxu0 a0, m4, w0
+    vmatmul.mxu0 m4, w0
     delay 63
-    vmatpop.bf16.acc.mxu0 m24, a0
+    vmatpop.bf16.acc.mxu0 m24
     delay 127
     vadd m24, m24, m10
     vadd m25, m25, m11
     delay 0
     vstore m24, 0(x26)
     vstore m25, 4096(x26)
-    vmatmul.mxu0 a0, m4, w1
+    vmatmul.mxu0 m4, w1
     delay 63
-    vmatpop.bf16.acc.mxu0 m26, a0
+    vmatpop.bf16.acc.mxu0 m26
     delay 127
     vadd m26, m26, m12
     vadd m27, m27, m13

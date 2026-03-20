@@ -23,8 +23,8 @@ def test_scheduler_inserts_delay_between_tensor_producer_and_consumer() -> None:
         vload m1, 0(x1)
         vload m3, 0(x2)
         vmatpush.weight.mxu0 w0, m3
-        vmatmul.mxu0 a0, m1, w0
-        vmatpop.bf16.acc.mxu0 m2, a0
+        vmatmul.mxu0 m1, w0
+        vmatpop.bf16.acc.mxu0 m2
         """,
         base_address=IMEM_BASE,
     )
@@ -39,9 +39,9 @@ def test_scheduler_inserts_delay_between_tensor_producer_and_consumer() -> None:
         Instruction("delay", DelayType(cycles=63)),
         Instruction("vmatpush.weight.mxu0", WeightTensorType(slot=0, ms=3)),
         Instruction("delay", DelayType(cycles=63)),
-        Instruction("vmatmul.mxu0", MXUMatmulType(ms=1, ws=0, acc=0)),
+        Instruction("vmatmul.mxu0", MXUMatmulType(ms=1, ws=0)),
         Instruction("delay", DelayType(cycles=63)),
-        Instruction("vmatpop.bf16.acc.mxu0", MXUAccumulatorType(mreg=2, acc=0)),
+        Instruction("vmatpop.bf16.acc.mxu0", MXUAccumulatorType(mreg=2)),
     ]
 
 
