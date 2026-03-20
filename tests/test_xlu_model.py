@@ -41,12 +41,12 @@ def _tile(values: list[list[float]]) -> torch.Tensor:
 
 
 def test_xlu_transpose_registers_with_latency_view() -> None:
-    assert "transpose.xlu" in TENSOR_INSTRUCTION_SPECS
-    assert "reduce.max.xlu" in TENSOR_INSTRUCTION_SPECS
-    assert "reduce.sum.xlu" in TENSOR_INSTRUCTION_SPECS
-    assert INSTRUCTION_LATENCY["transpose.xlu"] == XLU_TRANSPOSE_LATENCY_CYCLES
-    assert INSTRUCTION_LATENCY["reduce.max.xlu"] == XLU_TRANSPOSE_LATENCY_CYCLES
-    assert INSTRUCTION_LATENCY["reduce.sum.xlu"] == XLU_TRANSPOSE_LATENCY_CYCLES
+    assert "vtrpose.xlu" in TENSOR_INSTRUCTION_SPECS
+    assert "vreduce.max.xlu" in TENSOR_INSTRUCTION_SPECS
+    assert "vreduce.sum.xlu" in TENSOR_INSTRUCTION_SPECS
+    assert INSTRUCTION_LATENCY["vtrpose.xlu"] == XLU_TRANSPOSE_LATENCY_CYCLES
+    assert INSTRUCTION_LATENCY["vreduce.max.xlu"] == XLU_TRANSPOSE_LATENCY_CYCLES
+    assert INSTRUCTION_LATENCY["vreduce.sum.xlu"] == XLU_TRANSPOSE_LATENCY_CYCLES
 
 
 @torch.no_grad()
@@ -61,14 +61,14 @@ def test_xlu_transpose_matches_pytorch_bf16_transpose() -> None:
     core = _fresh_core()
     core.state.store_mreg(1, bf16_tile_to_bytes(src, config=core.state.config))
 
-    perf = core.execute([Instruction("transpose.xlu", XLUTransposeType(md=2, ms=1))])
+    perf = core.execute([Instruction("vtrpose.xlu", XLUTransposeType(md=2, ms=1))])
 
     actual = bf16_transposed_tile_from_bytes(core.state.load_mreg(2), config=core.state.config)
     expected = src.to(torch.bfloat16).transpose(0, 1).contiguous()
 
     assert torch.equal(actual, expected)
     assert perf.instructions == 1
-    assert perf.instructions_by_opcode == {"transpose.xlu": 1}
+    assert perf.instructions_by_opcode == {"vtrpose.xlu": 1}
     assert perf.cycles == TEST_CORE_CONFIG.xlu.transpose_latency_cycles + 3
 
 
@@ -86,19 +86,21 @@ def test_xlu_row_reductions_match_pytorch_bf16_reference() -> None:
 
     perf = core.execute(
         [
-            Instruction("reduce.max.xlu", XLUTransposeType(md=2, ms=1)),
-            Instruction("reduce.sum.xlu", XLUTransposeType(md=3, ms=1)),
+            Instruction("vreduce.max.xlu", XLUTransposeType(md=2, ms=1)),
+            Instruction("vreduce.sum.xlu", XLUTransposeType(md=3, ms=1)),
         ]
     )
 
     reduced_max = bf16_tile_from_bytes(core.state.load_mreg(2), config=core.state.config).to(torch.float32)
     reduced_sum = bf16_tile_from_bytes(core.state.load_mreg(3), config=core.state.config).to(torch.float32)
-    expected_max = torch.amax(src.to(torch.bfloat16).to(torch.float32), dim=1, keepdim=True).expand_as(src).to(torch.bfloat16).to(torch.float32)
-    expected_sum = torch.sum(src.to(torch.bfloat16).to(torch.float32), dim=1, keepdim=True).expand_as(src).to(torch.bfloat16).to(torch.float32)
+    expected_max = torch.zeros_like(src.to(torch.bfloat16).to(torch.float32))
+    expected_max[:, 0] = torch.amax(src.to(torch.bfloat16).to(torch.float32), dim=1)
+    expected_sum = torch.zeros_like(src.to(torch.bfloat16).to(torch.float32))
+    expected_sum[:, 0] = torch.sum(src.to(torch.bfloat16).to(torch.float32), dim=1)
 
     assert torch.equal(reduced_max, expected_max)
     assert torch.equal(reduced_sum, expected_sum)
-    assert perf.instructions_by_opcode == {"reduce.max.xlu": 1, "reduce.sum.xlu": 1}
+    assert perf.instructions_by_opcode == {"vreduce.max.xlu": 1, "vreduce.sum.xlu": 1}
     assert perf.cycles == TEST_CORE_CONFIG.xlu.transpose_latency_cycles + 4
 
 
@@ -111,7 +113,7 @@ def test_xlu_perf_model_uses_configured_transpose_latency() -> None:
     state.store_mreg(1, bf16_tile_to_bytes(_tile([[1.0, 2.0], [3.0, 4.0]]), config=config))
     core = Sim(state=state, config=config)
 
-    perf = core.execute([Instruction("transpose.xlu", XLUTransposeType(md=2, ms=1))])
+    perf = core.execute([Instruction("vtrpose.xlu", XLUTransposeType(md=2, ms=1))])
 
     assert perf.instructions == 1
     assert perf.cycles == config.xlu.transpose_latency_cycles + 3

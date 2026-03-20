@@ -22,6 +22,7 @@ from .tensor import (
     bf16_tile_pair_from_bytes,
     bf16_tile_pair_to_bytes,
     export_accum_to_fp8,
+    fp8_tile_from_bytes,
     make_tensor_register_file_for_config,
     make_accum_buffer_file_for_config,
     make_weight_slot_file_for_config,
@@ -83,6 +84,7 @@ class ArchState:
     ereg: list[int] | None = None
     xreg: list[int] | None = None
     pc: int = 0
+    dma_base: int = 0
     perf: PerformanceCounters = field(default_factory=PerformanceCounters)
     stop_reason: StopReason | None = None
     next_pc: int | None = None
@@ -108,10 +110,21 @@ class ArchState:
         if self.mxu_accum is None:
             self.mxu_accum = make_accum_buffer_file_for_config(self.config)
         if self.ereg is None:
-            self.ereg = [0] * self.config.scale.num_ereg
+            self.ereg = self._initial_ereg_file()
         elif len(self.ereg) != self.config.scale.num_ereg:
             raise ValueError(
                 f"ereg file expects {self.config.scale.num_ereg} entries, got {len(self.ereg)}"
+            )
+        if self.config.initialization.randomize_dma_base:
+            self.dma_base = int.from_bytes(
+                bytes(
+                    _random_u8_tensor(
+                        4,
+                        seed=_mix_seed(self.config.initialization.seed, 0x444D_4142),
+                    ).tolist()
+                ),
+                byteorder="little",
+                signed=False,
             )
 
     def _initial_xreg_file(self) -> list[int]:
@@ -131,6 +144,15 @@ class ArchState:
         ]
         xreg[0] = 0
         return xreg
+
+    def _initial_ereg_file(self) -> list[int]:
+        if not self.config.initialization.randomize_scale_registers:
+            return [0] * self.config.scale.num_ereg
+        raw = _random_u8_tensor(
+            self.config.scale.num_ereg,
+            seed=_mix_seed(self.config.initialization.seed, 0x4552_4547),
+        )
+        return [int(value) & 0xFF for value in raw.tolist()]
 
     @classmethod
     def from_config(
@@ -213,6 +235,16 @@ class ArchState:
                 cycle=self.trace_end_cycle,
             )
 
+    def write_dma_base(self, value: int) -> None:
+        self.dma_base = value & 0xFFFF_FFFF
+        if self.trace_logger is not None:
+            self.trace_logger.log_arch_value(
+                "dma",
+                0,
+                self.dma_base,
+                cycle=self.trace_end_cycle,
+            )
+
     def stop(self, reason: StopReason) -> None:
         if self.stop_reason is None:
             self.stop_reason = reason
@@ -241,6 +273,9 @@ class ArchState:
 
     def resolve_indirect_address(self, rs1: int, imm: int = 0) -> int:
         return (self.read_xreg(rs1) + imm) & 0xFFFF_FFFF
+
+    def resolve_dma_base_address(self, rs1: int) -> int:
+        return (self.read_xreg(rs1) + self.dma_base) & 0xFFFF_FFFF
 
     def _log_memory_access(
         self,
@@ -359,6 +394,12 @@ class ArchState:
             return False
         return True
 
+    def check_even_mreg_pair_base(self, index: int) -> bool:
+        if index % 2 != 0:
+            self.stop(StopReason.ILLEGAL_INSTRUCTION)
+            return False
+        return self.check_mreg_pair_base(index)
+
     def _check_tensor_alignment(self, address: int) -> bool:
         if address % self.config.tensor.vmem_alignment_bytes != 0:
             self.stop(StopReason.TENSOR_MEMORY_MISALIGNED)
@@ -416,7 +457,7 @@ class ArchState:
         self.store_weight_slot(mxu, slot, payload)
 
     def push_accum_from_mregs(self, mxu: int, base: int) -> None:
-        if not self.check_mreg_pair_base(base):
+        if not self.check_even_mreg_pair_base(base):
             return
         tile = bf16_tile_pair_from_bytes(
             self.load_mreg(base),
@@ -429,8 +470,16 @@ class ArchState:
         )
         self.store_accum_buffer(mxu, accum_tile_to_bytes(tile, config=self.config))
 
+    def push_accum_fp8_from_mreg(self, mxu: int, mreg: int) -> None:
+        tile = fp8_tile_from_bytes(self.load_mreg(mreg), config=self.config).to(torch.bfloat16)
+        self.instruction_extra_cycles = (
+            self.config.vmem_transfer_cycles(self.config.mreg_bytes)
+            - self.config.vmatpop_acc_fp8_latency_cycles
+        )
+        self.store_accum_buffer(mxu, accum_tile_to_bytes(tile, config=self.config))
+
     def pop_accum_to_mregs(self, mxu: int, base: int) -> None:
-        if not self.check_mreg_pair_base(base):
+        if not self.check_even_mreg_pair_base(base):
             return
         raw_lo, raw_hi = bf16_tile_pair_to_bytes(
             accum_tile_from_bytes(self.load_accum_buffer(mxu), config=self.config),

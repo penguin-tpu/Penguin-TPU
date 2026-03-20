@@ -59,8 +59,11 @@ class AssemblyBuilder:
     def jal(self, *, rd: int, target: str) -> None:
         self.lines.append(f"    sjal x{rd}, {target}")
 
-    def dma(self, mnemonic: str, *, dram_rs: int, vmem_rs: int, size_rs: int) -> None:
-        self.lines.append(f"    {mnemonic} x{dram_rs}, x{vmem_rs}, x{size_rs}")
+    def dma(self, mnemonic: str, *, rd: int, rs1: int, rs2: int) -> None:
+        self.lines.append(f"    {mnemonic} x{rd}, x{rs1}, x{rs2}")
+
+    def dma_config(self, mnemonic: str = "dma.config.ch0", *, rs1: int = 0) -> None:
+        self.lines.append(f"    {mnemonic} x{rs1}")
 
     def emit(self) -> str:
         return "\n".join(self.lines).rstrip() + "\n"
@@ -275,7 +278,8 @@ def _dma_stage_and_reduce_program(*, src_addr: int, staged_addr: int, out_addr: 
     builder.li(10, src_addr)
     builder.li(11, staged_addr)
     builder.li(12, count * 4)
-    builder.dma("dma.load.ch0", dram_rs=10, vmem_rs=11, size_rs=12)
+    builder.dma_config()
+    builder.dma("dma.load.ch0", rd=11, rs1=10, rs2=12)
     builder.empty("dma.wait.ch0")
     builder.lines.extend(_reduction_program(src_addr=staged_addr, out_addr=out_addr, count=count).splitlines())
     return builder.emit()
@@ -287,7 +291,8 @@ def _dma_overlap_program() -> str:
     builder.li(2, VMEM_BASE + 0x100)
     builder.li(3, 32)
     builder.li(20, 0)
-    builder.dma("dma.load.ch0", dram_rs=1, vmem_rs=2, size_rs=3)
+    builder.dma_config()
+    builder.dma("dma.load.ch0", rd=2, rs1=1, rs2=3)
     for _ in range(9):
         builder.i("saddi", rd=20, rs1=20, imm=1)
     builder.empty("dma.wait.ch0")
@@ -356,7 +361,8 @@ def _model_dma_load_wait() -> str:
     builder.li(1, DRAM_BASE + 0x100)
     builder.li(2, VMEM_BASE + 0x80)
     builder.li(3, 32)
-    builder.dma("dma.load.ch0", dram_rs=1, vmem_rs=2, size_rs=3)
+    builder.dma_config()
+    builder.dma("dma.load.ch0", rd=2, rs1=1, rs2=3)
     builder.empty("dma.wait.ch0")
     return builder.emit()
 
@@ -366,7 +372,8 @@ def _model_dma_store_wait() -> str:
     builder.li(1, DRAM_BASE + 0x180)
     builder.li(2, VMEM_BASE + 0x40)
     builder.li(3, 32)
-    builder.dma("dma.store.ch2", dram_rs=1, vmem_rs=2, size_rs=3)
+    builder.dma_config()
+    builder.dma("dma.store.ch2", rd=1, rs1=2, rs2=3)
     builder.empty("dma.wait.ch2")
     return builder.emit()
 
@@ -376,7 +383,8 @@ def _model_dma_requires_wait() -> str:
     builder.li(1, DRAM_BASE + 0x100)
     builder.li(2, VMEM_BASE + 0x20)
     builder.li(3, 32)
-    builder.dma("dma.load.ch0", dram_rs=1, vmem_rs=2, size_rs=3)
+    builder.dma_config()
+    builder.dma("dma.load.ch0", rd=2, rs1=1, rs2=3)
     builder.i("slw", rd=4, rs1=2, imm=0)
     builder.empty("dma.wait.ch0")
     builder.i("slw", rd=5, rs1=2, imm=0)
@@ -388,7 +396,8 @@ def _model_salu_progress_while_dma() -> str:
     builder.li(1, DRAM_BASE + 0x100)
     builder.li(2, VMEM_BASE + 0x20)
     builder.li(3, 32)
-    builder.dma("dma.load.ch0", dram_rs=1, vmem_rs=2, size_rs=3)
+    builder.dma_config()
+    builder.dma("dma.load.ch0", rd=2, rs1=1, rs2=3)
     builder.li(6, 1)
     for _ in range(9):
         builder.i("saddi", rd=6, rs1=6, imm=1)
@@ -402,8 +411,9 @@ def _model_dma_channel_busy() -> str:
     builder.li(1, DRAM_BASE + 0x100)
     builder.li(2, VMEM_BASE + 0x20)
     builder.li(3, 32)
-    builder.dma("dma.load.ch1", dram_rs=1, vmem_rs=2, size_rs=3)
-    builder.dma("dma.load.ch1", dram_rs=1, vmem_rs=2, size_rs=3)
+    builder.dma_config()
+    builder.dma("dma.load.ch1", rd=2, rs1=1, rs2=3)
+    builder.dma("dma.load.ch1", rd=2, rs1=1, rs2=3)
     return builder.emit()
 
 
@@ -418,10 +428,11 @@ def _model_dma_channels_independent() -> str:
     builder.li(1, DRAM_BASE + 0x100)
     builder.li(2, VMEM_BASE + 0x40)
     builder.li(3, 32)
-    builder.dma("dma.load.ch0", dram_rs=1, vmem_rs=2, size_rs=3)
+    builder.dma_config()
+    builder.dma("dma.load.ch0", rd=2, rs1=1, rs2=3)
     builder.li(4, DRAM_BASE + 0x120)
     builder.li(5, VMEM_BASE + 0x80)
-    builder.dma("dma.load.ch1", dram_rs=4, vmem_rs=5, size_rs=3)
+    builder.dma("dma.load.ch1", rd=5, rs1=4, rs2=3)
     builder.empty("dma.wait.ch1")
     builder.empty("dma.wait.ch0")
     return builder.emit()
@@ -464,7 +475,8 @@ def _model_reset_dma_inflight() -> str:
     builder.li(1, DRAM_BASE + 0x100)
     builder.li(2, VMEM_BASE + 0x40)
     builder.li(3, 32)
-    builder.dma("dma.load.ch0", dram_rs=1, vmem_rs=2, size_rs=3)
+    builder.dma_config()
+    builder.dma("dma.load.ch0", rd=2, rs1=1, rs2=3)
     return builder.emit()
 
 
@@ -482,7 +494,8 @@ def _model_trace_program() -> str:
     builder.li(1, DRAM_BASE + 0x20)
     builder.li(2, VMEM_BASE + 0x80)
     builder.li(3, 32)
-    builder.dma("dma.load.ch0", dram_rs=1, vmem_rs=2, size_rs=3)
+    builder.dma_config()
+    builder.dma("dma.load.ch0", rd=2, rs1=1, rs2=3)
     builder.empty("dma.wait.ch0")
     builder.i("slw", rd=4, rs1=2, imm=0)
     builder.s("ssw", rs1=0, rs2=4, imm=VMEM_BASE + 0x90)
@@ -494,7 +507,8 @@ def _example_scalar_matmul() -> str:
     builder.li(10, DRAM_BASE + 0x100)
     builder.li(11, VMEM_BASE + 0x40)
     builder.li(12, 32)
-    builder.dma("dma.load.ch0", dram_rs=10, vmem_rs=11, size_rs=12)
+    builder.dma_config()
+    builder.dma("dma.load.ch0", rd=11, rs1=10, rs2=12)
     builder.li(1, VMEM_BASE + 0x40)
     builder.li(2, 4)
     builder.li(3, 0)
@@ -505,6 +519,8 @@ def _example_scalar_matmul() -> str:
     builder.i("saddi", rd=1, rs1=1, imm=4)
     builder.i("saddi", rd=2, rs1=2, imm=-1)
     builder.branch("sbne", rs1=2, rs2=0, target="loop")
+    builder.nop()
+    builder.nop()
     builder.s("ssw", rs1=0, rs2=3, imm=VMEM_BASE + 0x80)
     return builder.emit()
 

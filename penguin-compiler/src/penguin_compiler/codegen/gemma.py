@@ -14,11 +14,11 @@ from ..model_package import (
     TensorArtifact,
     write_tensor_artifact,
 )
-from .schedule import schedule_assembly_text
 from ..pack import pack_gelu_constants, pack_weight_matrix
 from penguin_model import (
     DEFAULT_PENGUIN_CORE_CONFIG,
     PenguinCoreConfig,
+    assemble_text,
     program_symbol_table_path,
 )
 
@@ -333,15 +333,26 @@ def _write_stage_bundle(
 
     stage_dir = output_root / "stages" / stage_name
     symbol_table_name = program_path.with_suffix(".symbols.json5").name
-    scheduled_program_text = schedule_assembly_text(
-        program_path.read_text(),
-        config=config,
-        base_address=base_table.symbols["program"].address,
-        source_name=str(program_path),
+    program_text = program_path.read_text()
+    scheduled_program_size = len(
+        assemble_text(
+            program_text,
+            base_address=base_table.symbols["program"].address,
+            source_name=str(program_path),
+        )
+    ) * 4
+    symbols["program"] = BundleSymbol(
+        name=symbols["program"].name,
+        kind=symbols["program"].kind,
+        region=symbols["program"].region,
+        address=symbols["program"].address,
+        size_bytes=scheduled_program_size,
+        file=symbols["program"].file,
+        description=symbols["program"].description,
     )
     write_executable_bundle(
         stage_dir,
-        program_text=scheduled_program_text,
+        program_text=program_text,
         program_name=program_name,
         symbol_table_name=symbol_table_name,
         manifest=BundleManifest(symbol_table=symbol_table_name),

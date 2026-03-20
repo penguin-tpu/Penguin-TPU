@@ -16,7 +16,7 @@
       kind: "program",
       region: "imem",
       address: 0x00020000,
-      size_bytes: 192,
+      size_bytes: 384,
       file: "gemma_softmax_64x16.S",
     },
   },

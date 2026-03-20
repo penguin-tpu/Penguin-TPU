@@ -32,11 +32,11 @@ from penguin_model.scalar_encoding import encode_scalar_instruction
         (Instruction("lhu", IType(rd=3, rs1=1, imm=8)), 0x0080D183),
         (Instruction("add", RType(rd=5, rs1=6, rs2=7)), 0x007302B3),
         (Instruction("sub", RType(rd=5, rs1=6, rs2=7)), 0x407302B3),
-        (Instruction("vadd", VPUBinaryType(md=2, ms1=0, ms2=1)), 0x0010010B),
+        (Instruction("vadd.bf16", VPUBinaryType(md=2, ms1=0, ms2=1)), 0x00080157),
         (Instruction("beq", BType(rs1=1, rs2=2, imm=4)), 0x00208863),
         (Instruction("jal", JType(rd=1, imm=8)), 0x020000EF),
         (Instruction("fence", EmptyType()), 0x0000000F),
-        (Instruction("delay", DelayType(cycles=10)), 0x00A00073),
+        (Instruction("delay", DelayType(cycles=10)), 0x00A01067),
         (Instruction("ebreak", EmptyType()), 0x00100073),
     ],
 )
@@ -49,9 +49,13 @@ def test_encode_scalar_instruction_rejects_out_of_range_immediate() -> None:
         encode_scalar_instruction(Instruction("addi", IType(rd=1, rs1=0, imm=4096)))
 
 
-def test_encode_scalar_instruction_rejects_preliminary_vpu_registers_above_m31() -> None:
+def test_encode_scalar_instruction_accepts_full_six_bit_tensor_register_indices() -> None:
+    assert encode_scalar_instruction(Instruction("vadd.bf16", VPUBinaryType(md=63, ms1=62, ms2=61)))
+
+
+def test_encode_scalar_instruction_rejects_tensor_register_indices_above_m63() -> None:
     with pytest.raises(ValueError):
-        encode_scalar_instruction(Instruction("vadd", VPUBinaryType(md=32, ms1=0, ms2=1)))
+        encode_scalar_instruction(Instruction("vadd.bf16", VPUBinaryType(md=64, ms1=0, ms2=1)))
 
 
 @pytest.mark.parametrize(

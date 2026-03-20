@@ -99,6 +99,7 @@ EXPECTED_BASE_MNEMONICS = {
 }
 
 EXPECTED_DMA_MNEMONICS = {
+    *(f"dma.config.ch{channel}" for channel in range(DMA_CHANNEL_COUNT)),
     *(f"dma.load.ch{channel}" for channel in range(DMA_CHANNEL_COUNT)),
     *(f"dma.store.ch{channel}" for channel in range(DMA_CHANNEL_COUNT)),
     *(f"dma.wait.ch{channel}" for channel in range(DMA_CHANNEL_COUNT)),
@@ -112,7 +113,9 @@ TEST_IMEM_SIZE = 1 * 1024
 
 
 def _fresh_state() -> ArchState:
-    return ArchState.from_config(TEST_CORE_CONFIG)
+    state = ArchState.from_config(TEST_CORE_CONFIG)
+    state.write_dma_base(0)
+    return state
 
 
 def _store_bytes(memory: Memory, address: int, data: list[int]) -> None:
@@ -446,8 +449,8 @@ def test_dma_load_wait_moves_bytes_from_dram_to_vmem() -> None:
     assert state.vmem.read(VMEM_BASE + 0x80, 32).tolist() == list(range(0x10, 0x30))
     assert state.dram.read(DRAM_BASE + 0x100, 32).tolist() == list(range(0x10, 0x30))
     assert core.state.stop_reason == StopReason.PROGRAM_END
-    assert perf.instructions == 5
-    assert perf.cycles == 26
+    assert perf.instructions == 6
+    assert perf.cycles == 27
     assert perf.bytes_read == 32
     assert perf.bytes_written == 32
 
@@ -461,8 +464,8 @@ def test_dma_store_wait_moves_bytes_from_vmem_to_dram() -> None:
 
     assert state.dram.read(DRAM_BASE + 0x180, 32).tolist() == list(range(1, 33))
     assert core.state.stop_reason == StopReason.PROGRAM_END
-    assert perf.instructions == 5
-    assert perf.cycles == 26
+    assert perf.instructions == 6
+    assert perf.cycles == 27
     assert perf.bytes_read == 32
     assert perf.bytes_written == 32
 
@@ -477,8 +480,8 @@ def test_dma_load_requires_wait_before_vmem_sees_data() -> None:
 
     assert core.state.read_xreg(4) == initial_vmem_word
     assert core.state.read_xreg(5) == 0xDEAD_BEEF
-    assert perf.instructions == 7
-    assert perf.cycles == 28
+    assert perf.instructions == 8
+    assert perf.cycles == 29
     assert perf.bytes_read == 40
     assert perf.bytes_written == 32
 
@@ -492,8 +495,8 @@ def test_salu_progresses_while_dma_is_in_flight() -> None:
 
     assert core.state.read_xreg(6) == 10
     assert core.state.read_xreg(7) == 0xCAFE_BABE
-    assert perf.instructions == 16
-    assert perf.cycles == 28
+    assert perf.instructions == 17
+    assert perf.cycles == 29
 
 
 def test_dma_channel_busy_stops_execution() -> None:
@@ -501,7 +504,7 @@ def test_dma_channel_busy_stops_execution() -> None:
     perf = core.execute(_program("dma_channel_busy"))
 
     assert core.state.stop_reason == StopReason.DMA_CHANNEL_BUSY
-    assert perf.instructions == 4
+    assert perf.instructions == 5
 
 
 def test_dma_wait_without_pending_transfer_is_one_cycle_noop() -> None:
@@ -527,8 +530,8 @@ def test_dma_channels_operate_independently() -> None:
     assert state.vmem.read(VMEM_BASE + 0x40, 32).tolist() == list(range(1, 33))
     assert state.vmem.read(VMEM_BASE + 0x80, 32).tolist() == list(range(33, 65))
     assert core.state.stop_reason == StopReason.PROGRAM_END
-    assert perf.instructions == 9
-    assert perf.cycles == 30
+    assert perf.instructions == 10
+    assert perf.cycles == 31
     assert perf.bytes_read == 64
     assert perf.bytes_written == 64
 
@@ -546,10 +549,10 @@ def test_dma_store_channels_operate_independently() -> None:
             Instruction("addi", IType(rd=1, rs1=0, imm=DRAM_BASE + 0x100)),
             Instruction("addi", IType(rd=2, rs1=0, imm=VMEM_BASE + 0x40)),
             Instruction("addi", IType(rd=3, rs1=0, imm=DMA_ALIGNMENT_BYTES)),
-            Instruction("dma.store.ch0", DMAType(dram_rs=1, vmem_rs=2, size_rs=3)),
+            Instruction("dma.store.ch0", DMAType(rd=1, rs1=2, rs2=3)),
             Instruction("addi", IType(rd=4, rs1=0, imm=DRAM_BASE + 0x120)),
             Instruction("addi", IType(rd=5, rs1=0, imm=VMEM_BASE + 0x80)),
-            Instruction("dma.store.ch1", DMAType(dram_rs=4, vmem_rs=5, size_rs=3)),
+            Instruction("dma.store.ch1", DMAType(rd=4, rs1=5, rs2=3)),
             Instruction("dma.wait.ch1", EmptyType()),
             Instruction("dma.wait.ch0", EmptyType()),
         ]
@@ -575,7 +578,7 @@ def test_dma_store_captures_vmem_payload_at_issue_time() -> None:
             Instruction("addi", IType(rd=1, rs1=0, imm=DRAM_BASE + 0x100)),
             Instruction("addi", IType(rd=2, rs1=0, imm=VMEM_BASE + 0x40)),
             Instruction("addi", IType(rd=3, rs1=0, imm=DMA_ALIGNMENT_BYTES)),
-            Instruction("dma.store.ch0", DMAType(dram_rs=1, vmem_rs=2, size_rs=3)),
+            Instruction("dma.store.ch0", DMAType(rd=1, rs1=2, rs2=3)),
             Instruction("addi", IType(rd=4, rs1=0, imm=VMEM_BASE + 0x40)),
             Instruction("addi", IType(rd=5, rs1=0, imm=0xA5A5_5A5A)),
             Instruction("sw", SType(rs1=4, rs2=5, imm=0)),
@@ -605,10 +608,10 @@ def test_dma_load_captures_dram_payload_at_issue_time_before_later_store() -> No
             Instruction("addi", IType(rd=1, rs1=0, imm=DRAM_BASE + 0x100)),
             Instruction("addi", IType(rd=2, rs1=0, imm=VMEM_BASE + 0x80)),
             Instruction("addi", IType(rd=3, rs1=0, imm=DMA_ALIGNMENT_BYTES)),
-            Instruction("dma.load.ch0", DMAType(dram_rs=1, vmem_rs=2, size_rs=3)),
+            Instruction("dma.load.ch0", DMAType(rd=2, rs1=1, rs2=3)),
             Instruction("addi", IType(rd=4, rs1=0, imm=DRAM_BASE + 0x100)),
             Instruction("addi", IType(rd=5, rs1=0, imm=VMEM_BASE + 0x140)),
-            Instruction("dma.store.ch1", DMAType(dram_rs=4, vmem_rs=5, size_rs=3)),
+            Instruction("dma.store.ch1", DMAType(rd=4, rs1=5, rs2=3)),
             Instruction("dma.wait.ch1", EmptyType()),
             Instruction("dma.wait.ch0", EmptyType()),
         ]
@@ -631,7 +634,7 @@ def test_dma_load_with_misaligned_address_stops_execution() -> None:
 
     INSTRUCTION_SPECS["dma.load.ch0"].semantics(
         state,
-        DMAType(dram_rs=1, vmem_rs=2, size_rs=3),
+        DMAType(rd=2, rs1=1, rs2=3),
     )
 
     assert state.stop_reason == StopReason.DMA_MISALIGNED_ADDRESS
@@ -646,7 +649,7 @@ def test_dma_store_with_misaligned_address_stops_execution() -> None:
 
     INSTRUCTION_SPECS["dma.store.ch0"].semantics(
         state,
-        DMAType(dram_rs=1, vmem_rs=2, size_rs=3),
+        DMAType(rd=1, rs1=2, rs2=3),
     )
 
     assert state.stop_reason == StopReason.DMA_MISALIGNED_ADDRESS
@@ -661,7 +664,7 @@ def test_dma_load_with_misaligned_size_stops_execution() -> None:
 
     INSTRUCTION_SPECS["dma.load.ch0"].semantics(
         state,
-        DMAType(dram_rs=1, vmem_rs=2, size_rs=3),
+        DMAType(rd=2, rs1=1, rs2=3),
     )
 
     assert state.stop_reason == StopReason.DMA_MISALIGNED_SIZE
@@ -676,7 +679,7 @@ def test_dma_store_with_misaligned_size_stops_execution() -> None:
 
     INSTRUCTION_SPECS["dma.store.ch0"].semantics(
         state,
-        DMAType(dram_rs=1, vmem_rs=2, size_rs=3),
+        DMAType(rd=1, rs1=2, rs2=3),
     )
 
     assert state.stop_reason == StopReason.DMA_MISALIGNED_SIZE
@@ -732,7 +735,7 @@ def test_reset_clears_architectural_state_and_dma_but_preserves_memory() -> None
 
     perf = core.execute(_program("reset_dma_inflight"))
 
-    assert perf.instructions == 4
+    assert perf.instructions == 5
     assert core.state.dma_channels[0].busy is True
 
     core.reset()
@@ -832,7 +835,7 @@ def test_dump_json_trace_emits_region_aware_trace(tmp_path: Path) -> None:
         if event.get("cat") == "fetch" and int(event.get("ts", -1)) < int(wait_fetch_event["ts"])
     ]
 
-    assert perf.instructions == 7
+    assert perf.instructions == 8
     assert state.vmem.load_u32(VMEM_BASE + 0x80) == 7
     assert state.vmem.load_u32(VMEM_BASE + 0x90) == 7
     early_fetch_timestamps = [int(event["ts"]) for event in early_fetch_events]
@@ -974,10 +977,10 @@ def test_trace_wait_blocks_following_tensor_memory_op_until_later_dma_wait_retir
             Instruction("addi", IType(rd=1, rs1=0, imm=DRAM_BASE + 0x000)),
             Instruction("addi", IType(rd=2, rs1=0, imm=VMEM_BASE + 0x000)),
             Instruction("addi", IType(rd=3, rs1=0, imm=MREG_BYTES)),
-            Instruction("dma.load.ch1", DMAType(dram_rs=1, vmem_rs=2, size_rs=3)),
+            Instruction("dma.load.ch1", DMAType(rd=2, rs1=1, rs2=3)),
             Instruction("addi", IType(rd=4, rs1=0, imm=DRAM_BASE + 0x800)),
             Instruction("addi", IType(rd=5, rs1=0, imm=VMEM_BASE + 0x800)),
-            Instruction("dma.load.ch0", DMAType(dram_rs=4, vmem_rs=5, size_rs=3)),
+            Instruction("dma.load.ch0", DMAType(rd=5, rs1=4, rs2=3)),
             Instruction("dma.wait.ch1", EmptyType()),
             Instruction("dma.wait.ch0", EmptyType()),
             Instruction("vload", TensorMemType(mreg=1, rs1=5, imm=0)),

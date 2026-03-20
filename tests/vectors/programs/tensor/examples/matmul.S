@@ -46,8 +46,9 @@
 
     seli e0, 0
     seli e1, 0
-    dma.load.ch0 x1, x4, x12
-    dma.load.ch1 x2, x5, x13
+    dma.config.ch0 x0
+    dma.load.ch0 x4, x1, x12
+    dma.load.ch1 x5, x2, x13
     dma.wait.ch1
     dma.wait.ch0
     vload m1, 0(x4)

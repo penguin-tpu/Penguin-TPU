@@ -1,17 +1,18 @@
     li x10, 0x80000100
     li x11, 0x20000000
     li x12, 0x00000020  # 20 B
-    dma.load.ch0 x10, x11, x12
+    dma.config.ch0 x0
+    dma.load.ch0 x11, x10, x12
 
     li x13, 0x80001000
     li x14, 0x20001000
     li x15, 0x00002000  # 8 kB
-    dma.load.ch1 x13, x14, x15
+    dma.load.ch1 x14, x13, x15
 
     li x16, 0x80004000
     li x17, 0x20004000
     li x18, 0x00003000  # 12 kB
-    dma.load.ch2 x16, x17, x18
+    dma.load.ch2 x17, x16, x18
 
     dma.wait.ch0
     li x19, 0x20000080
@@ -35,18 +36,25 @@
     dma.wait.ch1
     li x20, 0x20002000
     vload m0, 0x00000000(x14)
+    delay 63
     vstore m0, 0x00000000(x20)
     vload m1, 0x00001000(x14)
+    delay 63
     vstore m1, 0x00001000(x20)
+    delay 63
 
     dma.wait.ch2
     li x21, 0x20008000
     vload m2, 0x00000000(x17)
+    delay 63
     vstore m2, 0x00000000(x21)
     vload m3, 0x00001000(x17)
+    delay 63
     vstore m3, 0x00001000(x21)
     vload m4, 0x00002000(x17)
+    delay 63
     vstore m4, 0x00002000(x21)
+    delay 63
 
     li x22, 0x80007000
     li x23, 0x00000020

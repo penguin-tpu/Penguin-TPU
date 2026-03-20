@@ -4,7 +4,7 @@
       kind: "program",
       region: "imem",
       address: 0x00020000,
-      size_bytes: 36,
+      size_bytes: 40,
       file: "dma_channels_independent.S",
     },
   },

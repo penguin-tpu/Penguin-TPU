@@ -102,6 +102,9 @@ class InitializationConfig:
     randomize_scalar_registers: bool = True
     """Whether scalar registers other than `x0` power up with pseudo-random values."""
 
+    randomize_scale_registers: bool = True
+    """Whether scale registers power up with pseudo-random values."""
+
     randomize_tensor_registers: bool = True
     """Whether tensor registers `m0..m63` power up with pseudo-random values."""
 
@@ -110,6 +113,9 @@ class InitializationConfig:
 
     randomize_accum_buffers: bool = True
     """Whether MXU accumulation buffers power up with pseudo-random values."""
+
+    randomize_dma_base: bool = True
+    """Whether `dma.base` powers up with a pseudo-random value."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -399,7 +405,7 @@ class PenguinCoreConfig:
 
     @property
     def vmatpush_weight_latency_cycles(self) -> int:
-        """Modeled latency of one `vmatpush.mxu*` tensor-to-weight transfer."""
+        """Modeled latency of one `vmatpush.weight.mxu*` tensor-to-weight transfer."""
 
         return self.bandwidth.vmem_transfer_cycles(self.weight_slot_bytes)
 
@@ -447,7 +453,7 @@ class PenguinCoreConfig:
 
     @property
     def xlu_transpose_latency_cycles(self) -> int:
-        """Modeled latency of one `transpose.xlu` instruction in core cycles."""
+        """Modeled latency of one `vtrpose.xlu` instruction in core cycles."""
 
         return self.xlu.transpose_latency_cycles
 

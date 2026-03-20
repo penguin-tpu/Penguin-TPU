@@ -10,7 +10,7 @@
       kind: "program",
       region: "imem",
       address: 0x00020000,
-      size_bytes: 56,
+      size_bytes: 68,
       file: "scalar_matmul.S",
     },
     vmem_output: {

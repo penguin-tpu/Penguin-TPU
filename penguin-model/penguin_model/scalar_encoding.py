@@ -4,15 +4,25 @@ from __future__ import annotations
 
 from .instructions import (
     BType,
+    DMAControlType,
     DelayType,
     EmptyType,
     IType,
     Instruction,
     JType,
+    MXUAccumulatorType,
+    MXUMatmulAccType,
+    MXUMatmulType,
     RType,
+    ScaleImmType,
     SType,
     UType,
+    VectorImmType,
     VPUBinaryType,
+    VPUUnaryType,
+    WeightMemType,
+    WeightTensorType,
+    XLUUnaryType,
 )
 
 _MNEMONIC_ALIASES = {
@@ -58,6 +68,19 @@ _MNEMONIC_ALIASES = {
     "sfence": "fence",
     "secall": "ecall",
     "sebreak": "ebreak",
+    "vadd": "vadd.bf16",
+    "vsub": "vsub.bf16",
+    "vmul": "vmul.bf16",
+    "vmax": "vmax.bf16",
+    "vmin": "vmin.bf16",
+    "vrecip": "vrecip.bf16",
+    "transpose.xlu": "vtrpose.xlu",
+    "reduce.max.xlu": "vreduce.max.xlu",
+    "reduce.sum.xlu": "vreduce.sum.xlu",
+    "vmatpush.mxu0": "vmatpush.weight.mxu0",
+    "vmatpush.mxu1": "vmatpush.weight.mxu1",
+    "vmatpush.bf16.acc.mxu0": "vmatpush.acc.bf16.mxu0",
+    "vmatpush.bf16.acc.mxu1": "vmatpush.acc.bf16.mxu1",
 }
 
 LOAD_FUNCT3 = {
@@ -84,7 +107,13 @@ OPCODE_BRANCH = 0b1100011
 OPCODE_JALR = 0b1100111
 OPCODE_JAL = 0b1101111
 OPCODE_SYSTEM = 0b1110011
-OPCODE_CUSTOM_0 = 0b0001011
+OPCODE_VLS = 0b0000111
+OPCODE_VPU = 0b1010111
+OPCODE_VI = 0b1011111
+OPCODE_XLU = 0b1101011
+OPCODE_MXU = 0b1110111
+OPCODE_DMA_TRANSFER = 0b1111011
+OPCODE_DMA_CONTROL = 0b1111111
 
 
 def _mask_u32(value: int) -> int:
@@ -166,6 +195,30 @@ def _encode_j_type(opcode: int, params: JType) -> int:
     )
 
 
+def _encode_vr_type(opcode: int, funct7: int, vd: int, vs1: int, vs2: int) -> int:
+    for name, value in (("vd", vd), ("vs1", vs1), ("vs2", vs2)):
+        if value < 0 or value > 0x3F:
+            raise ValueError(f"{name}={value} does not fit 6-bit tensor field")
+    return (
+        ((funct7 & 0x7F) << 25)
+        | ((vs2 & 0x3F) << 19)
+        | ((vs1 & 0x3F) << 13)
+        | ((vd & 0x3F) << 7)
+        | (opcode & 0x7F)
+    )
+
+
+def _encode_vi_type(opcode: int, funct3: int, vd: int, imm16: int) -> int:
+    if vd < 0 or vd > 0x3F:
+        raise ValueError(f"vd={vd} does not fit 6-bit tensor field")
+    return (
+        ((imm16 & 0xFFFF) << 16)
+        | ((funct3 & 0x7) << 13)
+        | ((vd & 0x3F) << 7)
+        | (opcode & 0x7F)
+    )
+
+
 def encode_scalar_instruction(instruction: Instruction) -> int:
     """Encode one Penguin scalar instruction into a 32-bit machine word."""
 
@@ -227,6 +280,13 @@ def encode_scalar_instruction(instruction: Instruction) -> int:
             _encode_i_type(OPCODE_LOAD, LOAD_FUNCT3[mnemonic], params.imm, params.rs1, params.rd)
         )
 
+    if mnemonic == "seli":
+        if not isinstance(params, ScaleImmType):
+            raise TypeError("seli expects ScaleImmType operands")
+        if params.imm < 0 or params.imm > 0xFF:
+            raise ValueError("seli immediate must be in [0, 255]")
+        return _mask_u32(_encode_i_type(OPCODE_LOAD, 0b111, params.imm, 0, params.ed))
+
     if mnemonic in STORE_FUNCT3:
         if not isinstance(params, SType):
             raise TypeError(f"{mnemonic} expects SType operands")
@@ -274,19 +334,50 @@ def encode_scalar_instruction(instruction: Instruction) -> int:
         funct7 = 0b0100000 if mnemonic in {"sub", "sra"} else 0b0000000
         return _mask_u32(_encode_r_type(OPCODE_OP, funct3, funct7, params))
 
-    if mnemonic == "vadd":
+    if mnemonic in {"vadd.bf16", "vsub.bf16", "vmin.bf16", "vmax.bf16", "vmul.bf16"}:
         if not isinstance(params, VPUBinaryType):
-            raise TypeError("vadd expects VPUBinaryType operands")
-        if params.md > 31 or params.ms1 > 31 or params.ms2 > 31:
-            raise ValueError("preliminary RTL VPU only supports m0-m31")
-        return _mask_u32(
-            _encode_r_type(
-                OPCODE_CUSTOM_0,
-                0b000,
-                0b0000000,
-                RType(rd=params.md, rs1=params.ms1, rs2=params.ms2),
-            )
-        )
+            raise TypeError(f"{mnemonic} expects VPUBinaryType operands")
+        funct7 = {
+            "vadd.bf16": 0b0000000,
+            "vsub.bf16": 0b0000010,
+            "vmin.bf16": 0b0000100,
+            "vmax.bf16": 0b0000110,
+            "vmul.bf16": 0b0100100,
+        }[mnemonic]
+        return _mask_u32(_encode_vr_type(OPCODE_VPU, funct7, params.md, params.ms1, params.ms2))
+
+    if mnemonic in {"vredsum.bf16", "vmov", "vrecip.bf16", "vexp", "vrelu"}:
+        if not isinstance(params, VPUUnaryType):
+            raise TypeError(f"{mnemonic} expects VPUUnaryType operands")
+        funct7 = {
+            "vredsum.bf16": 0b0000001,
+            "vmov": 0b1000000,
+            "vrecip.bf16": 0b1000001,
+            "vexp": 0b1000010,
+            "vrelu": 0b1000100,
+        }[mnemonic]
+        return _mask_u32(_encode_vr_type(OPCODE_VPU, funct7, params.md, params.ms, 0))
+
+    if mnemonic in {"vli.all", "vli.row", "vli.col", "vli.one"}:
+        if not isinstance(params, VectorImmType):
+            raise TypeError(f"{mnemonic} expects VectorImmType operands")
+        funct3 = {
+            "vli.all": 0b000,
+            "vli.row": 0b001,
+            "vli.col": 0b010,
+            "vli.one": 0b011,
+        }[mnemonic]
+        return _mask_u32(_encode_vi_type(OPCODE_VI, funct3, params.md, params.imm))
+
+    if mnemonic in {"vtrpose.xlu", "vreduce.max.xlu", "vreduce.sum.xlu"}:
+        if not isinstance(params, XLUUnaryType):
+            raise TypeError(f"{mnemonic} expects XLUUnaryType operands")
+        funct7 = {
+            "vtrpose.xlu": 0b0000000,
+            "vreduce.max.xlu": 0b0000001,
+            "vreduce.sum.xlu": 0b0000010,
+        }[mnemonic]
+        return _mask_u32(_encode_vr_type(OPCODE_XLU, funct7, params.md, params.ms, 0))
 
     if mnemonic == "fence":
         if not isinstance(params, EmptyType):
@@ -298,7 +389,7 @@ def encode_scalar_instruction(instruction: Instruction) -> int:
             raise TypeError("delay expects DelayType operands")
         if params.cycles < 0 or params.cycles > 0xFFF:
             raise ValueError("delay immediate must be in [0, 4095]")
-        return _mask_u32(_encode_i_type(OPCODE_SYSTEM, 0b000, params.cycles, 0, 0))
+        return _mask_u32(_encode_i_type(OPCODE_JALR, 0b001, params.cycles, 0, 0))
 
     if mnemonic == "ecall":
         if not isinstance(params, EmptyType):

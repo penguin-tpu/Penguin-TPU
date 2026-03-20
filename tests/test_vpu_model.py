@@ -10,6 +10,7 @@ from penguin_model import (
     INSTRUCTION_LATENCY,
     TENSOR_INSTRUCTION_SPECS,
     ArchState,
+    DelayType,
     Instruction,
     Sim,
     VPUBinaryType,
@@ -21,15 +22,16 @@ from penguin_model.tensor import bf16_tile_from_bytes, bf16_tile_to_bytes
 from penguin_model.testbench import TEST_CORE_CONFIG
 
 REQUIRED_VPU_MNEMONICS = {
-    "vadd",
-    "vsub",
-    "vmul",
-    "vmax",
-    "vmin",
+    "vadd.bf16",
+    "vredsum.bf16",
+    "vsub.bf16",
+    "vmul.bf16",
+    "vmax.bf16",
+    "vmin.bf16",
     "vrelu",
     "vmov",
     "vexp",
-    "vrecip",
+    "vrecip.bf16",
 }
 
 
@@ -60,15 +62,16 @@ def _read_bf16_tile(state: ArchState, index: int) -> torch.Tensor:
 
 def test_vpu_instruction_family_registers_with_expected_latency_classes() -> None:
     assert REQUIRED_VPU_MNEMONICS <= set(TENSOR_INSTRUCTION_SPECS)
-    assert INSTRUCTION_LATENCY["vadd"] == VPU_SIMPLE_OP_LATENCY_CYCLES
-    assert INSTRUCTION_LATENCY["vsub"] == VPU_SIMPLE_OP_LATENCY_CYCLES
-    assert INSTRUCTION_LATENCY["vmul"] == VPU_SIMPLE_OP_LATENCY_CYCLES
-    assert INSTRUCTION_LATENCY["vmax"] == VPU_SIMPLE_OP_LATENCY_CYCLES
-    assert INSTRUCTION_LATENCY["vmin"] == VPU_SIMPLE_OP_LATENCY_CYCLES
+    assert INSTRUCTION_LATENCY["vadd.bf16"] == VPU_SIMPLE_OP_LATENCY_CYCLES
+    assert INSTRUCTION_LATENCY["vredsum.bf16"] == VPU_SIMPLE_OP_LATENCY_CYCLES
+    assert INSTRUCTION_LATENCY["vsub.bf16"] == VPU_SIMPLE_OP_LATENCY_CYCLES
+    assert INSTRUCTION_LATENCY["vmul.bf16"] == VPU_SIMPLE_OP_LATENCY_CYCLES
+    assert INSTRUCTION_LATENCY["vmax.bf16"] == VPU_SIMPLE_OP_LATENCY_CYCLES
+    assert INSTRUCTION_LATENCY["vmin.bf16"] == VPU_SIMPLE_OP_LATENCY_CYCLES
     assert INSTRUCTION_LATENCY["vrelu"] == VPU_SIMPLE_OP_LATENCY_CYCLES
     assert INSTRUCTION_LATENCY["vmov"] == VPU_SIMPLE_OP_LATENCY_CYCLES
     assert INSTRUCTION_LATENCY["vexp"] == VPU_NON_PIPELINEABLE_OP_LATENCY_CYCLES
-    assert INSTRUCTION_LATENCY["vrecip"] == VPU_NON_PIPELINEABLE_OP_LATENCY_CYCLES
+    assert INSTRUCTION_LATENCY["vrecip.bf16"] == VPU_NON_PIPELINEABLE_OP_LATENCY_CYCLES
 
 
 @torch.no_grad()
@@ -80,11 +83,11 @@ def test_vpu_binary_ops_apply_bf16_elementwise_semantics() -> None:
     _write_bf16_tile(core.state, 2, rhs)
 
     program = [
-        Instruction("vadd", VPUBinaryType(md=10, ms1=1, ms2=2)),
-        Instruction("vsub", VPUBinaryType(md=11, ms1=1, ms2=2)),
-        Instruction("vmul", VPUBinaryType(md=12, ms1=1, ms2=2)),
-        Instruction("vmax", VPUBinaryType(md=13, ms1=1, ms2=2)),
-        Instruction("vmin", VPUBinaryType(md=14, ms1=1, ms2=2)),
+        Instruction("vadd.bf16", VPUBinaryType(md=10, ms1=1, ms2=2)),
+        Instruction("vsub.bf16", VPUBinaryType(md=11, ms1=1, ms2=2)),
+        Instruction("vmul.bf16", VPUBinaryType(md=12, ms1=1, ms2=2)),
+        Instruction("vmax.bf16", VPUBinaryType(md=13, ms1=1, ms2=2)),
+        Instruction("vmin.bf16", VPUBinaryType(md=14, ms1=1, ms2=2)),
     ]
     perf = core.execute(program)
 
@@ -109,11 +112,11 @@ def test_vpu_binary_ops_apply_bf16_elementwise_semantics() -> None:
         torch.minimum(lhs, rhs).to(torch.bfloat16).to(torch.float32),
     )
     assert perf.instructions_by_opcode == {
-        "vadd": 1,
-        "vsub": 1,
-        "vmul": 1,
-        "vmax": 1,
-        "vmin": 1,
+        "vadd.bf16": 1,
+        "vsub.bf16": 1,
+        "vmul.bf16": 1,
+        "vmax.bf16": 1,
+        "vmin.bf16": 1,
     }
     assert perf.cycles == 5 + TEST_CORE_CONFIG.vpu.simple_op_latency_cycles + 2
 
@@ -128,6 +131,7 @@ def test_vrelu_and_vmov_operate_on_whole_bf16_registers() -> None:
     perf = core.execute(
         [
             Instruction("vrelu", VPUUnaryType(md=6, ms=5)),
+            Instruction("delay", DelayType(cycles=TEST_CORE_CONFIG.vpu.simple_op_latency_cycles - 1)),
             Instruction("vmov", VPUUnaryType(md=7, ms=6)),
         ]
     )
@@ -135,8 +139,8 @@ def test_vrelu_and_vmov_operate_on_whole_bf16_registers() -> None:
     relu_expected = torch.clamp_min(src, 0.0).to(torch.bfloat16).to(torch.float32)
     assert torch.equal(_read_bf16_tile(core.state, 6), relu_expected)
     assert torch.equal(_read_bf16_tile(core.state, 7), relu_expected)
-    assert perf.instructions_by_opcode == {"vrelu": 1, "vmov": 1}
-    assert perf.cycles == 2 * TEST_CORE_CONFIG.vpu.simple_op_latency_cycles + 3
+    assert perf.instructions_by_opcode == {"vrelu": 1, "delay": 1, "vmov": 1}
+    assert perf.cycles == 2 * TEST_CORE_CONFIG.vpu.simple_op_latency_cycles + 4
 
 
 @torch.no_grad()
@@ -148,7 +152,7 @@ def test_vexp_and_vrecip_operate_on_whole_bf16_registers() -> None:
     perf = core.execute(
         [
             Instruction("vexp", VPUUnaryType(md=6, ms=5)),
-            Instruction("vrecip", VPUUnaryType(md=7, ms=5)),
+            Instruction("vrecip.bf16", VPUUnaryType(md=7, ms=5)),
         ]
     )
 
@@ -156,7 +160,7 @@ def test_vexp_and_vrecip_operate_on_whole_bf16_registers() -> None:
     recip_expected = torch.reciprocal(src).to(torch.bfloat16).to(torch.float32)
     assert torch.equal(_read_bf16_tile(core.state, 6), exp_expected)
     assert torch.equal(_read_bf16_tile(core.state, 7), recip_expected)
-    assert perf.instructions_by_opcode == {"vexp": 1, "vrecip": 1}
+    assert perf.instructions_by_opcode == {"vexp": 1, "vrecip.bf16": 1}
     assert perf.cycles == 2 * TEST_CORE_CONFIG.vpu.non_pipelineable_op_latency_cycles + 3
 
 
@@ -172,7 +176,7 @@ def test_vpu_in_place_destinations_use_prewrite_source_values() -> None:
 
     perf = core.execute(
         [
-            Instruction("vadd", VPUBinaryType(md=1, ms1=1, ms2=2)),
+            Instruction("vadd.bf16", VPUBinaryType(md=1, ms1=1, ms2=2)),
             Instruction("vrelu", VPUUnaryType(md=3, ms=3)),
         ]
     )
@@ -186,7 +190,7 @@ def test_vpu_in_place_destinations_use_prewrite_source_values() -> None:
         _read_bf16_tile(core.state, 3),
         torch.clamp_min(src, 0.0).to(torch.bfloat16).to(torch.float32),
     )
-    assert perf.instructions_by_opcode == {"vadd": 1, "vrelu": 1}
+    assert perf.instructions_by_opcode == {"vadd.bf16": 1, "vrelu": 1}
 
 
 def test_vpu_perf_model_uses_configured_simple_latency() -> None:
@@ -201,14 +205,14 @@ def test_vpu_perf_model_uses_configured_simple_latency() -> None:
 
     perf = core.execute(
         [
-            Instruction("vadd", VPUBinaryType(md=3, ms1=1, ms2=2)),
+            Instruction("vadd.bf16", VPUBinaryType(md=3, ms1=1, ms2=2)),
             Instruction("vrelu", VPUUnaryType(md=4, ms=3)),
         ]
     )
 
     assert perf.instructions == 2
-    assert perf.cycles == 2 * config.vpu.simple_op_latency_cycles + 3
-    assert perf.instructions_by_opcode == {"vadd": 1, "vrelu": 1}
+    assert perf.cycles == 2 + config.vpu.simple_op_latency_cycles + 2
+    assert perf.instructions_by_opcode == {"vadd.bf16": 1, "vrelu": 1}
 
 
 def test_vpu_perf_model_uses_configured_non_pipelineable_latency() -> None:
@@ -223,10 +227,10 @@ def test_vpu_perf_model_uses_configured_non_pipelineable_latency() -> None:
     perf = core.execute(
         [
             Instruction("vexp", VPUUnaryType(md=2, ms=1)),
-            Instruction("vrecip", VPUUnaryType(md=3, ms=2)),
+            Instruction("vrecip.bf16", VPUUnaryType(md=3, ms=2)),
         ]
     )
 
     assert perf.instructions == 2
     assert perf.cycles == 2 * config.vpu.non_pipelineable_op_latency_cycles + 3
-    assert perf.instructions_by_opcode == {"vexp": 1, "vrecip": 1}
+    assert perf.instructions_by_opcode == {"vexp": 1, "vrecip.bf16": 1}

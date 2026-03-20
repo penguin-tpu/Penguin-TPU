@@ -4,7 +4,7 @@
       kind: "program",
       region: "imem",
       address: 0x00020000,
-      size_bytes: 60,
+      size_bytes: 64,
       file: "dma_overlap.S",
     },
   },

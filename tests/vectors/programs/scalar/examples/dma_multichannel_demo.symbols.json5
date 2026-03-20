@@ -4,7 +4,7 @@
       kind: "program",
       region: "imem",
       address: 0x00020000,
-      size_bytes: 224,
+      size_bytes: 256,
       file: "dma_multichannel_demo.S",
     },
   },

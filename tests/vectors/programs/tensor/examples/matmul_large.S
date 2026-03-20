@@ -46,6 +46,7 @@
 
     seli e0, 0
     seli e1, 0
+    dma.config.ch0 x0
 
 m_loop:
     addi x8, x0, 2
@@ -56,8 +57,8 @@ n_loop:
     addi x10, x1, 0
     addi x11, x18, 0
 
-    dma.load.ch0 x10, x4, x12
-    dma.load.ch1 x11, x5, x13
+    dma.load.ch0 x4, x10, x12
+    dma.load.ch1 x5, x11, x13
     dma.wait.ch1
     dma.wait.ch0
     vload m1, 0(x4)
@@ -72,8 +73,8 @@ k_loop:
     beq x9, x0, k_done
     addi x0, x0, 0
     addi x0, x0, 0
-    dma.load.ch0 x10, x4, x12
-    dma.load.ch1 x11, x5, x13
+    dma.load.ch0 x4, x10, x12
+    dma.load.ch1 x5, x11, x13
     dma.wait.ch1
     dma.wait.ch0
     vload m1, 0(x4)

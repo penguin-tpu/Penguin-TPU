@@ -3,7 +3,8 @@
     li x10, 0x80000100
     li x11, 0x20000040
     li x12, 0x00000020
-    dma.load.ch0 x10, x11, x12
+    dma.config.ch0 x0
+    dma.load.ch0 x11, x10, x12
     li x1, 0x20000040
     li x2, 0x00000004
     li x3, 0x00000000
@@ -14,4 +15,6 @@ loop:
     saddi x1, x1, 0x00000004
     saddi x2, x2, -1
     sbne x2, x0, loop
+    addi x0, x0, 0
+    addi x0, x0, 0
     ssw x3, 0x20000080(x0)

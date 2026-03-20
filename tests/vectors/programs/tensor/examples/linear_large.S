@@ -51,13 +51,14 @@
 
     seli e0, 0
     seli e1, 0
-    dma.load.ch2 x16, x15, x30
+    dma.config.ch0 x0
+    dma.load.ch2 x15, x16, x30
     addi x16, x16, 8192
     delay 0
-    dma.load.ch3 x16, x17, x30
+    dma.load.ch3 x17, x16, x30
     addi x16, x16, 8192
     delay 0
-    dma.load.ch4 x16, x18, x30
+    dma.load.ch4 x18, x16, x30
     dma.wait.ch4
     dma.wait.ch3
     dma.wait.ch2
@@ -72,8 +73,8 @@ n_loop:
     addi x10, x1, 0
     addi x11, x18, 0
 
-    dma.load.ch0 x10, x4, x12
-    dma.load.ch1 x11, x5, x13
+    dma.load.ch0 x4, x10, x12
+    dma.load.ch1 x5, x11, x13
     dma.wait.ch1
     dma.wait.ch0
     vload m1, 0(x4)
@@ -88,8 +89,8 @@ k_loop:
     beq x9, x0, k_done
     addi x0, x0, 0
     addi x0, x0, 0
-    dma.load.ch0 x10, x4, x12
-    dma.load.ch1 x11, x5, x13
+    dma.load.ch0 x4, x10, x12
+    dma.load.ch1 x5, x11, x13
     dma.wait.ch1
     dma.wait.ch0
     vload m1, 0(x4)

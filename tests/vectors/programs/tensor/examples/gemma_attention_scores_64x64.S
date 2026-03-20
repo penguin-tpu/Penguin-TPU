@@ -45,7 +45,7 @@
     vload.weight.mxu0 w0, x10
     vload.weight.mxu0 w1, x11
 
-    delay 62
+    delay 63
     vmatmul.mxu0 m1, w0
     delay 63
     vmatpop.bf16.acc.mxu0 m2

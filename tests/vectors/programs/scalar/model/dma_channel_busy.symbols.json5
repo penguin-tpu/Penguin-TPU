@@ -4,7 +4,7 @@
       kind: "program",
       region: "imem",
       address: 0x00020000,
-      size_bytes: 20,
+      size_bytes: 24,
       file: "dma_channel_busy.S",
     },
   },

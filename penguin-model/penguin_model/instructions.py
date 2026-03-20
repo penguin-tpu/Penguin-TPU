@@ -74,11 +74,18 @@ class DelayType:
 
 @dataclass(frozen=True, slots=True)
 class DMAType:
-    """DMA transfer form: DRAM addr reg, VMEM addr reg, size reg."""
+    """DMA transfer form using scalar `R` layout: `rd`, `rs1`, and `rs2`."""
 
-    dram_rs: int
-    vmem_rs: int
-    size_rs: int
+    rd: int
+    rs1: int
+    rs2: int
+
+
+@dataclass(frozen=True, slots=True)
+class DMAControlType:
+    """DMA control form using scalar `I` layout with one source register."""
+
+    rs1: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -109,10 +116,11 @@ class TensorMemType:
 
 @dataclass(frozen=True, slots=True)
 class WeightMemType:
-    """MXU weight-slot selector plus scalar-register source address."""
+    """MXU weight-slot selector plus scalar-register-indirect VMEM address."""
 
     slot: int
     rs1: int
+    imm: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -164,8 +172,16 @@ class VPUUnaryType:
 
 
 @dataclass(frozen=True, slots=True)
-class XLUTransposeType:
-    """Whole-register transpose form: dest tensor, source tensor."""
+class VectorImmType:
+    """Vector-immediate form: dest tensor and 16-bit immediate payload."""
+
+    md: int
+    imm: int
+
+
+@dataclass(frozen=True, slots=True)
+class XLUUnaryType:
+    """Whole-register XLU form: dest tensor, source tensor."""
 
     md: int
     ms: int
@@ -181,6 +197,7 @@ InstructionParams: TypeAlias = (
     | EmptyType
     | DelayType
     | DMAType
+    | DMAControlType
     | ScaleImmType
     | ScaleMemType
     | TensorMemType
@@ -191,7 +208,8 @@ InstructionParams: TypeAlias = (
     | MXUMatmulAccType
     | VPUBinaryType
     | VPUUnaryType
-    | XLUTransposeType
+    | VectorImmType
+    | XLUUnaryType
 )
 
 InstructionFn: TypeAlias = Callable[[ArchState, InstructionParams], None]
@@ -249,6 +267,7 @@ def instruction(
 
 __all__ = [
     "BType",
+    "DMAControlType",
     "DMAType",
     "DelayType",
     "EmptyType",
@@ -270,10 +289,14 @@ __all__ = [
     "TENSOR_INSTRUCTION_SPECS",
     "TensorMemType",
     "UType",
+    "VectorImmType",
     "WeightTensorType",
     "XLUTransposeType",
+    "XLUUnaryType",
     "VPUBinaryType",
     "VPUUnaryType",
     "WeightMemType",
     "instruction",
 ]
+
+XLUTransposeType = XLUUnaryType

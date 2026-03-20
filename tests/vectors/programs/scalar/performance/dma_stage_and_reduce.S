@@ -3,7 +3,8 @@
     li x10, 0x80000100
     li x11, 0x20000200
     li x12, 0x00000020
-    dma.load.ch0 x10, x11, x12
+    dma.config.ch0 x0
+    dma.load.ch0 x11, x10, x12
     dma.wait.ch0
     li x1, 0x20000200
     li x2, 0x00000008

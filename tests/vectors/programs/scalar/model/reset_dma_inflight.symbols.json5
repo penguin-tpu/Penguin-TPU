@@ -4,7 +4,7 @@
       kind: "program",
       region: "imem",
       address: 0x00020000,
-      size_bytes: 16,
+      size_bytes: 20,
       file: "reset_dma_inflight.S",
     },
   },

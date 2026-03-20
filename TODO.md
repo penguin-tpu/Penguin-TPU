@@ -18,9 +18,6 @@ repo-level TODO tracking. Keep historical context and completed-change notes in
   model, and RTL.
 - Define the host control and CSR map for launch, halt, done, and error reporting.
 - Finalize tensor-era ISA decisions that affect multiple stacks:
-  - exact DMA instruction shapes
-  - exact `vload` / `vstore` encodings
-  - exact XLU transpose instruction encoding and sequencing
   - whether VMEM is logically unified or internally partitioned by traffic class
   - halt behavior while long-chime tensor operations are in flight
 

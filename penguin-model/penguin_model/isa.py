@@ -6,8 +6,10 @@ from collections.abc import Callable
 
 from .arch_state import ArchState, StopReason
 from .instructions import (
+    ALL_INSTRUCTION_SPECS,
     TENSOR_INSTRUCTION_SPECS,
     BType,
+    DMAControlType,
     DMAType,
     DelayType,
     EmptyType,
@@ -22,8 +24,9 @@ from .instructions import (
     SType,
     TensorMemType,
     UType,
+    VectorImmType,
     WeightTensorType,
-    XLUTransposeType,
+    XLUUnaryType,
     VPUBinaryType,
     VPUUnaryType,
     WeightMemType,
@@ -47,6 +50,7 @@ from .tensor import (
     compute_bf16_row_reduce_max,
     compute_bf16_row_reduce_sum,
     compute_bf16_vadd,
+    compute_bf16_vredsum,
     compute_bf16_vexp,
     compute_bf16_vmax,
     compute_bf16_vmin,
@@ -55,6 +59,7 @@ from .tensor import (
     compute_bf16_vsub,
     compute_bf16_vmul,
     compute_bf16_vrelu,
+    compute_vector_immediate_fill,
 )
 
 MASK32 = 0xFFFF_FFFF
@@ -91,11 +96,19 @@ def _branch_if(
         state.set_next_pc(state.pc + params.imm)
 
 
-def _dma_operands(state: ArchState, params: DMAType) -> tuple[int, int, int]:
+def _dma_load_operands(state: ArchState, params: DMAType) -> tuple[int, int, int]:
     return (
-        _u32(state.read_xreg(params.dram_rs)),
-        _u32(state.read_xreg(params.vmem_rs)),
-        _u32(state.read_xreg(params.size_rs)),
+        _u32(state.resolve_dma_base_address(params.rs1)),
+        _u32(state.read_xreg(params.rd)),
+        _u32(state.read_xreg(params.rs2)),
+    )
+
+
+def _dma_store_operands(state: ArchState, params: DMAType) -> tuple[int, int, int]:
+    return (
+        _u32(state.read_xreg(params.rd)),
+        _u32(state.resolve_dma_base_address(params.rs1)),
+        _u32(state.read_xreg(params.rs2)),
     )
 
 
@@ -389,22 +402,22 @@ def vstore(state: ArchState, params: TensorMemType) -> None:
 
 
 @instruction(
-    mnemonic="vmatpush.mxu0",
+    mnemonic="vmatpush.weight.mxu0",
     params_type=WeightTensorType,
     latency=VMATPUSH_WEIGHT_LATENCY_CYCLES,
     registry=TENSOR_INSTRUCTION_SPECS,
 )
-def vmatpush_mxu0(state: ArchState, params: WeightTensorType) -> None:
+def vmatpush_weight_mxu0(state: ArchState, params: WeightTensorType) -> None:
     state.push_weight_slot_from_mreg(0, params.slot, params.ms)
 
 
 @instruction(
-    mnemonic="vmatpush.mxu1",
+    mnemonic="vmatpush.weight.mxu1",
     params_type=WeightTensorType,
     latency=VMATPUSH_WEIGHT_LATENCY_CYCLES,
     registry=TENSOR_INSTRUCTION_SPECS,
 )
-def vmatpush_mxu1(state: ArchState, params: WeightTensorType) -> None:
+def vmatpush_weight_mxu1(state: ArchState, params: WeightTensorType) -> None:
     state.push_weight_slot_from_mreg(1, params.slot, params.ms)
 
 
@@ -415,7 +428,11 @@ def vmatpush_mxu1(state: ArchState, params: WeightTensorType) -> None:
     registry=TENSOR_INSTRUCTION_SPECS,
 )
 def vload_weight_mxu0(state: ArchState, params: WeightMemType) -> None:
-    state.push_weight_slot_from_vmem(0, params.slot, state.read_xreg(params.rs1))
+    state.push_weight_slot_from_vmem(
+        0,
+        params.slot,
+        state.resolve_indirect_address(params.rs1, params.imm),
+    )
 
 
 @instruction(
@@ -425,26 +442,50 @@ def vload_weight_mxu0(state: ArchState, params: WeightMemType) -> None:
     registry=TENSOR_INSTRUCTION_SPECS,
 )
 def vload_weight_mxu1(state: ArchState, params: WeightMemType) -> None:
-    state.push_weight_slot_from_vmem(1, params.slot, state.read_xreg(params.rs1))
+    state.push_weight_slot_from_vmem(
+        1,
+        params.slot,
+        state.resolve_indirect_address(params.rs1, params.imm),
+    )
 
 
 @instruction(
-    mnemonic="vmatpush.bf16.acc.mxu0",
+    mnemonic="vmatpush.acc.fp8.mxu0",
+    params_type=MXUAccumulatorType,
+    latency=VMATPOP_ACC_FP8_LATENCY_CYCLES,
+    registry=TENSOR_INSTRUCTION_SPECS,
+)
+def vmatpush_acc_fp8_mxu0(state: ArchState, params: MXUAccumulatorType) -> None:
+    state.push_accum_fp8_from_mreg(0, params.mreg)
+
+
+@instruction(
+    mnemonic="vmatpush.acc.fp8.mxu1",
+    params_type=MXUAccumulatorType,
+    latency=VMATPOP_ACC_FP8_LATENCY_CYCLES,
+    registry=TENSOR_INSTRUCTION_SPECS,
+)
+def vmatpush_acc_fp8_mxu1(state: ArchState, params: MXUAccumulatorType) -> None:
+    state.push_accum_fp8_from_mreg(1, params.mreg)
+
+
+@instruction(
+    mnemonic="vmatpush.acc.bf16.mxu0",
     params_type=MXUAccumulatorType,
     latency=VMATPUSH_ACC_LATENCY_CYCLES,
     registry=TENSOR_INSTRUCTION_SPECS,
 )
-def vmatpush_bf16_acc_mxu0(state: ArchState, params: MXUAccumulatorType) -> None:
+def vmatpush_acc_bf16_mxu0(state: ArchState, params: MXUAccumulatorType) -> None:
     state.push_accum_from_mregs(0, params.mreg)
 
 
 @instruction(
-    mnemonic="vmatpush.bf16.acc.mxu1",
+    mnemonic="vmatpush.acc.bf16.mxu1",
     params_type=MXUAccumulatorType,
     latency=VMATPUSH_ACC_LATENCY_CYCLES,
     registry=TENSOR_INSTRUCTION_SPECS,
 )
-def vmatpush_bf16_acc_mxu1(state: ArchState, params: MXUAccumulatorType) -> None:
+def vmatpush_acc_bf16_mxu1(state: ArchState, params: MXUAccumulatorType) -> None:
     state.push_accum_from_mregs(1, params.mreg)
 
 
@@ -616,52 +657,62 @@ def vmatmul_acc_mxu1(state: ArchState, params: MXUMatmulAccType) -> None:
 
 
 @instruction(
-    mnemonic="vadd",
+    mnemonic="vadd.bf16",
     params_type=VPUBinaryType,
     latency=VPU_SIMPLE_OP_LATENCY_CYCLES,
     registry=TENSOR_INSTRUCTION_SPECS,
 )
-def vadd(state: ArchState, params: VPUBinaryType) -> None:
+def vadd_bf16(state: ArchState, params: VPUBinaryType) -> None:
     _vpu_binary_result(state, params, lambda lhs, rhs: compute_bf16_vadd(lhs, rhs, config=state.config))
 
 
 @instruction(
-    mnemonic="vmul",
+    mnemonic="vredsum.bf16",
+    params_type=VPUUnaryType,
+    latency=VPU_SIMPLE_OP_LATENCY_CYCLES,
+    registry=TENSOR_INSTRUCTION_SPECS,
+)
+def vredsum_bf16(state: ArchState, params: VPUUnaryType) -> None:
+    _vpu_unary_result(state, params, lambda src: compute_bf16_vredsum(src, config=state.config))
+
+
+@instruction(
+    mnemonic="vmul.bf16",
     params_type=VPUBinaryType,
     latency=VPU_SIMPLE_OP_LATENCY_CYCLES,
     registry=TENSOR_INSTRUCTION_SPECS,
 )
-def vmul(state: ArchState, params: VPUBinaryType) -> None:
+def vmul_bf16(state: ArchState, params: VPUBinaryType) -> None:
     _vpu_binary_result(state, params, lambda lhs, rhs: compute_bf16_vmul(lhs, rhs, config=state.config))
 
 
 @instruction(
-    mnemonic="vsub",
+    mnemonic="vsub.bf16",
     params_type=VPUBinaryType,
     latency=VPU_SIMPLE_OP_LATENCY_CYCLES,
     registry=TENSOR_INSTRUCTION_SPECS,
 )
-def vsub(state: ArchState, params: VPUBinaryType) -> None:
+def vsub_bf16(state: ArchState, params: VPUBinaryType) -> None:
     _vpu_binary_result(state, params, lambda lhs, rhs: compute_bf16_vsub(lhs, rhs, config=state.config))
 
 
 @instruction(
-    mnemonic="vmax",
+    mnemonic="vmax.bf16",
     params_type=VPUBinaryType,
     latency=VPU_SIMPLE_OP_LATENCY_CYCLES,
     registry=TENSOR_INSTRUCTION_SPECS,
 )
-def vmax(state: ArchState, params: VPUBinaryType) -> None:
+def vmax_bf16(state: ArchState, params: VPUBinaryType) -> None:
     _vpu_binary_result(state, params, lambda lhs, rhs: compute_bf16_vmax(lhs, rhs, config=state.config))
 
 
 @instruction(
-    mnemonic="vmin",
+    mnemonic="vmin.bf16",
     params_type=VPUBinaryType,
     latency=VPU_SIMPLE_OP_LATENCY_CYCLES,
     registry=TENSOR_INSTRUCTION_SPECS,
 )
-def vmin(state: ArchState, params: VPUBinaryType) -> None:
+def vmin_bf16(state: ArchState, params: VPUBinaryType) -> None:
     _vpu_binary_result(state, params, lambda lhs, rhs: compute_bf16_vmin(lhs, rhs, config=state.config))
 
 
@@ -701,12 +752,12 @@ def vexp(state: ArchState, params: VPUUnaryType) -> None:
 
 
 @instruction(
-    mnemonic="vrecip",
+    mnemonic="vrecip.bf16",
     params_type=VPUUnaryType,
     latency=VPU_NON_PIPELINEABLE_OP_LATENCY_CYCLES,
     registry=TENSOR_INSTRUCTION_SPECS,
 )
-def vrecip(state: ArchState, params: VPUUnaryType) -> None:
+def vrecip_bf16(state: ArchState, params: VPUUnaryType) -> None:
     _vpu_unary_result(
         state,
         params,
@@ -716,36 +767,80 @@ def vrecip(state: ArchState, params: VPUUnaryType) -> None:
 
 
 @instruction(
-    mnemonic="transpose.xlu",
-    params_type=XLUTransposeType,
+    mnemonic="vli.all",
+    params_type=VectorImmType,
+    latency=VPU_SIMPLE_OP_LATENCY_CYCLES,
+    registry=TENSOR_INSTRUCTION_SPECS,
+)
+def vli_all(state: ArchState, params: VectorImmType) -> None:
+    _apply_vpu_simple_latency(state)
+    state.store_mreg(params.md, compute_vector_immediate_fill(params.imm, mode="all", config=state.config))
+
+
+@instruction(
+    mnemonic="vli.row",
+    params_type=VectorImmType,
+    latency=VPU_SIMPLE_OP_LATENCY_CYCLES,
+    registry=TENSOR_INSTRUCTION_SPECS,
+)
+def vli_row(state: ArchState, params: VectorImmType) -> None:
+    _apply_vpu_simple_latency(state)
+    state.store_mreg(params.md, compute_vector_immediate_fill(params.imm, mode="row", config=state.config))
+
+
+@instruction(
+    mnemonic="vli.col",
+    params_type=VectorImmType,
+    latency=VPU_SIMPLE_OP_LATENCY_CYCLES,
+    registry=TENSOR_INSTRUCTION_SPECS,
+)
+def vli_col(state: ArchState, params: VectorImmType) -> None:
+    _apply_vpu_simple_latency(state)
+    state.store_mreg(params.md, compute_vector_immediate_fill(params.imm, mode="col", config=state.config))
+
+
+@instruction(
+    mnemonic="vli.one",
+    params_type=VectorImmType,
+    latency=VPU_SIMPLE_OP_LATENCY_CYCLES,
+    registry=TENSOR_INSTRUCTION_SPECS,
+)
+def vli_one(state: ArchState, params: VectorImmType) -> None:
+    _apply_vpu_simple_latency(state)
+    state.store_mreg(params.md, compute_vector_immediate_fill(params.imm, mode="one", config=state.config))
+
+
+@instruction(
+    mnemonic="vtrpose.xlu",
+    params_type=XLUUnaryType,
     latency=XLU_TRANSPOSE_LATENCY_CYCLES,
     registry=TENSOR_INSTRUCTION_SPECS,
 )
-def transpose_xlu(state: ArchState, params: XLUTransposeType) -> None:
+def vtrpose_xlu(state: ArchState, params: XLUUnaryType) -> None:
     src = state.load_mreg(params.ms)
     _apply_xlu_transpose_latency(state)
     state.store_mreg(params.md, compute_bf16_transpose(src, config=state.config))
 
 
 @instruction(
-    mnemonic="reduce.max.xlu",
-    params_type=XLUTransposeType,
+    mnemonic="vreduce.max.xlu",
+    params_type=XLUUnaryType,
     latency=XLU_TRANSPOSE_LATENCY_CYCLES,
     registry=TENSOR_INSTRUCTION_SPECS,
 )
-def reduce_max_xlu(state: ArchState, params: XLUTransposeType) -> None:
+def vreduce_max_xlu(state: ArchState, params: XLUUnaryType) -> None:
     src = state.load_mreg(params.ms)
     _apply_xlu_transpose_latency(state)
     state.store_mreg(params.md, compute_bf16_row_reduce_max(src, config=state.config))
 
 
 @instruction(
-    mnemonic="reduce.sum.xlu",
-    params_type=XLUTransposeType,
+    mnemonic="vreduce.sum.xlu",
+    params_type=XLUUnaryType,
     latency=XLU_TRANSPOSE_LATENCY_CYCLES,
     registry=TENSOR_INSTRUCTION_SPECS,
 )
-def reduce_sum_xlu(state: ArchState, params: XLUTransposeType) -> None:
+def vreduce_sum_xlu(state: ArchState, params: XLUUnaryType) -> None:
     src = state.load_mreg(params.ms)
     _apply_xlu_transpose_latency(state)
     state.store_mreg(params.md, compute_bf16_row_reduce_sum(src, config=state.config))
@@ -754,14 +849,19 @@ def reduce_sum_xlu(state: ArchState, params: XLUTransposeType) -> None:
 # DMA channel 0
 @instruction(mnemonic="dma.load.ch0", params_type=DMAType, latency=1)
 def dma_load_ch0(state: ArchState, params: DMAType) -> None:
-    dram_address, vmem_address, size = _dma_operands(state, params)
+    dram_address, vmem_address, size = _dma_load_operands(state, params)
     state.issue_dma_load(0, dram_address, vmem_address, size)
 
 
 @instruction(mnemonic="dma.store.ch0", params_type=DMAType, latency=1)
 def dma_store_ch0(state: ArchState, params: DMAType) -> None:
-    dram_address, vmem_address, size = _dma_operands(state, params)
+    dram_address, vmem_address, size = _dma_store_operands(state, params)
     state.issue_dma_store(0, dram_address, vmem_address, size)
+
+
+@instruction(mnemonic="dma.config.ch0", params_type=DMAControlType, latency=1)
+def dma_config_ch0(state: ArchState, params: DMAControlType) -> None:
+    state.write_dma_base(state.read_xreg(params.rs1))
 
 
 @instruction(mnemonic="dma.wait.ch0", params_type=EmptyType, latency=1)
@@ -773,14 +873,19 @@ def dma_wait_ch0(state: ArchState, params: EmptyType) -> None:
 # DMA channel 1
 @instruction(mnemonic="dma.load.ch1", params_type=DMAType, latency=1)
 def dma_load_ch1(state: ArchState, params: DMAType) -> None:
-    dram_address, vmem_address, size = _dma_operands(state, params)
+    dram_address, vmem_address, size = _dma_load_operands(state, params)
     state.issue_dma_load(1, dram_address, vmem_address, size)
 
 
 @instruction(mnemonic="dma.store.ch1", params_type=DMAType, latency=1)
 def dma_store_ch1(state: ArchState, params: DMAType) -> None:
-    dram_address, vmem_address, size = _dma_operands(state, params)
+    dram_address, vmem_address, size = _dma_store_operands(state, params)
     state.issue_dma_store(1, dram_address, vmem_address, size)
+
+
+@instruction(mnemonic="dma.config.ch1", params_type=DMAControlType, latency=1)
+def dma_config_ch1(state: ArchState, params: DMAControlType) -> None:
+    state.write_dma_base(state.read_xreg(params.rs1))
 
 
 @instruction(mnemonic="dma.wait.ch1", params_type=EmptyType, latency=1)
@@ -792,14 +897,19 @@ def dma_wait_ch1(state: ArchState, params: EmptyType) -> None:
 # DMA channel 2
 @instruction(mnemonic="dma.load.ch2", params_type=DMAType, latency=1)
 def dma_load_ch2(state: ArchState, params: DMAType) -> None:
-    dram_address, vmem_address, size = _dma_operands(state, params)
+    dram_address, vmem_address, size = _dma_load_operands(state, params)
     state.issue_dma_load(2, dram_address, vmem_address, size)
 
 
 @instruction(mnemonic="dma.store.ch2", params_type=DMAType, latency=1)
 def dma_store_ch2(state: ArchState, params: DMAType) -> None:
-    dram_address, vmem_address, size = _dma_operands(state, params)
+    dram_address, vmem_address, size = _dma_store_operands(state, params)
     state.issue_dma_store(2, dram_address, vmem_address, size)
+
+
+@instruction(mnemonic="dma.config.ch2", params_type=DMAControlType, latency=1)
+def dma_config_ch2(state: ArchState, params: DMAControlType) -> None:
+    state.write_dma_base(state.read_xreg(params.rs1))
 
 
 @instruction(mnemonic="dma.wait.ch2", params_type=EmptyType, latency=1)
@@ -811,14 +921,19 @@ def dma_wait_ch2(state: ArchState, params: EmptyType) -> None:
 # DMA channel 3
 @instruction(mnemonic="dma.load.ch3", params_type=DMAType, latency=1)
 def dma_load_ch3(state: ArchState, params: DMAType) -> None:
-    dram_address, vmem_address, size = _dma_operands(state, params)
+    dram_address, vmem_address, size = _dma_load_operands(state, params)
     state.issue_dma_load(3, dram_address, vmem_address, size)
 
 
 @instruction(mnemonic="dma.store.ch3", params_type=DMAType, latency=1)
 def dma_store_ch3(state: ArchState, params: DMAType) -> None:
-    dram_address, vmem_address, size = _dma_operands(state, params)
+    dram_address, vmem_address, size = _dma_store_operands(state, params)
     state.issue_dma_store(3, dram_address, vmem_address, size)
+
+
+@instruction(mnemonic="dma.config.ch3", params_type=DMAControlType, latency=1)
+def dma_config_ch3(state: ArchState, params: DMAControlType) -> None:
+    state.write_dma_base(state.read_xreg(params.rs1))
 
 
 @instruction(mnemonic="dma.wait.ch3", params_type=EmptyType, latency=1)
@@ -830,14 +945,19 @@ def dma_wait_ch3(state: ArchState, params: EmptyType) -> None:
 # DMA channel 4
 @instruction(mnemonic="dma.load.ch4", params_type=DMAType, latency=1)
 def dma_load_ch4(state: ArchState, params: DMAType) -> None:
-    dram_address, vmem_address, size = _dma_operands(state, params)
+    dram_address, vmem_address, size = _dma_load_operands(state, params)
     state.issue_dma_load(4, dram_address, vmem_address, size)
 
 
 @instruction(mnemonic="dma.store.ch4", params_type=DMAType, latency=1)
 def dma_store_ch4(state: ArchState, params: DMAType) -> None:
-    dram_address, vmem_address, size = _dma_operands(state, params)
+    dram_address, vmem_address, size = _dma_store_operands(state, params)
     state.issue_dma_store(4, dram_address, vmem_address, size)
+
+
+@instruction(mnemonic="dma.config.ch4", params_type=DMAControlType, latency=1)
+def dma_config_ch4(state: ArchState, params: DMAControlType) -> None:
+    state.write_dma_base(state.read_xreg(params.rs1))
 
 
 @instruction(mnemonic="dma.wait.ch4", params_type=EmptyType, latency=1)
@@ -849,14 +969,19 @@ def dma_wait_ch4(state: ArchState, params: EmptyType) -> None:
 # DMA channel 5
 @instruction(mnemonic="dma.load.ch5", params_type=DMAType, latency=1)
 def dma_load_ch5(state: ArchState, params: DMAType) -> None:
-    dram_address, vmem_address, size = _dma_operands(state, params)
+    dram_address, vmem_address, size = _dma_load_operands(state, params)
     state.issue_dma_load(5, dram_address, vmem_address, size)
 
 
 @instruction(mnemonic="dma.store.ch5", params_type=DMAType, latency=1)
 def dma_store_ch5(state: ArchState, params: DMAType) -> None:
-    dram_address, vmem_address, size = _dma_operands(state, params)
+    dram_address, vmem_address, size = _dma_store_operands(state, params)
     state.issue_dma_store(5, dram_address, vmem_address, size)
+
+
+@instruction(mnemonic="dma.config.ch5", params_type=DMAControlType, latency=1)
+def dma_config_ch5(state: ArchState, params: DMAControlType) -> None:
+    state.write_dma_base(state.read_xreg(params.rs1))
 
 
 @instruction(mnemonic="dma.wait.ch5", params_type=EmptyType, latency=1)
@@ -868,14 +993,19 @@ def dma_wait_ch5(state: ArchState, params: EmptyType) -> None:
 # DMA channel 6
 @instruction(mnemonic="dma.load.ch6", params_type=DMAType, latency=1)
 def dma_load_ch6(state: ArchState, params: DMAType) -> None:
-    dram_address, vmem_address, size = _dma_operands(state, params)
+    dram_address, vmem_address, size = _dma_load_operands(state, params)
     state.issue_dma_load(6, dram_address, vmem_address, size)
 
 
 @instruction(mnemonic="dma.store.ch6", params_type=DMAType, latency=1)
 def dma_store_ch6(state: ArchState, params: DMAType) -> None:
-    dram_address, vmem_address, size = _dma_operands(state, params)
+    dram_address, vmem_address, size = _dma_store_operands(state, params)
     state.issue_dma_store(6, dram_address, vmem_address, size)
+
+
+@instruction(mnemonic="dma.config.ch6", params_type=DMAControlType, latency=1)
+def dma_config_ch6(state: ArchState, params: DMAControlType) -> None:
+    state.write_dma_base(state.read_xreg(params.rs1))
 
 
 @instruction(mnemonic="dma.wait.ch6", params_type=EmptyType, latency=1)
@@ -887,20 +1017,51 @@ def dma_wait_ch6(state: ArchState, params: EmptyType) -> None:
 # DMA channel 7
 @instruction(mnemonic="dma.load.ch7", params_type=DMAType, latency=1)
 def dma_load_ch7(state: ArchState, params: DMAType) -> None:
-    dram_address, vmem_address, size = _dma_operands(state, params)
+    dram_address, vmem_address, size = _dma_load_operands(state, params)
     state.issue_dma_load(7, dram_address, vmem_address, size)
 
 
 @instruction(mnemonic="dma.store.ch7", params_type=DMAType, latency=1)
 def dma_store_ch7(state: ArchState, params: DMAType) -> None:
-    dram_address, vmem_address, size = _dma_operands(state, params)
+    dram_address, vmem_address, size = _dma_store_operands(state, params)
     state.issue_dma_store(7, dram_address, vmem_address, size)
+
+
+@instruction(mnemonic="dma.config.ch7", params_type=DMAControlType, latency=1)
+def dma_config_ch7(state: ArchState, params: DMAControlType) -> None:
+    state.write_dma_base(state.read_xreg(params.rs1))
 
 
 @instruction(mnemonic="dma.wait.ch7", params_type=EmptyType, latency=1)
 def dma_wait_ch7(state: ArchState, params: EmptyType) -> None:
     del params
     state.wait_dma_channel(7)
+
+
+def _register_instruction_alias(alias: str, target: str) -> None:
+    spec = TENSOR_INSTRUCTION_SPECS.get(target)
+    if spec is not None:
+        TENSOR_INSTRUCTION_SPECS[alias] = spec
+    if target in ALL_INSTRUCTION_SPECS:
+        ALL_INSTRUCTION_SPECS[alias] = ALL_INSTRUCTION_SPECS[target]
+
+
+for alias, target in {
+    "vadd": "vadd.bf16",
+    "vsub": "vsub.bf16",
+    "vmul": "vmul.bf16",
+    "vmax": "vmax.bf16",
+    "vmin": "vmin.bf16",
+    "vrecip": "vrecip.bf16",
+    "transpose.xlu": "vtrpose.xlu",
+    "reduce.max.xlu": "vreduce.max.xlu",
+    "reduce.sum.xlu": "vreduce.sum.xlu",
+    "vmatpush.mxu0": "vmatpush.weight.mxu0",
+    "vmatpush.mxu1": "vmatpush.weight.mxu1",
+    "vmatpush.bf16.acc.mxu0": "vmatpush.acc.bf16.mxu0",
+    "vmatpush.bf16.acc.mxu1": "vmatpush.acc.bf16.mxu1",
+}.items():
+    _register_instruction_alias(alias, target)
 
 
 __all__ = [
@@ -933,8 +1094,22 @@ __all__ = [
     "ori",
     "seld",
     "seli",
+    "dma_config_ch0",
+    "dma_config_ch1",
+    "dma_config_ch2",
+    "dma_config_ch3",
+    "dma_config_ch4",
+    "dma_config_ch5",
+    "dma_config_ch6",
+    "dma_config_ch7",
+    "vadd_bf16",
+    "vexp",
     "vload_weight_mxu0",
     "vload_weight_mxu1",
+    "vli_all",
+    "vli_col",
+    "vli_one",
+    "vli_row",
     "vmatmul_acc_mxu0",
     "vmatmul_acc_mxu1",
     "vmatmul_mxu0",
@@ -943,10 +1118,23 @@ __all__ = [
     "vmatpop_bf16_acc_mxu1",
     "vmatpop_fp8_acc_mxu0",
     "vmatpop_fp8_acc_mxu1",
-    "vmatpush_bf16_acc_mxu0",
-    "vmatpush_bf16_acc_mxu1",
-    "vmatpush_mxu0",
-    "vmatpush_mxu1",
+    "vmatpush_acc_bf16_mxu0",
+    "vmatpush_acc_bf16_mxu1",
+    "vmatpush_acc_fp8_mxu0",
+    "vmatpush_acc_fp8_mxu1",
+    "vmatpush_weight_mxu0",
+    "vmatpush_weight_mxu1",
+    "vmax_bf16",
+    "vmin_bf16",
+    "vmov",
+    "vmul_bf16",
+    "vrecip_bf16",
+    "vreduce_max_xlu",
+    "vreduce_sum_xlu",
+    "vredsum_bf16",
+    "vrelu",
+    "vsub_bf16",
+    "vtrpose_xlu",
     "sb",
     "sh",
     "sll",
@@ -1005,5 +1193,20 @@ ssrl = srl
 ssrli = srli
 ssub = sub
 ssw = sw
+
+vadd = vadd_bf16
+vsub = vsub_bf16
+vmul = vmul_bf16
+vmax = vmax_bf16
+vmin = vmin_bf16
+vrecip = vrecip_bf16
+vredsum = vredsum_bf16
+transpose_xlu = vtrpose_xlu
+reduce_max_xlu = vreduce_max_xlu
+reduce_sum_xlu = vreduce_sum_xlu
+vmatpush_mxu0 = vmatpush_weight_mxu0
+vmatpush_mxu1 = vmatpush_weight_mxu1
+vmatpush_bf16_acc_mxu0 = vmatpush_acc_bf16_mxu0
+vmatpush_bf16_acc_mxu1 = vmatpush_acc_bf16_mxu1
 sxor = xor
 sxori = xori

@@ -52,36 +52,36 @@
     vload m14, 0(x9)
     vload m15, 0(x10)
 
-    delay 56
+    delay 63
     vmul m5, m1, m1
-    delay 1
+    delay 2
     vmul m6, m5, m1
     delay 2
     vmul m7, m6, m15
-    delay 1
+    delay 2
     vadd m8, m1, m7
-    delay 1
+    delay 2
     vmul m9, m8, m14
-    delay 1
+    delay 2
     vmul m16, m9, m12
-    delay 1
+    delay 2
     vsub m17, m10, m16
-    delay 1
+    delay 2
     vexp m18, m17
-    delay 7
+    delay 8
     vadd m19, m11, m18
-    delay 1
+    delay 2
     vrecip m20, m19
-    delay 7
+    delay 8
     vmul m21, m20, m12
-    delay 1
+    delay 2
     vsub m22, m21, m11
-    delay 1
+    delay 2
     vadd m23, m22, m11
     vmul m24, m1, m13
-    delay 1
+    delay 2
     vmul m25, m24, m23
-    delay 1
+    delay 2
     vmul m26, m25, m3
-    delay 1
+    delay 2
     vstore m26, 0(x20)

@@ -19,6 +19,7 @@ from penguin_model import (
     VMATPUSH_WEIGHT_LATENCY_CYCLES,
     VSTORE_LATENCY_CYCLES,
     ArchState,
+    DelayType,
     Instruction,
     MXUAccumulatorType,
     MXUMatmulAccType,
@@ -51,12 +52,14 @@ from penguin_model.tensor import (
 from penguin_model.testbench import TEST_CORE_CONFIG, VMEM_BASE
 
 REQUIRED_MXU_MNEMONICS = {
-    "vmatpush.mxu0",
-    "vmatpush.mxu1",
+    "vmatpush.weight.mxu0",
+    "vmatpush.weight.mxu1",
     "vload.weight.mxu0",
     "vload.weight.mxu1",
-    "vmatpush.bf16.acc.mxu0",
-    "vmatpush.bf16.acc.mxu1",
+    "vmatpush.acc.fp8.mxu0",
+    "vmatpush.acc.fp8.mxu1",
+    "vmatpush.acc.bf16.mxu0",
+    "vmatpush.acc.bf16.mxu1",
     "vmatpop.bf16.acc.mxu0",
     "vmatpop.bf16.acc.mxu1",
     "vmatpop.fp8.acc.mxu0",
@@ -137,9 +140,9 @@ def test_mxu_instruction_family_registers_with_expected_latency_classes() -> Non
     assert REQUIRED_MXU_MNEMONICS <= set(TENSOR_INSTRUCTION_SPECS)
     assert INSTRUCTION_LATENCY["vload"] == VLOAD_LATENCY_CYCLES
     assert INSTRUCTION_LATENCY["vstore"] == VSTORE_LATENCY_CYCLES
-    assert INSTRUCTION_LATENCY["vmatpush.mxu0"] == VMATPUSH_WEIGHT_LATENCY_CYCLES
+    assert INSTRUCTION_LATENCY["vmatpush.weight.mxu0"] == VMATPUSH_WEIGHT_LATENCY_CYCLES
     assert INSTRUCTION_LATENCY["vload.weight.mxu0"] == VLOAD_WEIGHT_LATENCY_CYCLES
-    assert INSTRUCTION_LATENCY["vmatpush.bf16.acc.mxu0"] == VMATPUSH_ACC_LATENCY_CYCLES
+    assert INSTRUCTION_LATENCY["vmatpush.acc.bf16.mxu0"] == VMATPUSH_ACC_LATENCY_CYCLES
     assert INSTRUCTION_LATENCY["vmatpop.bf16.acc.mxu0"] == VMATPOP_ACC_BF16_LATENCY_CYCLES
     assert INSTRUCTION_LATENCY["vmatpop.fp8.acc.mxu0"] == VMATPOP_ACC_FP8_LATENCY_CYCLES
     assert INSTRUCTION_LATENCY["vmatmul.mxu0"] == MATMUL_LATENCY_CYCLES
@@ -185,7 +188,7 @@ def test_vload_weight_push_and_vstore_use_whole_tensor_images() -> None:
     perf = core.execute(
         [
             Instruction("vload", TensorMemType(mreg=1, rs1=0, imm=act_addr)),
-            Instruction("vload.weight.mxu0", WeightMemType(slot=0, rs1=2)),
+            Instruction("vload.weight.mxu0", WeightMemType(slot=0, rs1=2, imm=0)),
             Instruction("vstore", TensorMemType(mreg=5, rs1=0, imm=store_addr)),
         ]
     )
@@ -207,9 +210,11 @@ def test_vmatpush_and_vmatpop_move_weight_and_accumulator_images() -> None:
 
     perf = core.execute(
         [
-            Instruction("vmatpush.mxu0", WeightTensorType(slot=1, ms=1)),
-            Instruction("vmatpush.bf16.acc.mxu0", MXUAccumulatorType(mreg=8)),
+            Instruction("vmatpush.weight.mxu0", WeightTensorType(slot=1, ms=1)),
+            Instruction("vmatpush.acc.bf16.mxu0", MXUAccumulatorType(mreg=8)),
+            Instruction("delay", DelayType(cycles=VMATPUSH_ACC_LATENCY_CYCLES - 1)),
             Instruction("vmatpop.bf16.acc.mxu0", MXUAccumulatorType(mreg=10)),
+            Instruction("delay", DelayType(cycles=VMATPOP_ACC_BF16_LATENCY_CYCLES - 1)),
             Instruction("vmatpop.fp8.acc.mxu0", MXUAccumulatorType(mreg=12)),
         ]
     )
@@ -224,7 +229,7 @@ def test_vmatpush_and_vmatpop_move_weight_and_accumulator_images() -> None:
         state.load_mreg(12),
         export_accum_to_fp8(state.load_accum_buffer(0), config=state.config),
     )
-    assert perf.instructions == 4
+    assert perf.instructions == 6
 
 
 @torch.no_grad()
@@ -239,6 +244,7 @@ def test_vmatmul_overwrites_accumulator_and_bf16_pop_exports_result() -> None:
     perf = core.execute(
         [
             Instruction("vmatmul.mxu0", MXUMatmulType(ms=1, ws=0)),
+            Instruction("delay", DelayType(cycles=MATMUL_LATENCY_CYCLES - 1)),
             Instruction("vmatpop.bf16.acc.mxu0", MXUAccumulatorType(mreg=2)),
         ]
     )
@@ -246,6 +252,7 @@ def test_vmatmul_overwrites_accumulator_and_bf16_pop_exports_result() -> None:
     expected = _reference_matmul(activation, weights)
     assert torch.equal(_read_result_pair(state, 2), expected)
     assert perf.instructions_by_opcode == {
+        "delay": 1,
         "vmatmul.mxu0": 1,
         "vmatpop.bf16.acc.mxu0": 1,
     }
@@ -281,9 +288,9 @@ def test_vmatpush_and_vmatpop_reject_illegal_paired_register_base() -> None:
     state = _fresh_state()
     core = Sim(state=state)
 
-    perf = core.execute([Instruction("vmatpush.bf16.acc.mxu0", MXUAccumulatorType(mreg=63))])
+    perf = core.execute([Instruction("vmatpush.acc.bf16.mxu0", MXUAccumulatorType(mreg=63))])
 
-    assert state.stop_reason == StopReason.ILLEGAL_TENSOR_REGISTER_PAIR
+    assert state.stop_reason == StopReason.ILLEGAL_INSTRUCTION
     assert perf.instructions == 0
 
 

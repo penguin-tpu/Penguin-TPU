@@ -6,6 +6,8 @@ from collections.abc import Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Callable
 
+import torch
+
 from .arch_state import ArchState, PerformanceCounters, StopReason
 from .core_config import DEFAULT_PENGUIN_CORE_CONFIG, PenguinCoreConfig
 from .exu import (
@@ -21,6 +23,7 @@ from .ifu import InstructionFetch
 from .instructions import (
     ALL_INSTRUCTION_SPECS,
     BType,
+    DMAControlType,
     DMAType,
     DelayType,
     EmptyType,
@@ -36,11 +39,12 @@ from .instructions import (
     SType,
     TensorMemType,
     UType,
+    VectorImmType,
     VPUBinaryType,
     VPUUnaryType,
     WeightMemType,
     WeightTensorType,
-    XLUTransposeType,
+    XLUUnaryType,
 )
 from .isa import SCALAR_LOAD_MNEMONICS
 from .memory import Memory
@@ -54,6 +58,7 @@ from .tensor import (
     compute_bf16_row_reduce_sum,
     compute_bf16_transpose,
     compute_bf16_vadd,
+    compute_bf16_vredsum,
     compute_bf16_vexp,
     compute_bf16_vmax,
     compute_bf16_vmin,
@@ -63,6 +68,8 @@ from .tensor import (
     compute_bf16_vsub,
     compute_bf16_vmul,
     export_accum_to_fp8,
+    fp8_tile_from_bytes,
+    compute_vector_immediate_fill,
 )
 from .uop import PipelineUop
 
@@ -141,7 +148,9 @@ def _format_instruction(instruction: Instruction) -> str:
     if isinstance(params, DelayType):
         return f"{mnemonic} {params.cycles}"
     if isinstance(params, DMAType):
-        return f"{mnemonic} x{params.dram_rs}, x{params.vmem_rs}, x{params.size_rs}"
+        return f"{mnemonic} x{params.rd}, x{params.rs1}, x{params.rs2}"
+    if isinstance(params, DMAControlType):
+        return f"{mnemonic} x{params.rs1}"
     if isinstance(params, ScaleImmType):
         return f"{mnemonic} e{params.ed}, {params.imm}"
     if isinstance(params, ScaleMemType):
@@ -149,7 +158,7 @@ def _format_instruction(instruction: Instruction) -> str:
     if isinstance(params, TensorMemType):
         return f"{mnemonic} m{params.mreg}, {params.imm}(x{params.rs1})"
     if isinstance(params, WeightMemType):
-        return f"{mnemonic} w{params.slot}, x{params.rs1}"
+        return f"{mnemonic} w{params.slot}, {params.imm}(x{params.rs1})"
     if isinstance(params, WeightTensorType):
         return f"{mnemonic} w{params.slot}, m{params.ms}"
     if isinstance(params, MXUAccumulatorType):
@@ -162,7 +171,9 @@ def _format_instruction(instruction: Instruction) -> str:
         return f"{mnemonic} m{params.md}, m{params.ms1}, m{params.ms2}"
     if isinstance(params, VPUUnaryType):
         return f"{mnemonic} m{params.md}, m{params.ms}"
-    if isinstance(params, XLUTransposeType):
+    if isinstance(params, VectorImmType):
+        return f"{mnemonic} m{params.md}, {params.imm}"
+    if isinstance(params, XLUUnaryType):
         return f"{mnemonic} m{params.md}, m{params.ms}"
     return f"{mnemonic} {params}"
 
@@ -178,7 +189,7 @@ def _execute_lane_for_instruction(instruction: Instruction) -> int:
         return MXU1_LANE
     if isinstance(instruction.params, (VPUBinaryType, VPUUnaryType)):
         return VPU_LANE
-    if isinstance(instruction.params, XLUTransposeType):
+    if isinstance(instruction.params, XLUUnaryType):
         return XLU_LANE
     return SALU_LANE
 
@@ -227,21 +238,24 @@ def _lane_occupancy_cycles(instruction: Instruction, execute_lane: int, total_la
         return 1
     if instruction.mnemonic.startswith(
         (
-            "vmatpush.mxu",
+            "vmatpush.weight.",
             "vload.weight.",
-            "vmatpush.bf16.acc.",
+            "vmatpush.acc.fp8.",
+            "vmatpush.acc.bf16.",
             "vmatpop.bf16.acc.",
             "vmatpop.fp8.acc.",
         )
     ):
         return 1
+    if isinstance(instruction.params, VectorImmType):
+        return 1
     if isinstance(instruction.params, VPUBinaryType):
         return 1
     if isinstance(instruction.params, VPUUnaryType):
-        if instruction.mnemonic in {"vexp", "vrecip"}:
+        if instruction.mnemonic in {"vexp", "vrecip.bf16", "vrecip"}:
             return total_latency
         return 1
-    if isinstance(instruction.params, XLUTransposeType):
+    if isinstance(instruction.params, XLUUnaryType):
         return 1
     if _is_async_tensor_lane(execute_lane):
         return total_latency
@@ -257,25 +271,29 @@ def _instruction_latency_cycles(
         return state.config.vload_latency_cycles
     if instruction.mnemonic == "vstore":
         return state.config.vstore_latency_cycles
-    if instruction.mnemonic.startswith("vmatpush.mxu"):
+    if instruction.mnemonic.startswith("vmatpush.weight."):
         return state.config.vmatpush_weight_latency_cycles
     if instruction.mnemonic.startswith("vload.weight."):
         return state.config.vload_weight_latency_cycles
-    if instruction.mnemonic.startswith("vmatpush.bf16.acc."):
+    if instruction.mnemonic.startswith("vmatpush.acc.bf16."):
         return state.config.vmatpush_acc_latency_cycles
+    if instruction.mnemonic.startswith("vmatpush.acc.fp8."):
+        return state.config.vmatpop_acc_fp8_latency_cycles
     if instruction.mnemonic.startswith("vmatpop.bf16.acc."):
         return state.config.vmatpop_acc_bf16_latency_cycles
     if instruction.mnemonic.startswith("vmatpop.fp8.acc."):
         return state.config.vmatpop_acc_fp8_latency_cycles
     if instruction.mnemonic.startswith("vmatmul"):
         return state.config.matmul_latency_cycles
+    if isinstance(instruction.params, VectorImmType):
+        return state.config.vpu_simple_op_latency_cycles
     if isinstance(instruction.params, VPUBinaryType):
         return state.config.vpu_simple_op_latency_cycles
     if isinstance(instruction.params, VPUUnaryType):
-        if instruction.mnemonic in {"vexp", "vrecip"}:
+        if instruction.mnemonic in {"vexp", "vrecip.bf16", "vrecip"}:
             return state.config.vpu_non_pipelineable_op_latency_cycles
         return state.config.vpu_simple_op_latency_cycles
-    if isinstance(instruction.params, XLUTransposeType):
+    if isinstance(instruction.params, XLUUnaryType):
         return state.config.xlu_transpose_latency_cycles
     return default_latency
 
@@ -638,9 +656,12 @@ class Core:
         elif isinstance(params, MXUAccumulatorType):
             mxu = 0 if instruction.mnemonic.endswith("mxu0") else 1
             wait_accum(mxu)
-            if instruction.mnemonic.startswith("vmatpush.bf16.acc."):
+            if instruction.mnemonic.startswith(("vmatpush.acc.bf16.", "vmatpush.bf16.acc.")):
                 wait_mreg(params.mreg)
                 wait_mreg(params.mreg + 1)
+                wait_accum_write(mxu)
+            elif instruction.mnemonic.startswith("vmatpush.acc.fp8."):
+                wait_mreg(params.mreg)
                 wait_accum_write(mxu)
             elif instruction.mnemonic.startswith("vmatpop.bf16.acc."):
                 wait_mreg_write(params.mreg)
@@ -661,13 +682,18 @@ class Core:
         elif isinstance(params, VPUUnaryType):
             wait_mreg(params.ms)
             wait_mreg_write(params.md)
-        elif isinstance(params, XLUTransposeType):
+        elif isinstance(params, VectorImmType):
+            wait_mreg_write(params.md)
+        elif isinstance(params, XLUUnaryType):
             wait_mreg(params.ms)
             wait_mreg_write(params.md)
         elif isinstance(params, DMAType):
-            wait_xreg(params.dram_rs)
-            wait_xreg(params.vmem_rs)
-            wait_xreg(params.size_rs)
+            wait_xreg(params.rd)
+            wait_xreg(params.rs1)
+            wait_xreg(params.rs2)
+            wait_vmem()
+        elif isinstance(params, DMAControlType):
+            wait_xreg(params.rs1)
             wait_vmem()
 
         return ready_cycle
@@ -725,7 +751,9 @@ class Core:
             reserve_accum(0 if instruction.mnemonic.endswith("mxu0") else 1)
         elif isinstance(params, DMAType):
             reserve_vmem(completion_cycle)
-        elif isinstance(params, VPUBinaryType | VPUUnaryType | XLUTransposeType):
+        elif isinstance(params, DMAControlType):
+            pass
+        elif isinstance(params, VPUBinaryType | VPUUnaryType | VectorImmType | XLUUnaryType):
             reserve_mreg(params.md)
 
     def _reserve_instruction_reads(self, instruction: Instruction, execute_start_cycle: int) -> None:
@@ -777,9 +805,11 @@ class Core:
         elif isinstance(params, MXUAccumulatorType):
             mxu = 0 if instruction.mnemonic.endswith("mxu0") else 1
             reserve_accum(mxu)
-            if instruction.mnemonic.startswith("vmatpush.bf16.acc."):
+            if instruction.mnemonic.startswith(("vmatpush.acc.bf16.", "vmatpush.bf16.acc.")):
                 reserve_mreg(params.mreg)
                 reserve_mreg(params.mreg + 1)
+            elif instruction.mnemonic.startswith("vmatpush.acc.fp8."):
+                reserve_mreg(params.mreg)
         elif isinstance(params, MXUMatmulType | MXUMatmulAccType):
             mxu = 0 if instruction.mnemonic.endswith("mxu0") else 1
             reserve_mreg(params.ms)
@@ -791,12 +821,14 @@ class Core:
             reserve_mreg(params.ms2)
         elif isinstance(params, VPUUnaryType):
             reserve_mreg(params.ms)
-        elif isinstance(params, XLUTransposeType):
+        elif isinstance(params, XLUUnaryType):
             reserve_mreg(params.ms)
         elif isinstance(params, DMAType):
-            reserve_xreg(params.dram_rs)
-            reserve_xreg(params.vmem_rs)
-            reserve_xreg(params.size_rs)
+            reserve_xreg(params.rd)
+            reserve_xreg(params.rs1)
+            reserve_xreg(params.rs2)
+        elif isinstance(params, DMAControlType):
+            reserve_xreg(params.rs1)
 
     def _build_async_callbacks(
         self,
@@ -828,7 +860,7 @@ class Core:
 
             def on_start(cycle: int) -> None:
                 del cycle
-                address = self.state.read_xreg(params.rs1)
+                address = self.state.resolve_indirect_address(params.rs1, params.imm)
                 if not self.state._check_tensor_alignment(address):
                     return
                 captured["address"] = address
@@ -859,15 +891,17 @@ class Core:
 
             def on_start(cycle: int) -> None:
                 del cycle
-                if instruction.mnemonic.startswith("vmatpush.bf16.acc."):
-                    if not self.state.check_mreg_pair_base(params.mreg):
+                if instruction.mnemonic.startswith(("vmatpush.acc.bf16.", "vmatpush.bf16.acc.")):
+                    if not self.state.check_even_mreg_pair_base(params.mreg):
                         return
                     captured["payload"] = (
                         self.state.load_mreg(params.mreg).clone(),
                         self.state.load_mreg(params.mreg + 1).clone(),
                     )
+                elif instruction.mnemonic.startswith("vmatpush.acc.fp8."):
+                    captured["payload"] = self.state.load_mreg(params.mreg).clone()
                 elif instruction.mnemonic.startswith("vmatpop.bf16.acc."):
-                    if not self.state.check_mreg_pair_base(params.mreg):
+                    if not self.state.check_even_mreg_pair_base(params.mreg):
                         return
                     captured["payload"] = self.state.load_accum_buffer(mxu)
                 else:
@@ -877,7 +911,7 @@ class Core:
                 if "payload" not in captured:
                     return
                 self.state.trace_end_cycle = self._trace_cycle(cycle)
-                if instruction.mnemonic.startswith("vmatpush.bf16.acc."):
+                if instruction.mnemonic.startswith(("vmatpush.acc.bf16.", "vmatpush.bf16.acc.")):
                     raw_lo, raw_hi = captured["payload"]
                     self.state.store_accum_buffer(
                         mxu,
@@ -886,6 +920,16 @@ class Core:
                                 raw_lo,
                                 raw_hi,
                                 config=self.state.config,
+                            ),
+                            config=self.state.config,
+                        ),
+                    )
+                elif instruction.mnemonic.startswith("vmatpush.acc.fp8."):
+                    self.state.store_accum_buffer(
+                        mxu,
+                        accum_tile_to_bytes(
+                            fp8_tile_from_bytes(captured["payload"], config=self.state.config).to(
+                                torch.bfloat16
                             ),
                             config=self.state.config,
                         ),
@@ -943,10 +987,15 @@ class Core:
             captured: dict[str, object] = {}
             op = {
                 "vadd": compute_bf16_vadd,
+                "vadd.bf16": compute_bf16_vadd,
                 "vmul": compute_bf16_vmul,
+                "vmul.bf16": compute_bf16_vmul,
                 "vsub": compute_bf16_vsub,
+                "vsub.bf16": compute_bf16_vsub,
                 "vmax": compute_bf16_vmax,
+                "vmax.bf16": compute_bf16_vmax,
                 "vmin": compute_bf16_vmin,
+                "vmin.bf16": compute_bf16_vmin,
             }[instruction.mnemonic]
 
             def on_start(cycle: int) -> None:
@@ -968,10 +1017,12 @@ class Core:
         if isinstance(params, VPUUnaryType):
             captured: dict[str, object] = {}
             op = {
+                "vredsum.bf16": compute_bf16_vredsum,
                 "vrelu": compute_bf16_vrelu,
                 "vmov": compute_bf16_vmov,
                 "vexp": compute_bf16_vexp,
                 "vrecip": compute_bf16_vrecip,
+                "vrecip.bf16": compute_bf16_vrecip,
             }[instruction.mnemonic]
 
             def on_start(cycle: int) -> None:
@@ -986,12 +1037,28 @@ class Core:
 
             return on_start, on_complete
 
-        if isinstance(params, XLUTransposeType):
+        if isinstance(params, VectorImmType):
+            def on_start(cycle: int) -> None:
+                del cycle
+
+            def on_complete(cycle: int) -> None:
+                self.state.trace_end_cycle = self._trace_cycle(completion_cycle)
+                self.state.store_mreg(
+                    params.md,
+                    compute_vector_immediate_fill(params.imm, mode=instruction.mnemonic.split(".")[1], config=self.state.config),
+                )
+
+            return on_start, on_complete
+
+        if isinstance(params, XLUUnaryType):
             captured: dict[str, object] = {}
             op = {
                 "transpose.xlu": compute_bf16_transpose,
+                "vtrpose.xlu": compute_bf16_transpose,
                 "reduce.max.xlu": compute_bf16_row_reduce_max,
+                "vreduce.max.xlu": compute_bf16_row_reduce_max,
                 "reduce.sum.xlu": compute_bf16_row_reduce_sum,
+                "vreduce.sum.xlu": compute_bf16_row_reduce_sum,
             }[instruction.mnemonic]
 
             def on_start(cycle: int) -> None:
@@ -1215,10 +1282,8 @@ class Core:
         execute_lane = _UNIT_LANES[unit_key]
         total_latency = _instruction_latency_cycles(self.state, instruction, spec.latency)
         lane_occupancy = _lane_occupancy_cycles(instruction, execute_lane, total_latency)
-        operand_ready_cycle = self._instruction_operand_ready_cycle(instruction)
         execute_start_cycle = max(
             cycle + 1,
-            operand_ready_cycle,
             self._unit_next_available_cycle[unit_key],
         )
         completion_cycle = execute_start_cycle + total_latency
@@ -1240,13 +1305,11 @@ class Core:
                 cycle=self._trace_cycle(uop.dispatch_end_cycle),
             )
 
-        self._reserve_instruction_destinations(instruction, completion_cycle)
-        self._reserve_instruction_reads(instruction, execute_start_cycle)
         self._unit_next_available_cycle[unit_key] = execute_start_cycle + lane_occupancy
         if isinstance(instruction.params, DMAType):
             channel = _dma_channel_for_instruction(instruction)
             if channel is not None:
-                predicted_size = self.state.read_xreg(instruction.params.size_rs)
+                predicted_size = self.state.read_xreg(instruction.params.rs2)
                 predicted_ready_cycle = execute_start_cycle + self.state.config.dma_transfer_cycles(
                     predicted_size
                 )

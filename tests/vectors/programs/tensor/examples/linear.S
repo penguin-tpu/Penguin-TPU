@@ -59,12 +59,13 @@
 
     seli e0, 0
     seli e1, 0
-    dma.load.ch0 x1, x4, x28
-    dma.load.ch1 x2, x5, x28
-    dma.load.ch2 x10, x6, x28
-    dma.load.ch3 x11, x7, x28
-    dma.load.ch4 x12, x14, x29
-    dma.load.ch5 x13, x15, x29
+    dma.config.ch0 x0
+    dma.load.ch0 x4, x1, x28
+    dma.load.ch1 x5, x2, x28
+    dma.load.ch2 x6, x10, x28
+    dma.load.ch3 x7, x11, x28
+    dma.load.ch4 x14, x12, x29
+    dma.load.ch5 x15, x13, x29
     dma.wait.ch5
     dma.wait.ch4
     dma.wait.ch3

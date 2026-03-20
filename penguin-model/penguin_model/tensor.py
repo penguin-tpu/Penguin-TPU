@@ -452,11 +452,12 @@ def compute_bf16_row_reduce_max(
     *,
     config: PenguinCoreConfig = DEFAULT_PENGUIN_CORE_CONFIG,
 ) -> torch.Tensor:
-    """Reduce BF16 rows to one maximum and broadcast it across each row."""
+    """Reduce each BF16 row to one maximum and write the result into column zero."""
 
     src = bf16_tile_from_bytes(src_raw, config=config).to(torch.float32)
-    reduced = torch.amax(src, dim=1, keepdim=True).expand_as(src)
-    return bf16_tile_to_bytes(reduced.to(BF16_DTYPE), config=config)
+    result = torch.zeros_like(src)
+    result[:, 0] = torch.amax(src, dim=1)
+    return bf16_tile_to_bytes(result.to(BF16_DTYPE), config=config)
 
 
 def compute_bf16_row_reduce_sum(
@@ -464,11 +465,51 @@ def compute_bf16_row_reduce_sum(
     *,
     config: PenguinCoreConfig = DEFAULT_PENGUIN_CORE_CONFIG,
 ) -> torch.Tensor:
-    """Reduce BF16 rows to one sum and broadcast it across each row."""
+    """Reduce each BF16 row to one sum and write the result into column zero."""
 
     src = bf16_tile_from_bytes(src_raw, config=config).to(torch.float32)
-    reduced = torch.sum(src, dim=1, keepdim=True).expand_as(src)
-    return bf16_tile_to_bytes(reduced.to(BF16_DTYPE), config=config)
+    result = torch.zeros_like(src)
+    result[:, 0] = torch.sum(src, dim=1)
+    return bf16_tile_to_bytes(result.to(BF16_DTYPE), config=config)
+
+
+def compute_bf16_vredsum(
+    src_raw: torch.Tensor,
+    *,
+    config: PenguinCoreConfig = DEFAULT_PENGUIN_CORE_CONFIG,
+) -> torch.Tensor:
+    """Reduce BF16 columns into one row and write the result into row zero."""
+
+    src = bf16_tile_from_bytes(src_raw, config=config).to(torch.float32)
+    result = torch.zeros_like(src)
+    result[0, :] = torch.sum(src, dim=0)
+    return bf16_tile_to_bytes(result.to(BF16_DTYPE), config=config)
+
+
+def compute_vector_immediate_fill(
+    imm16: int,
+    *,
+    mode: str,
+    config: PenguinCoreConfig = DEFAULT_PENGUIN_CORE_CONFIG,
+) -> torch.Tensor:
+    """Materialize one BF16 whole-register immediate pattern."""
+
+    value = torch.tensor([imm16 & 0xFFFF], dtype=torch.uint16).view(BF16_DTYPE)[0]
+    tile = torch.zeros(
+        (config.tensor.mreg_rows, config.mreg_bf16_cols),
+        dtype=BF16_DTYPE,
+    )
+    if mode == "all":
+        tile[:, :] = value
+    elif mode == "row":
+        tile[0, :] = value
+    elif mode == "col":
+        tile[:, 0] = value
+    elif mode == "one":
+        tile[0, 0] = value
+    else:
+        raise ValueError(f"unsupported vector immediate fill mode: {mode}")
+    return bf16_tile_to_bytes(tile, config=config)
 
 
 def compute_bf16_transpose(
@@ -525,6 +566,8 @@ __all__ = [
     "compute_bf16_row_reduce_max",
     "compute_bf16_row_reduce_sum",
     "compute_bf16_transpose",
+    "compute_bf16_vredsum",
+    "compute_vector_immediate_fill",
     "compute_bf16_vadd",
     "compute_bf16_vexp",
     "compute_bf16_vmax",

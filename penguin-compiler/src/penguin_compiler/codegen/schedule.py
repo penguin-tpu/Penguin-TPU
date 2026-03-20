@@ -1,4 +1,4 @@
-"""Static hazard scheduler for fixed Penguin assembly programs."""
+"""Static dependency scheduler for fixed Penguin assembly programs."""
 
 from __future__ import annotations
 
@@ -58,7 +58,7 @@ def schedule_assembly_text(
     base_address: int = IMEM_BASE,
     source_name: str = "<memory>",
 ) -> str:
-    """Insert `delay N` instructions so consumers do not outrun fixed producer latencies."""
+    """Insert `delay N` instructions so software-visible dependencies are explicit."""
 
     records, trailing_lines = _parse_source_structure(
         source,
@@ -188,12 +188,14 @@ def _instruction_latency_cycles(
         return config.vload_latency_cycles
     if mnemonic == "vstore":
         return config.vstore_latency_cycles
-    if mnemonic.startswith("vmatpush.mxu"):
+    if mnemonic.startswith("vmatpush.weight."):
         return config.vmatpush_weight_latency_cycles
     if mnemonic.startswith("vload.weight."):
         return config.vload_weight_latency_cycles
-    if mnemonic.startswith("vmatpush.bf16.acc."):
+    if mnemonic.startswith(("vmatpush.acc.bf16.", "vmatpush.bf16.acc.")):
         return config.vmatpush_acc_latency_cycles
+    if mnemonic.startswith("vmatpush.acc.fp8."):
+        return config.vmatpop_acc_fp8_latency_cycles
     if mnemonic.startswith("vmatpop.bf16.acc."):
         return config.vmatpop_acc_bf16_latency_cycles
     if mnemonic.startswith("vmatpop.fp8.acc."):
@@ -203,7 +205,7 @@ def _instruction_latency_cycles(
     if isinstance(params, VPUBinaryType):
         return config.vpu_simple_op_latency_cycles
     if isinstance(params, VPUUnaryType):
-        if mnemonic in {"vexp", "vrecip"}:
+        if mnemonic in {"vexp", "vrecip", "vrecip.bf16"}:
             return config.vpu_non_pipelineable_op_latency_cycles
         return config.vpu_simple_op_latency_cycles
     if isinstance(params, XLUTransposeType):
@@ -229,7 +231,7 @@ def _read_resources(instruction: Instruction) -> tuple[tuple[str, int], ...]:
     if isinstance(params, UType | JType | EmptyType | DelayType):
         return ()
     if isinstance(params, DMAType):
-        resources = list(_xregs(params.dram_rs, params.vmem_rs, params.size_rs))
+        resources = list(_xregs(params.rd, params.rs1, params.rs2))
         if mnemonic.startswith("dma.store."):
             resources.append(("vmem", 0))
         return tuple(resources)
@@ -250,7 +252,7 @@ def _read_resources(instruction: Instruction) -> tuple[tuple[str, int], ...]:
         return (("mreg", params.ms),)
     if isinstance(params, MXUAccumulatorType):
         mxu = _mxu_index(mnemonic)
-        if mnemonic.startswith("vmatpush.bf16.acc."):
+        if mnemonic.startswith(("vmatpush.acc.bf16.", "vmatpush.bf16.acc.")):
             return (("mreg", params.mreg), ("mreg", params.mreg + 1))
         return (("accum", mxu),)
     if isinstance(params, MXUMatmulType):
@@ -291,7 +293,7 @@ def _write_resources(instruction: Instruction) -> tuple[tuple[str, int], ...]:
         return (("weight", _weight_resource_index(mnemonic, params.slot)),)
     if isinstance(params, MXUAccumulatorType):
         mxu = _mxu_index(mnemonic)
-        if mnemonic.startswith("vmatpush.bf16.acc."):
+        if mnemonic.startswith(("vmatpush.acc.bf16.", "vmatpush.bf16.acc.")):
             return (("accum", mxu),)
         if mnemonic.startswith("vmatpop.bf16.acc."):
             return (("mreg", params.mreg), ("mreg", params.mreg + 1))
@@ -349,7 +351,7 @@ def _format_instruction(
     if isinstance(params, DelayType):
         return f"{mnemonic} {params.cycles}"
     if isinstance(params, DMAType):
-        return f"{mnemonic} x{params.dram_rs}, x{params.vmem_rs}, x{params.size_rs}"
+        return f"{mnemonic} x{params.rd}, x{params.rs1}, x{params.rs2}"
     if isinstance(params, ScaleImmType):
         return f"{mnemonic} e{params.ed}, {params.imm}"
     if isinstance(params, ScaleMemType):

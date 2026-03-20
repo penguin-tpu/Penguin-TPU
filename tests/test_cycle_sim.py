@@ -87,8 +87,8 @@ def test_tick_models_dma_wait_as_a_per_channel_decode_fence() -> None:
     state.dram.write(DRAM_BASE + 0x300, payload_ch1)
 
     program = [
-        Instruction("dma.load.ch0", DMAType(dram_rs=1, vmem_rs=2, size_rs=3)),
-        Instruction("dma.load.ch1", DMAType(dram_rs=4, vmem_rs=5, size_rs=6)),
+        Instruction("dma.load.ch0", DMAType(rd=2, rs1=1, rs2=3)),
+        Instruction("dma.load.ch1", DMAType(rd=5, rs1=4, rs2=6)),
         Instruction("dma.wait.ch1", EmptyType()),
         Instruction("addi", IType(rd=10, rs1=0, imm=1)),
         Instruction("dma.wait.ch0", EmptyType()),

@@ -66,6 +66,17 @@ What exists now:
 - the formal execution-model baseline now explicitly drops architectural register
   dependency checks in tensor issue and treats `vload` / `vstore` as deterministic
   fixed-latency on-chip transfers
+- the functional/perf model is now aligned with the latest baseline spec refresh:
+  - canonical tensor mnemonics use the frozen `vmatpush.weight.*`,
+    `vmatpush.acc.fp8.*`, `vmatpush.acc.bf16.*`, `vtrpose.xlu`, `vreduce.*.xlu`,
+    `vredsum.bf16`, and `vli.*` spellings
+  - DMA now follows the shared `dma.base` contract with explicit `dma.config.chN`
+    plus `dma.load.chN rd, rs1, rs2` / `dma.store.chN rd, rs1, rs2` operand ordering
+  - the cycle model now reflects the current frontend rule that only decode-resident
+    `dma.wait.chN` and scalar `delay` block younger issue; ordinary scalar/tensor data
+    dependencies are software-scheduled
+  - compiler-emitted Gemma stage bundles now preserve the checked-in scheduled source
+    exactly instead of re-scheduling away explicit `delay` instructions
 - historical notes later in this file may still mention earlier `32 x 32` / `2048`-byte
   tensor baselines and should not be treated as normative
 - fixed-shape Gemma-inspired examples now exist under `examples/` and run as staged
@@ -150,7 +161,7 @@ What exists now:
   - generated scalar directed vectors no longer place control-flow ops in delay slots
   - trace tests now explicitly cover illegal control flow in both the first and second
     delay-slot positions, including the case where the older branch is not taken
-  - the software + cocotb regression target `uv run pytest` now passes at `394` tests
+- the software + cocotb regression target `uv run pytest` now passes at `392` tests
 - user-facing READMEs now describe the real current software surfaces rather than the
   original scaffold-only state:
   - current example entry points

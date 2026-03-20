@@ -12,6 +12,7 @@ from . import isa as _isa  # noqa: F401
 from .instructions import (
     ALL_INSTRUCTION_SPECS,
     BType,
+    DMAControlType,
     DMAType,
     DelayType,
     EmptyType,
@@ -28,8 +29,9 @@ from .instructions import (
     SType,
     TensorMemType,
     UType,
+    VectorImmType,
     WeightTensorType,
-    XLUTransposeType,
+    XLUUnaryType,
     VPUBinaryType,
     VPUUnaryType,
     WeightMemType,
@@ -85,6 +87,19 @@ _MNEMONIC_ALIASES: Mapping[str, str] = {
     "sebreak": "ebreak",
     "sld": "lw",
     "sst": "sw",
+    "vadd": "vadd.bf16",
+    "vsub": "vsub.bf16",
+    "vmul": "vmul.bf16",
+    "vmax": "vmax.bf16",
+    "vmin": "vmin.bf16",
+    "vrecip": "vrecip.bf16",
+    "transpose.xlu": "vtrpose.xlu",
+    "reduce.max.xlu": "vreduce.max.xlu",
+    "reduce.sum.xlu": "vreduce.sum.xlu",
+    "vmatpush.mxu0": "vmatpush.weight.mxu0",
+    "vmatpush.mxu1": "vmatpush.weight.mxu1",
+    "vmatpush.bf16.acc.mxu0": "vmatpush.acc.bf16.mxu0",
+    "vmatpush.bf16.acc.mxu1": "vmatpush.acc.bf16.mxu1",
 }
 _I_TYPE_MEMORY_MNEMONICS = frozenset({"lb", "lh", "lw", "lbu", "lhu", "seld"})
 
@@ -547,14 +562,31 @@ def _assemble_instruction(
         return Instruction(
             mnemonic,
             DMAType(
-                dram_rs=_parse_register(
+                rd=_parse_register(
                     operands[0], source_name=source_name, line_number=line.line_number
                 ),
-                vmem_rs=_parse_register(
+                rs1=_parse_register(
                     operands[1], source_name=source_name, line_number=line.line_number
                 ),
-                size_rs=_parse_register(
+                rs2=_parse_register(
                     operands[2], source_name=source_name, line_number=line.line_number
+                ),
+            ),
+        )
+
+    if spec.params_type is DMAControlType:
+        _expect_operand_count(
+            mnemonic,
+            operands,
+            expected=1,
+            source_name=source_name,
+            line_number=line.line_number,
+        )
+        return Instruction(
+            mnemonic,
+            DMAControlType(
+                rs1=_parse_register(
+                    operands[0], source_name=source_name, line_number=line.line_number
                 ),
             ),
         )
@@ -593,15 +625,27 @@ def _assemble_instruction(
             source_name=source_name,
             line_number=line.line_number,
         )
+        try:
+            rs1, imm = _parse_memory_operand(
+                operands[1],
+                labels=labels,
+                pc=pc,
+                source_name=source_name,
+                line_number=line.line_number,
+            )
+        except AssemblySyntaxError:
+            rs1 = _parse_register(
+                operands[1], source_name=source_name, line_number=line.line_number
+            )
+            imm = 0
         return Instruction(
             mnemonic,
             WeightMemType(
                 slot=_parse_weight_selector(
                     operands[0], source_name=source_name, line_number=line.line_number
                 ),
-                rs1=_parse_register(
-                    operands[1], source_name=source_name, line_number=line.line_number
-                ),
+                rs1=rs1,
+                imm=imm,
             ),
         )
 
@@ -725,7 +769,7 @@ def _assemble_instruction(
             ),
         )
 
-    if spec.params_type is XLUTransposeType:
+    if spec.params_type is VectorImmType:
         _expect_operand_count(
             mnemonic,
             operands,
@@ -735,7 +779,32 @@ def _assemble_instruction(
         )
         return Instruction(
             mnemonic,
-            XLUTransposeType(
+            VectorImmType(
+                md=_parse_mregister(
+                    operands[0], source_name=source_name, line_number=line.line_number
+                ),
+                imm=_evaluate_expression(
+                    operands[1],
+                    labels=labels,
+                    pc=pc,
+                    relative_to_pc=False,
+                    source_name=source_name,
+                    line_number=line.line_number,
+                ),
+            ),
+        )
+
+    if spec.params_type is XLUUnaryType:
+        _expect_operand_count(
+            mnemonic,
+            operands,
+            expected=2,
+            source_name=source_name,
+            line_number=line.line_number,
+        )
+        return Instruction(
+            mnemonic,
+            XLUUnaryType(
                 md=_parse_mregister(
                     operands[0], source_name=source_name, line_number=line.line_number
                 ),

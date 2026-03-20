@@ -90,9 +90,9 @@ def test_assembler_parses_tensor_memory_and_mxu_operands() -> None:
         Instruction("seli", ScaleImmType(ed=1, imm=0)),
         Instruction("seld", ScaleMemType(ed=2, rs1=7, imm=4)),
         Instruction("vload", TensorMemType(mreg=3, rs1=1, imm=32)),
-        Instruction("vmatpush.mxu1", WeightTensorType(slot=0, ms=8)),
-        Instruction("vload.weight.mxu0", WeightMemType(slot=1, rs1=2)),
-        Instruction("vmatpush.bf16.acc.mxu1", MXUAccumulatorType(mreg=4)),
+        Instruction("vmatpush.weight.mxu1", WeightTensorType(slot=0, ms=8)),
+        Instruction("vload.weight.mxu0", WeightMemType(slot=1, rs1=2, imm=0)),
+        Instruction("vmatpush.acc.bf16.mxu1", MXUAccumulatorType(mreg=4)),
         Instruction("vmatmul.mxu0", MXUMatmulType(ms=7, ws=1)),
         Instruction("vmatmul.acc.mxu1", MXUMatmulAccType(ms=3, ws=0)),
         Instruction("vmatpop.bf16.acc.mxu1", MXUAccumulatorType(mreg=4)),
@@ -117,15 +117,15 @@ def test_assembler_parses_vpu_operands() -> None:
     )
 
     assert list(program) == [
-        Instruction("vadd", VPUBinaryType(md=7, ms1=8, ms2=9)),
-        Instruction("vsub", VPUBinaryType(md=10, ms1=11, ms2=12)),
-        Instruction("vmax", VPUBinaryType(md=13, ms1=14, ms2=15)),
-        Instruction("vmin", VPUBinaryType(md=16, ms1=17, ms2=18)),
-        Instruction("vmul", VPUBinaryType(md=19, ms1=20, ms2=21)),
+        Instruction("vadd.bf16", VPUBinaryType(md=7, ms1=8, ms2=9)),
+        Instruction("vsub.bf16", VPUBinaryType(md=10, ms1=11, ms2=12)),
+        Instruction("vmax.bf16", VPUBinaryType(md=13, ms1=14, ms2=15)),
+        Instruction("vmin.bf16", VPUBinaryType(md=16, ms1=17, ms2=18)),
+        Instruction("vmul.bf16", VPUBinaryType(md=19, ms1=20, ms2=21)),
         Instruction("vrelu", VPUUnaryType(md=22, ms=23)),
         Instruction("vmov", VPUUnaryType(md=24, ms=25)),
         Instruction("vexp", VPUUnaryType(md=26, ms=27)),
-        Instruction("vrecip", VPUUnaryType(md=28, ms=29)),
+        Instruction("vrecip.bf16", VPUUnaryType(md=28, ms=29)),
     ]
 
 
@@ -145,9 +145,9 @@ def test_assembler_parses_xlu_operands() -> None:
     )
 
     assert list(program) == [
-        Instruction("transpose.xlu", XLUTransposeType(md=14, ms=15)),
-        Instruction("reduce.max.xlu", XLUTransposeType(md=16, ms=17)),
-        Instruction("reduce.sum.xlu", XLUTransposeType(md=18, ms=19)),
+        Instruction("vtrpose.xlu", XLUTransposeType(md=14, ms=15)),
+        Instruction("vreduce.max.xlu", XLUTransposeType(md=16, ms=17)),
+        Instruction("vreduce.sum.xlu", XLUTransposeType(md=18, ms=19)),
     ]
 
 

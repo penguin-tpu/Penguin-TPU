@@ -27,7 +27,9 @@ VMEM_BASE = TEST_CORE_CONFIG.memory_map.vmem.base
 def fresh_arch_state(
     config: PenguinCoreConfig = TEST_CORE_CONFIG,
 ) -> ArchState:
-    return ArchState.from_config(config)
+    state = ArchState.from_config(config)
+    state.write_dma_base(0)
+    return state
 
 
 def preload_words(memory, words: dict[int, int]) -> None:

@@ -26,15 +26,15 @@ def test_gemma_attention_example_matches_reference_and_emits_stage_bundles(tmp_p
     assert result.trace_path.exists()
     assert tuple(result.output.shape) == (64, 32)
     assert torch.equal(result.output, result.golden)
-    assert result.perf.instructions == 350
-    assert result.perf.cycles == 2_907
-    assert result.perf.instructions_by_opcode["transpose.xlu"] == 1
+    assert result.perf.instructions == 26_096
+    assert result.perf.cycles == 28_549
+    assert result.perf.instructions_by_opcode["vtrpose.xlu"] == 1
     assert result.perf.instructions_by_opcode["vmatmul.mxu0"] == 6
-    assert result.perf.instructions_by_opcode["reduce.max.xlu"] == 1
-    assert result.perf.instructions_by_opcode["reduce.sum.xlu"] == 1
+    assert result.perf.instructions_by_opcode["vreduce.max.xlu"] == 1
+    assert result.perf.instructions_by_opcode["vreduce.sum.xlu"] == 1
     assert result.perf.instructions_by_opcode["vexp"] == 1
-    assert result.perf.instructions_by_opcode["vrecip"] == 1
-    assert result.perf.instructions_by_opcode["vmul"] == 1
+    assert result.perf.instructions_by_opcode["vrecip.bf16"] == 1
+    assert result.perf.instructions_by_opcode["vmul.bf16"] == 1
     assert sorted(result.stage_bundles) == [
         "context",
         "k_proj",
@@ -58,13 +58,13 @@ def test_gemma_mlp_example_matches_reference_and_emits_stage_bundles(tmp_path) -
     assert tuple(result.output.shape) == (64, 32)
     assert torch.equal(result.output, result.golden)
     assert result.perf.instructions == 213
-    assert result.perf.cycles == 1_927
+    assert result.perf.cycles == 1_341
     assert result.perf.instructions_by_opcode["delay"] == 25
-    assert result.perf.instructions_by_opcode["vmul"] == 9
-    assert result.perf.instructions_by_opcode["vadd"] == 3
-    assert result.perf.instructions_by_opcode["vsub"] == 2
+    assert result.perf.instructions_by_opcode["vmul.bf16"] == 9
+    assert result.perf.instructions_by_opcode["vadd.bf16"] == 3
+    assert result.perf.instructions_by_opcode["vsub.bf16"] == 2
     assert result.perf.instructions_by_opcode["vexp"] == 1
-    assert result.perf.instructions_by_opcode["vrecip"] == 1
+    assert result.perf.instructions_by_opcode["vrecip.bf16"] == 1
     assert sorted(result.stage_bundles) == [
         "down_proj",
         "gate_mul",
@@ -83,15 +83,15 @@ def test_gemma_decoder_example_matches_reference_and_emits_stage_bundles(tmp_pat
     assert result.trace_path.exists()
     assert tuple(result.output.shape) == (64, 32)
     assert torch.equal(result.output, result.golden)
-    assert result.perf.instructions == 643
-    assert result.perf.cycles == 5_296
-    assert result.perf.instructions_by_opcode["transpose.xlu"] == 1
-    assert result.perf.instructions_by_opcode["vadd"] == 5
-    assert result.perf.instructions_by_opcode["reduce.max.xlu"] == 1
-    assert result.perf.instructions_by_opcode["reduce.sum.xlu"] == 1
+    assert result.perf.instructions == 26_389
+    assert result.perf.cycles == 30_232
+    assert result.perf.instructions_by_opcode["vtrpose.xlu"] == 1
+    assert result.perf.instructions_by_opcode["vadd.bf16"] == 5
+    assert result.perf.instructions_by_opcode["vreduce.max.xlu"] == 1
+    assert result.perf.instructions_by_opcode["vreduce.sum.xlu"] == 1
     assert result.perf.instructions_by_opcode["vexp"] == 2
-    assert result.perf.instructions_by_opcode["vrecip"] == 2
-    assert result.perf.instructions_by_opcode["vmul"] == 10
+    assert result.perf.instructions_by_opcode["vrecip.bf16"] == 2
+    assert result.perf.instructions_by_opcode["vmul.bf16"] == 10
     assert sorted(result.stage_bundles) == [
         "attention_context",
         "attention_k_proj",

@@ -4,7 +4,7 @@
       kind: "program",
       region: "imem",
       address: 0x00020000,
-      size_bytes: 68,
+      size_bytes: 72,
       file: "dma_stage_and_reduce.S",
     },
   },

@@ -3,4 +3,5 @@
     li x1, 0x80000100
     li x2, 0x20000040
     li x3, 0x00000020
-    dma.load.ch0 x1, x2, x3
+    dma.config.ch0 x0
+    dma.load.ch0 x2, x1, x3
