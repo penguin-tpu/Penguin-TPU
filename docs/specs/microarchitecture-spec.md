@@ -34,14 +34,12 @@ The baseline microarchitecture shall optimize for:
 The baseline does not attempt to optimize for:
 
 - superscalar issue
-- out-of-order execution
+- out-of-order frontend issue
 - speculative memory disambiguation
 - hidden hardware-managed tensor caches
 - generalized trap recovery
 
 ## 3. Frozen Shared Parameters
-
-The following parameters are frozen for the current baseline implementation.
 
 ### 3.1 Architectural shape
 
@@ -50,17 +48,15 @@ The following parameters are frozen for the current baseline implementation.
 | `INSN_WIDTH` | `32` bits | Fixed instruction width |
 | `INSN_ALIGN` | `4` bytes | Instruction alignment |
 | `NUM_XREG` | `32` | Scalar register count |
-| `CONTROL_FLOW_DELAY_SLOTS` | `2` | Required branch/jump delay slots |
+| `CONTROL_FLOW_DELAY_SLOTS` | `2` | Required branch / jump delay slots |
 | `NUM_EREG` | `32` | Scale register count |
-| `EREG_BITS` | `8` | Bits per `e` register (`FP8_E8M0`) |
+| `EREG_BITS` | `8` | Bits per `e` register |
 | `NUM_MREG` | `64` | Tensor register count |
 | `MREG_ROWS` | `64` | Rows per tensor register |
 | `MREG_ROW_BYTES` | `64` bytes | Bytes per tensor-register row |
 | `MREG_BYTES` | `4096` bytes | Bytes per tensor register |
 | `MXU_COUNT` | `2` | Architected MXU count |
 | `WEIGHT_SLOTS_PER_MXU` | `2` | Weight slots per MXU |
-| `WEIGHT_TILE_ROWS` | `64` | Rows per MXU weight tile |
-| `WEIGHT_TILE_COLS_FP8` | `64` | FP8 columns per MXU weight tile |
 | `WEIGHT_SLOT_BYTES` | `4096` bytes | Bytes per MXU weight slot |
 | `ACCUM_BUFFER_ROWS` | `64` | Rows per MXU accumulation buffer |
 | `ACCUM_BUFFER_COLS_BF16` | `64` | BF16 columns per MXU accumulation buffer |
@@ -84,12 +80,12 @@ The following parameters are frozen for the current baseline implementation.
 | `MATMUL_LATENCY_CYCLES` | `64` | One MXU matmul launch latency class |
 | `VPU_SIMPLE_OP_LATENCY_CYCLES` | `2` | Pipelineable VPU latency class |
 | `VPU_NON_PIPELINEABLE_OP_LATENCY_CYCLES` | `8` | Non-pipelineable VPU latency class |
-| `XLU_TRANSPOSE_LATENCY_CYCLES` | `4` | Whole-register transpose latency class |
+| `XLU_TRANSFORM_LATENCY_CYCLES` | `4` | Whole-register XLU latency class |
 | `OFFCHIP_LINK_WIDTH_BITS` | `32` | DRAM-link beat width |
 | `OFFCHIP_LINK_CORE_CYCLES_PER_BEAT` | `2` | Off-chip serialized beat time |
 | `DMA_OFFCHIP_COMMAND_WORDS` | `2` | DRAM-side DMA command overhead |
-| `VMEM_BUS_WIDTH_BITS` | `512` | VMEM/system-bus beat width |
-| `VMEM_BUS_CORE_CYCLES_PER_BEAT` | `1` | VMEM/system-bus beat time |
+| `VMEM_BUS_WIDTH_BITS` | `512` | VMEM / system-bus beat width |
+| `VMEM_BUS_CORE_CYCLES_PER_BEAT` | `1` | VMEM / system-bus beat time |
 | `VMEM_TENSOR_ALIGN` | `32` bytes | VMEM alignment for `vload`, `vstore`, and `vload.weight.*` |
 | `TRACE_TICKS_PER_CYCLE` | `1` | Trace timestamp granularity |
 
@@ -101,8 +97,11 @@ The following parameters are frozen for the current baseline implementation.
 | `RANDOMIZE_DRAM` | `true` | Randomize DRAM at power-on in the Python model |
 | `RANDOMIZE_VMEM` | `true` | Randomize VMEM at power-on in the Python model |
 | `RANDOMIZE_SCALAR_REGISTERS` | `true` | Randomize scalar registers except `x0` |
+| `RANDOMIZE_SCALE_REGISTERS` | `true` | Randomize scale registers |
 | `RANDOMIZE_TENSOR_REGISTERS` | `true` | Randomize tensor registers |
 | `RANDOMIZE_WEIGHT_SLOTS` | `true` | Randomize MXU weight-slot state |
+| `RANDOMIZE_ACCUM_BUFFERS` | `true` | Randomize MXU accumulation-buffer state |
+| `RANDOMIZE_DMA_BASE` | `true` | Randomize `dma.base` at power-on in the Python model |
 
 ## 4. Top-Level Organization
 
@@ -116,7 +115,7 @@ subsystems:
 - two MXUs
 - one VPU
 - one XLU
-- an instruction memory path
+- an instruction-memory path
 - a VMEM subsystem
 - a DMA engine complex connecting `DRAM` and `VMEM`
 - a host-visible control and status block
@@ -128,30 +127,13 @@ The frontend baseline shall be:
 - single-stream instruction fetch
 - single instruction decode
 - single issue decision per cycle
-- fixed-width 32-bit fetch from `IMEM`
+- fixed-width `32`-bit fetch from `IMEM`
 
 The frontend phase model used by the performance model and trace infrastructure is:
 
 - `IFU`: fetched-instruction stage
 - `IDU`: decode and issue stage
 - `EXU`: execution-unit stage
-
-The Python performance model shall be cycle-driven:
-
-- one call to `Sim.tick()` advances the machine by exactly one core cycle
-- pipeline stage movement is resolved against cycle boundaries rather than analytical time
-  jumps
-- each tick is resolved in downstream-first order:
-  - execution-unit completions scheduled for that cycle become architecturally visible
-  - decode / issue consumes any available IFU output
-  - fetch launches a new instruction only after downstream claim state for that cycle is
-    known
-- instructions advance from fetch to decode on the next cycle and from decode to execute
-  on the following cycle
-- architectural writeback and retirement scheduled for cycle `N` become visible before
-  decode and fetch evaluate cycle `N`
-- instruction issue, execution progress, asynchronous completions, and stop conditions are
-  all resolved against that cycle-by-cycle state evolution
 
 ### 4.2 Execution-unit overlap model
 
@@ -168,6 +150,16 @@ Requirements:
 - execution timing is instead determined by frontend ordering, unit availability,
   architecturally defined blocking instructions, and fixed instruction latency classes
 
+The intended performance-model interpretation is:
+
+- scalar fetch and decode advance one cycle at a time
+- an older long-chime instruction may remain busy in its target unit after it leaves
+  `IDU`
+- while that unit remains busy, younger instructions may still be fetched, decoded,
+  issued, and completed on other available units
+- a decode-resident fence such as `delay` or `dma.wait.chN` blocks younger issue until it
+  retires
+
 ### 4.3 Tensor access organization
 
 The baseline tensor-access model shall be fully connected at the architectural boundary:
@@ -179,12 +171,16 @@ The baseline tensor-access model shall be fully connected at the architectural b
 The baseline implementation direction is a central tensor crossbar or equivalent shared
 interconnect.
 
-## 5. Scalar Frontend and Scalar Execution Path
+## 5. Frontend Decode and Control
 
-### 5.1 Scalar decode
+### 5.1 Decode responsibilities
 
-The scalar decode path shall recognize the full `RV32I` binary baseline plus the
-Penguin-specific scalar `delay` instruction defined by the architecture specification.
+The decode path shall recognize:
+
+- scalar `R`, `I`, `S`, `SB`, `U`, and `UJ` instructions
+- Penguin `VLS`, `VR`, and `VI` instructions
+- Penguin scalar `delay`
+- DMA transfer and DMA control families
 
 Minimum decode outputs:
 
@@ -192,80 +188,98 @@ Minimum decode outputs:
 - `rd`
 - `rs1`
 - `rs2`
-- sign-extended immediate
+- sign-extended scalar immediate where applicable
+- reconstructed `vd`, `vs1`, and `vs2` where applicable
+- reconstructed weight-slot selector where applicable
+- reconstructed DMA channel selector where applicable
 - target execution unit
 - legality classification
 
-The scalar decode control record shall additionally expose at least:
+The decode control record shall additionally expose at least:
 
 - `valid`
 - `illegal`
 - `format_class`
 - `scalar_op_class`
-- `alu_fn`
-- `writes_rd`
+- `tensor_op_class`
+- `writes_xrd`
+- `writes_ereg`
+- `writes_mreg`
 - `reads_rs1`
 - `reads_rs2`
+- `reads_vs1`
+- `reads_vs2`
 - `is_branch`
 - `is_jump`
-- `is_load`
-- `is_store`
-- `is_fence`
 - `is_delay`
-- `is_ecall`
-- `is_ebreak`
+- `is_dma_wait`
+- `is_scalar_load`
+- `is_scalar_store`
+- `is_tensor_move`
+- `is_long_chime`
 
-Immediate generation shall follow standard RV32I sign-extension and bit-reassembly rules
-for `R`, `I`, `S`, `B`, `U`, and `J` format instructions.
+### 5.2 Opcode map recognized by decode
 
-The decode stage should classify standard RISC-V custom major opcodes distinctly from
-fully illegal encodings to preserve future accelerator-extension space.
+The decode stage shall recognize the frozen architecture opcode allocation:
 
-The accelerator decode path shall recognize the baseline custom-opcode allocation defined
-by the architecture specification:
+| Opcode bits `[6:0]` | Family |
+|---|---|
+| `0000011` | scalar loads, `seld`, `seli` |
+| `0000111` | `VLS` tensor transfer family |
+| `0001111` | `fence` |
+| `0010011` | scalar immediate ALU |
+| `0010111` | `auipc` |
+| `0100011` | scalar stores |
+| `0110011` | scalar register ALU |
+| `0110111` | `lui` |
+| `1010111` | `VR` VPU family |
+| `1011111` | `VI` vector-immediate family |
+| `1100011` | scalar branches |
+| `1100111` | `jalr` and `delay` |
+| `1101011` | `VR` XLU family |
+| `1101111` | `jal` |
+| `1110011` | `ecall` and `ebreak` |
+| `1110111` | `VR` MXU family |
+| `1111011` | DMA transfer family |
+| `1111111` | DMA control family |
 
-- `custom-0` for scalar-side auxiliary loads, DMA, and VMEM-facing tensor transfers
-- `custom-1` for MXU launch instructions
-- `custom-2` for VPU whole-register instructions
-- `custom-3` for XLU whole-register instructions
+The decode stage shall classify any other major opcode as illegal in the current
+baseline.
 
-Minimum accelerator decode outputs:
+### 5.3 Family-specific decode rules
 
-- accelerator family
-- reconstructed `6`-bit tensor-register operands where present
-- reconstructed `5`-bit scale-register operands where present
-- reconstructed weight-slot selector where present
-- reconstructed DMA channel selector where present
-- reconstructed scaled VMEM immediate where present
-- legality classification for reserved-bit and reserved-subopcode violations
+Required family-specific decode behavior:
 
-The baseline decode implementation shall treat any nonzero reserved field in the
-accelerator encodings as illegal rather than silently ignored.
+- opcode `0x03`, `funct3=110` decodes as `seld` and writes `e[rd]`
+- opcode `0x03`, `funct3=111` decodes as `seli` and writes `e[rd]`; nonzero `rs1` is
+  illegal
+- opcode `0x67`, `funct3=000` decodes as `jalr`
+- opcode `0x67`, `funct3=001` decodes as `delay`; nonzero `rd` or `rs1` is illegal
+- opcode `0x07` decodes as `VLS` and interprets `f2` as subopcode
+- opcode `0x57`, `0x6B`, and `0x77` decode as `VR` and interpret `funct7` as subopcode
+- opcode `0x5F` decodes as `VI` and interprets `f3` as subopcode
+- opcode `0x7B` interprets `funct3` as DMA channel selector and `funct7` as load/store
+  selector
+- opcode `0x7F` interprets `funct3` as DMA channel selector and `imm[6:0]` as control
+  subopcode
 
-### 5.2 Scalar execution blocks
+The decode implementation shall also enforce the architectural reserved-zero rules:
 
-The intended first scalar implementation slice is partitioned into:
+- `vload.weight.*`: `vd[5:1] = 0`
+- `VPU` unary operations: `vs2 = 0`
+- `XLU` operations: `vs2 = 0`
+- `vmatpush.weight.*`: `vs2 = 0` and `vd[5:1] = 0`
+- `vmatpush.acc.fp8.*`: `vs2 = 0` and `vd[5:1] = 0`
+- `vmatpush.acc.bf16.*`: `vs2 = 0` and `vd[5:1] = 0`
+- `vmatpop.*`: `vs1 = 0` and `vs2[5:1] = 0`
+- `vmatmul.*`: `vd[5:1] = 0` and `vs2[5:1] = 0`
+- `dma.config.chN` and `dma.wait.chN`: `rd = x0`
+- `dma.wait.chN`: `rs1 = x0`
+- DMA control `imm[11:7] = 0`
 
-- scalar decoder
-- scalar register file
-- scale-register load path for `seli` and `seld`
-- scalar ALU / compare datapath
-- branch and jump target unit
-- VMEM-facing scalar load/store unit supporting byte, halfword, and word accesses
-- scalar control block that owns `pc`, delay-slot tracking, and halt status
+Any reserved-field violation shall decode as illegal.
 
-Recommended block responsibilities:
-
-- `penguin_scalar_defs.vh`: opcode, `funct3`, `funct7`, halt-reason, and ALU-function constants
-- `penguin_scalar_decoder.v`: binary field extraction, immediate generation, and legality classification
-- `penguin_scalar_regfile.v`: `32 x 32` scalar register storage with hardwired `x0`
-- `penguin_scalar_alu.v`: scalar ALU and compare datapath
-- `penguin_scalar_branch_unit.v`: branch/jump target generation plus alignment checks
-- `penguin_scalar_lsu.v`: blocking VMEM byte/halfword/word load/store path with alignment checks
-- `penguin_scalar_controller.v`: `pc` sequencing, delay-slot bookkeeping, and halt-status generation
-- `penguin_scalar_core.v`: top-level scalar integration of fetch, decode, execute, and memory interfaces
-
-### 5.3 Delay-slot handling
+### 5.4 Delay-slot handling
 
 The microarchitecture shall preserve the architectural two-delay-slot rule without
 speculation.
@@ -280,33 +294,36 @@ The baseline implementation direction is:
 - a branch or jump decoded in a delay-slot position is illegal and shall terminate
   execution before any younger redirect is applied
 
-### 5.4 Scalar RTL conformance and verification
+### 5.5 Scalar implementation slice
 
-The first scalar RTL milestone shall be considered complete only when all of the
-following are true:
+The intended first scalar implementation slice is partitioned into:
 
-- the scalar core fetches and executes the frozen scalar ISA subset from `IMEM`
-- `x0` behavior is correct under arbitrary attempted writes
-- two-delay-slot branch and jump behavior is correct
-- misaligned control-flow targets and misaligned scalar memory accesses halt correctly
-- `ecall` and `ebreak` report distinct terminal outcomes
-- RTL regression exists and is suitable for automation
+- scalar decoder
+- scalar register file
+- scale-register write path for `seld` and `seli`
+- scalar ALU / compare datapath
+- branch and jump target unit
+- VMEM-facing scalar load/store unit supporting byte, halfword, and word accesses
+- scalar control block that owns `pc`, delay-slot tracking, halt status, and `dma.base`
 
-Required scalar RTL verification surfaces:
+Recommended block responsibilities:
 
-- decoder spot checks for legal and illegal encodings, including reserved custom opcodes
-- ALU and compare tests against the architectural scalar semantics
-- register-file tests proving `x0` hardwiring
-- branch/jump delay-slot tests, including illegal control flow placed in a delay slot
-- VMEM scalar load/store tests covering byte, halfword, and word accesses plus alignment
-  failures
-- end-to-end scalar program tests that compare RTL against the software model for:
-  - final scalar register state
-  - final `pc`
-  - touched `VMEM` contents
-  - halt reason
+- `penguin_scalar_defs.vh`: opcode, `funct3`, `funct7`, halt-reason, and ALU-function
+  constants
+- `penguin_scalar_decoder.v`: binary field extraction, immediate generation, and legality
+  classification
+- `penguin_scalar_regfile.v`: `32 x 32` scalar register storage with hardwired `x0`
+- `penguin_scalar_eregfile.v` or equivalent: `32 x 8` scale-register storage
+- `penguin_scalar_alu.v`: scalar ALU and compare datapath
+- `penguin_scalar_branch_unit.v`: branch / jump target generation plus alignment checks
+- `penguin_scalar_lsu.v`: blocking VMEM byte / halfword / word load-store path with
+  alignment checks
+- `penguin_scalar_controller.v`: `pc` sequencing, delay-slot bookkeeping, `dma.base`,
+  and halt-status generation
+- `penguin_scalar_core.v`: top-level scalar integration of fetch, decode, execute, and
+  memory interfaces
 
-## 6. Scale Register File, Tensor Register File, and Local Interconnect
+## 6. Register Files, MXU Local State, and Interconnect
 
 ### 6.1 Scale register file
 
@@ -314,20 +331,14 @@ The scale register file shall hold:
 
 - `32` registers
 - `8` bits per register
-- one whole-tensor `FP8_E8M0` scale per register
-- one unbiased signed binary exponent payload per register, so `seli eN, 0` is unity
+- one whole-tensor scale payload per register
 
 Baseline implementation direction:
 
 - `seli` writes `e` registers through a scalar-side immediate path
 - `seld` writes `e` registers through a scalar-controlled VMEM byte-load path
-- the exact MXU launch forms that consume `e` registers remain under active revision
-
-Rationale:
-
-- scale values are too small and too structured to justify burning full `m` registers
-- scale values are not ordinary scalar integers and should not consume general `x`
-  register bandwidth and lifetime
+- `e` registers are read only by future or current tensor instructions that explicitly
+  name them; no implicit scalar aliasing exists
 
 ### 6.2 Tensor register file
 
@@ -339,14 +350,16 @@ The tensor register file shall hold:
 
 The baseline whole-register interpretations are:
 
-- `64 x 32` BF16 for VPU, XLU, and tensor-register-resident BF16 tiles
-- `64 x 64` FP8 source tiles across the full physical row width for MXU input traffic
+- `64 x 32 BF16` for `vadd.bf16`, `vsub.bf16`, `vmul.bf16`, `vmin.bf16`,
+  `vmax.bf16`, `vredsum.bf16`, `vrecip.bf16`, `vexp`, `vrelu`, `vmov`, `vtrpose.xlu`,
+  `vreduce.max.xlu`, and `vreduce.sum.xlu`
+- `64 x 64 FP8` for MXU activation and weight traffic
 
-When BF16 data is materialized in the tensor register file, one `64 x 64` BF16 tile uses
-two consecutive tensor registers:
+When `BF16` data is materialized in the tensor register file, one `64 x 64 BF16` tile
+uses two consecutive tensor registers:
 
-- destination base register carries BF16 columns `[31:0]`
-- destination base plus one carries BF16 columns `[63:32]`
+- destination base register carries columns `[31:0]`
+- destination base plus one carries columns `[63:32]`
 
 The baseline does not require architectural bank visibility.
 
@@ -356,29 +369,40 @@ Each MXU shall contain two distinct weight-slot storage entries.
 
 The baseline implementation direction is weight-stationary:
 
-- weight data is loaded into the selected slot either from `VMEM` or from one tensor
-  register via a local `vmatpush.*` path
+- weight data is loaded into the selected slot either from `VMEM` by
+  `vload.weight.mxuN` or from one tensor register by `vmatpush.weight.mxuN`
 - the slot remains resident until overwritten
-- each weight slot stores one `64 x 64` FP8 tile
+- each weight slot stores one `64 x 64 FP8` tile
 
 ### 6.4 Accumulation buffers
 
-Each MXU shall contain one local BF16 accumulation buffer.
+Each MXU shall contain two local `BF16` accumulation buffers, `acc0` and `acc1`.
 
 Baseline requirements:
 
-- each accumulation buffer stores one complete `64 x 64` BF16 tile
-- MXU launch writes its result into the local accumulation buffer, not directly into the
-  tensor register file
-- `vmatpush.bf16.acc.*` loads the accumulation buffer from one BF16 tensor-register pair
-- `vmatpop.bf16.acc.*` stores the accumulation buffer into one BF16 tensor-register pair
-- `vmatpop.fp8.acc.*` stores a quantized FP8 tile from the accumulation buffer into one
+- each accumulation buffer stores one complete `64 x 64 BF16` tile
+- MXU matmul launch writes its result into one selected local accumulation buffer, not directly
+  into the tensor register file
+- `vmatpush.acc.fp8.*` loads one selected accumulation buffer from one `FP8` tensor register
+- `vmatpush.acc.bf16.*` loads one selected accumulation buffer from one `BF16` tensor-register
+  pair
+- `vmatpop.bf16.acc.*` stores one selected accumulation buffer into one `BF16` tensor-register
+  pair
+- `vmatpop.fp8.acc.*` stores a quantized `FP8` view of one selected accumulation buffer into one
   tensor register
 - there is no direct architectural `VMEM` path into or out of the accumulation buffer
-- BF16 accumulator preload and spill use an even-numbered tensor base register together
-  with its next register to carry columns `[31:0]` and `[63:32]`
 
-### 6.5 Structural-conflict handling
+### 6.5 DMA local state
+
+The DMA subsystem shall hold:
+
+- one shared `dma.base` register
+- one busy / idle state bit per channel
+- per-channel in-flight transfer metadata sufficient to resume progress across cycles
+
+The baseline architecture does not require per-channel base registers.
+
+### 6.6 Structural-conflict handling
 
 Structural conflicts shall be handled by stalls or arbitration.
 
@@ -399,29 +423,36 @@ The baseline memory system shall keep the asynchronous boundary narrow:
 - `DRAM` access is off-chip and asynchronous
 - DMA is the only `DRAM <-> VMEM` path
 
-### 7.2 Blocking on-chip tensor transfers
+### 7.2 Blocking on-chip transfers
 
 The following instructions are modeled and implemented as blocking:
 
+- scalar `lb`, `lh`, `lw`, `lbu`, `lhu`, `sb`, `sh`, `sw`
+- `seld`
 - `vload`
 - `vstore`
-- `vmatpush.*`
-- `vload.weight.*`
-- `vmatpush.bf16.acc.*`
-- `vmatpop.bf16.acc.*`
-- `vmatpop.fp8.acc.*`
-- `seld`
-- scalar `RV32I` load/store instructions
+- `vload.weight.mxu0`
+- `vload.weight.mxu1`
+- `vmatpush.weight.mxu0`
+- `vmatpush.weight.mxu1`
+- `vmatpush.acc.fp8.mxu0`
+- `vmatpush.acc.fp8.mxu1`
+- `vmatpush.acc.bf16.mxu0`
+- `vmatpush.acc.bf16.mxu1`
+- `vmatpop.fp8.acc.mxu0`
+- `vmatpop.fp8.acc.mxu1`
+- `vmatpop.bf16.acc.mxu0`
+- `vmatpop.bf16.acc.mxu1`
 
-The baseline intent is to keep on-chip movement deterministic and simpler to verify.
+The baseline intent is to keep on-chip movement deterministic and simple to verify.
 
 The cycle-accurate model shall also preserve VMEM ordering across units:
 
 - a VMEM reader shall not observe data older than the most recent completed VMEM writer
-- `dma.store` shall therefore not complete before older blocking VMEM writes make their
-  data architecturally visible
-- this ordering is modeled with fixed completion timing and program order, not with an
-  architectural register- or VMEM-dependency scoreboard
+- `dma.store.chN` shall not complete before older blocking VMEM writes make their data
+  architecturally visible
+- this ordering is modeled with fixed completion timing and program order, not with a
+  general architectural dependency scoreboard
 
 ### 7.3 Asynchronous DMA
 
@@ -430,24 +461,24 @@ DMA shall be channelized and asynchronous.
 Each channel supports:
 
 - at most one outstanding transfer
-- independent busy/completion state
+- independent busy / completion state
 - `dma.wait.chN` synchronization
 
 The microarchitecture is free to implement the DMA channels with shared internal data
 paths or arbitration, provided the architecture-visible channel behavior is preserved.
 
-`dma.wait.chN` and scalar `delay` shall behave as frontend fences in the decode/issue
+`dma.wait.chN` and scalar `delay` shall behave as frontend fences in the decode / issue
 machinery:
 
 - neither instruction allocates a normal execute-stage slot while it is holding decode
-- if channel `N` is already done when the wait instruction reaches decode, the
-  instruction shall spend that cycle in decode and retire directly
+- if channel `N` is already done when `dma.wait.chN` reaches decode, the instruction
+  shall spend that cycle in decode and retire directly
 - if channel `N` is not yet done, decode shall remain occupied until the transfer
   completes, then the instruction shall retire directly from decode
 - younger instructions shall not issue past that decode fence until the wait retires
 - `delay N` shall also remain resident in decode for exactly `N` additional core cycles
   after its decode cycle, then retire directly from decode
-- `delay 0` shall spend only its decode cycle in IDU and retire directly
+- `delay 0` shall spend only its decode cycle in `IDU` and retire directly
 
 ### 7.4 Baseline transfer formulas
 
@@ -468,14 +499,13 @@ For the frozen baseline values:
 
 - one off-chip beat costs `2` core cycles
 - one VMEM beat costs `1` core cycle
-- one `vload` / `vstore` of a `4096`-byte tensor register takes a deterministic `64`
+- one `vload` or `vstore` of a `4096`-byte tensor register takes `64` cycles
+- one `vload.weight.*` or `vmatpush.weight.*` of a `4096`-byte weight tile takes `64`
   cycles
-- one `vmatpush.*` of a `4096`-byte tensor-to-weight transfer takes `64` cycles
-- one `vload.weight.*` of a `4096`-byte weight tile takes `64` cycles
-- one `vmatpush.bf16.acc.*` or `vmatpop.bf16.acc.*` of an `8192`-byte accumulator /
-  BF16-tensor transfer takes `128` cycles
-- one `vmatpop.fp8.acc.*` of a `4096`-byte quantized accumulator export takes `64`
-  cycles
+- one `vmatpush.acc.fp8.*` or `vmatpop.fp8.acc.*` of a `4096`-byte `FP8` tile takes
+  `64` cycles
+- one `vmatpush.acc.bf16.*` or `vmatpop.bf16.acc.*` of an `8192`-byte `BF16` tile takes
+  `128` cycles
 
 ## 8. Functional Units
 
@@ -490,56 +520,59 @@ Baseline intent:
 
 Shared microarchitectural requirements:
 
-- deterministic latency class of `64` cycles per matmul launch
+- deterministic latency class of `64` cycles per `vmatmul.*` launch
 - whole-register activation source
 - resident local weight-slot source
-- BF16 architectural accumulation
+- `BF16` architectural accumulation
 - square `64 x 64` array geometry for both `mxu0` and `mxu1`
-- one local `64 x 64` BF16 accumulation buffer per MXU
-- tensor-register-only BF16 accumulator preload and spill path
+- one local `64 x 64 BF16` accumulation buffer per MXU
+- tensor-register-only accumulator preload and spill path
 - local quantization path for `vmatpop.fp8.acc.*`
-- MXU launch decode must carry both one tensor activation operand and one local
-  weight-slot selector operand
 - ability to overlap with scalar and other long-chime units, subject to issue policy
 
 ### 8.2 VPU
 
-The VPU baseline shall implement the initial BF16 elementwise floor:
+The VPU baseline shall implement the following whole-register operations:
 
-- `vadd`
-- `vsub`
-- `vmul`
-- `vmax`
-- `vmin`
-- `vrelu`
+- `vadd.bf16`
+- `vredsum.bf16`
+- `vsub.bf16`
+- `vmin.bf16`
+- `vmax.bf16`
+- `vmul.bf16`
 - `vmov`
+- `vrecip.bf16`
 - `vexp`
-- `vrecip`
+- `vrelu`
 
 Timing requirements:
 
 - pipelineable elementwise operations use the `2`-cycle latency class
-- non-pipelineable elementwise operations such as exponent and reciprocal use the
-  `8`-cycle latency class
-- the baseline lane count is `32` BF16 lanes
+- non-pipelineable operations such as `vexp` and `vrecip.bf16` use the `8`-cycle latency
+  class
+- the baseline lane count is `32 BF16` lanes
 
 ### 8.3 XLU
 
-The XLU baseline shall implement whole-register transpose and row-reduction broadcasts
-over the baseline `64 x 32` BF16 view.
+The XLU baseline shall implement whole-register transform and reduction operations over
+the baseline `64 x 32 BF16` view.
+
+Supported operations:
+
+- `vtrpose.xlu`
+- `vreduce.max.xlu`
+- `vreduce.sum.xlu`
 
 Timing requirement:
 
-- `transpose.xlu` uses the `4`-cycle latency class
-- `reduce.max.xlu` uses the `4`-cycle latency class
-- `reduce.sum.xlu` uses the `4`-cycle latency class
+- each baseline `XLU` operation uses the `4`-cycle latency class
 
 ## 9. Reset, Initialization, and Model Contract
 
 ### 9.1 Reset behavior
 
-The hardware shall reset control state, but the architecture does not require zeroed
-data memories or registers.
+Hardware shall reset control state, but the architecture does not require zeroed data
+memories or registers.
 
 The reference model shall instantiate the unspecified state deterministically using the
 frozen initialization seed and randomization controls.
@@ -574,6 +607,7 @@ The baseline model and trace infrastructure shall distinguish:
 - decode / dispatch occupancy
 - scalar execution
 - DMA execution
+- tensor-execution-unit occupancy
 - memory-region-visible traffic
 
 The baseline trace timestamp granularity is `1` trace time unit per modeled core cycle.
@@ -586,23 +620,20 @@ The JSON trace shall also expose a free-running `cycle` counter stream:
 - the `cycle` trace counter increments by `1` on every simulator core cycle
 - it is emitted at timestamps spaced by `ticks_per_cycle`
 - it does not stall during frontend bubbles, fences, or long-latency execution
-- the final `cycle` trace value shall match the final trace timestamp horizon, which may
-  exceed the architectural `perf.cycles` total when the visualization includes explicit
-  frontend stage propagation
 
 Frontend trace annotations shall follow the cycle-driven model:
 
 - instruction fetch is annotated on every cycle where the frontend launches a new
   instruction
 - fetch occupies exactly one modeled cycle in the trace
-- if an IFU output is not claimed on the next cycle, the fetch stage ends on that first
+- if an `IFU` output is not claimed on the next cycle, the fetch stage ends on that first
   blocked cycle and the remaining stall interval is shown as a gap before decode begins
 - `dma.wait.chN` and scalar `delay` are the baseline cases that may hold decode and
   therefore create a fetch gap for younger instructions
 - a decode-resident `dma.wait.chN` may still leave one younger instruction buffered in
-  the IFU; no further fetches occur until the wait retires and the buffered IFU output is
+  the `IFU`; no further fetches occur until the wait retires and the buffered output is
   claimed
-- a decode-resident `delay` follows that same IFU buffering rule
+- a decode-resident `delay` follows that same `IFU` buffering rule
 
 The baseline trace lane split is:
 
@@ -610,13 +641,16 @@ The baseline trace lane split is:
 - `IDU`
 - `EXU.SALU`
 - `EXU.DMA`
-- additional tensor-unit lanes as needed by the model
+- `EXU.MXU0`
+- `EXU.MXU1`
+- `EXU.VPU`
+- `EXU.XLU`
 
 ## 11. Performance-Model Interpretation
 
-The current roofline and throughput model shall interpret the frozen parameters in
-normalized `ops/cycle` and `bytes/cycle` units unless an explicit clock frequency is
-provided externally.
+The current throughput model shall interpret the frozen parameters in normalized
+`ops/cycle` and `bytes/cycle` units unless an explicit clock frequency is provided
+externally.
 
 Required derived roofs:
 
@@ -642,7 +676,7 @@ preserved:
 
 The following are not implementation freedoms in this baseline:
 
-- instruction width and scalar binary compatibility
+- instruction width and frozen opcode map
 - two control-flow delay slots
 - the three-region memory map
 - DMA channelization and fence-by-channel behavior

@@ -62,8 +62,10 @@ for `m`, `e`, or MXU-local state; this card uses the conservative convention
 | `mxu0.w1` | `-` | MXU0 FP8 weight slot 1 | Caller |
 | `mxu1.w0` | `-` | MXU1 FP8 weight slot 0 | Caller |
 | `mxu1.w1` | `-` | MXU1 FP8 weight slot 1 | Caller |
-| `mxu0.acc` | `-` | MXU0 local `64 x 64 BF16` accumulation buffer | Caller |
-| `mxu1.acc` | `-` | MXU1 local `64 x 64 BF16` accumulation buffer | Caller |
+| `mxu0.acc0` | `-` | MXU0 local `64 x 64 BF16` accumulation buffer 0 | Caller |
+| `mxu0.acc1` | `-` | MXU0 local `64 x 64 BF16` accumulation buffer 1 | Caller |
+| `mxu1.acc0` | `-` | MXU1 local `64 x 64 BF16` accumulation buffer 0 | Caller |
+| `mxu1.acc1` | `-` | MXU1 local `64 x 64 BF16` accumulation buffer 1 | Caller |
 | `dma.base` | `-` | DMA base address | Caller |
 
 ## 2. Core Instruction Formats
@@ -289,8 +291,6 @@ Rows are ordered by hex value.
 | `seli`                   | `I`      | `0000011` | `111`                   |                  | `03/7`     | Scale Factor Load Immediate       | `e[rd] = imm;` |
 | `vload`                  | `VLS`    | `0000111` | `00`                    |                  | `07/0`     | Tensor Load                       | `m[vd] = VMEM[x[rs1] + (imm12 << 5)];` |
 | `vstore`                 | `VLS`    | `0000111` | `01`                    |                  | `07/1`     | Tensor Store                      | `VMEM[x[rs1] + (imm12 << 5)] = m[vd];` |
-| `vload.weight.mxu0`      | `VLS`    | `0000111` | `10`                    |                  | `07/2`     | Load MXU0 Weight From VMEM        | `mxu0.w[vd] = VMEM[x[rs1] + (imm12 << 5)];` |
-| `vload.weight.mxu1`      | `VLS`    | `0000111` | `11`                    |                  | `07/3`     | Load MXU1 Weight From VMEM        | `mxu1.w[vd] = VMEM[x[rs1] + (imm12 << 5)];` |
 | `fence`                  | `I`      | `0001111` | `000`                   | `000000000000`   | `0F/0/000` | Fence                             | `np-op` |
 | `addi`                   | `I`      | `0010011` | `000`                   |                  | `13/0`     | Add Immediate                     | `x[rd] = x[rs1] + imm` |
 | `slli`                   | `I`      | `0010011` | `001`                   | `0000000_shamt`  | `13/1/00`  | Shift Left Logical Immediate      | `x[rd] = x[rs1] << shamt` |
@@ -346,18 +346,18 @@ Rows are ordered by hex value.
 | `ebreak`                 | `I`      | `1110011` | `000`                   | `000000000001`   | `73/0/001` | Breakpoint                        | `halt_reason = EBREAK; halt = 1'b1;` |
 | `vmatpush.weight.mxu0`   | `VR`     | `1110111` |                         | `0000000`        | `77/00`    | Push Tensor To MXU0 Weight Slot   | `mxu0.w[vd] = m[vs];` |
 | `vmatpush.weight.mxu1`   | `VR`     | `1110111` |                         | `0000001`        | `77/01`    | Push Tensor To MXU1 Weight Slot   | `mxu1.w[vd] = m[vs];` |
-| `vmatpush.acc.fp8.mxu0`  | `VR`     | `1110111` |                         | `0000010`        | `77/02`    | Push Tensor To MXU0 Accumulator   | `mxu0.acc = dequantize(m[vs]);` |
-| `vmatpush.acc.fp8.mxu1`  | `VR`     | `1110111` |                         | `0000011`        | `77/03`    | Push Tensor To MXU1 Accumulator   | `mxu1.acc = dequantize(m[vs]);` |
-| `vmatpush.acc.bf16.mxu0` | `VR`     | `1110111` |                         | `0000100`        | `77/04`    | Push Tensor To MXU0 Accumulator   | `mxu0.acc = {m[vs], m[vs+1]};` |
-| `vmatpush.acc.bf16.mxu1` | `VR`     | `1110111` |                         | `0000101`        | `77/05`    | Push Tensor To MXU1 Accumulator   | `mxu1.acc = {m[vs], m[vs+1]};` |
-| `vmatpop.fp8.acc.mxu0`   | `VR`     | `1110111` |                         | `0000110`        | `77/06`    | Pop MXU0 FP8 Accumulator View     | `m[vd] = quantize_fp8(mxu0.acc);` |
-| `vmatpop.fp8.acc.mxu1`   | `VR`     | `1110111` |                         | `0000111`        | `77/07`    | Pop MXU1 FP8 Accumulator View     | `m[vd] = quantize_fp8(mxu1.acc);` |
-| `vmatpop.bf16.acc.mxu0`  | `VR`     | `1110111` |                         | `0001000`        | `77/08`    | Pop MXU0 BF16 Accumulator         | `{m[vd], m[vd + 1]} = mxu0.acc;` |
-| `vmatpop.bf16.acc.mxu1`  | `VR`     | `1110111` |                         | `0001001`        | `77/09`    | Pop MXU1 BF16 Accumulator         | `{m[vd], m[vd + 1]} = mxu1.acc;` |
-| `vmatmul.mxu0`           | `VR`     | `1110111` |                         | `0001010`        | `77/10`    | MXU0 Matmul                       | `mxu0.acc = m[vs1] @ mxu0.w[vs2];` |
-| `vmatmul.mxu1`           | `VR`     | `1110111` |                         | `0001011`        | `77/11`    | MXU1 Matmul                       | `mxu1.acc = m[vs1] @ mxu1.w[vs2];` |
-| `vmatmul.acc.mxu0`       | `VR`     | `1110111` |                         | `0001100`        | `77/12`    | MXU0 Matmul Accumulate            | `mxu0.acc = mxu0.acc + m[vs1] @ mxu0.w[vs2];` |
-| `vmatmul.acc.mxu1`       | `VR`     | `1110111` |                         | `0001101`        | `77/13`    | MXU1 Matmul Accumulate            | `mxu1.acc = mxu1.acc + m[vs1] @ mxu1.w[vs2];` |
+| `vmatpush.acc.fp8.mxu0`  | `VR`     | `1110111` |                         | `0000010`        | `77/02`    | Push Tensor To MXU0 Accumulator   | `mxu0.acc[vd[0]] = dequantize(m[vs]);` |
+| `vmatpush.acc.fp8.mxu1`  | `VR`     | `1110111` |                         | `0000011`        | `77/03`    | Push Tensor To MXU1 Accumulator   | `mxu1.acc[vd[0]] = dequantize(m[vs]);` |
+| `vmatpush.acc.bf16.mxu0` | `VR`     | `1110111` |                         | `0000100`        | `77/04`    | Push Tensor To MXU0 Accumulator   | `mxu0.acc[vd[0]] = {m[vs], m[vs+1]};` |
+| `vmatpush.acc.bf16.mxu1` | `VR`     | `1110111` |                         | `0000101`        | `77/05`    | Push Tensor To MXU1 Accumulator   | `mxu1.acc[vd[0]] = {m[vs], m[vs+1]};` |
+| `vmatpop.fp8.acc.mxu0`   | `VR`     | `1110111` |                         | `0000110`        | `77/06`    | Pop MXU0 FP8 Accumulator View     | `m[vd] = quantize_fp8(mxu0.acc[vs2[0]]);` |
+| `vmatpop.fp8.acc.mxu1`   | `VR`     | `1110111` |                         | `0000111`        | `77/07`    | Pop MXU1 FP8 Accumulator View     | `m[vd] = quantize_fp8(mxu1.acc[vs2[0]]);` |
+| `vmatpop.bf16.acc.mxu0`  | `VR`     | `1110111` |                         | `0001000`        | `77/08`    | Pop MXU0 BF16 Accumulator         | `{m[vd], m[vd + 1]} = mxu0.acc[vs2[0]];` |
+| `vmatpop.bf16.acc.mxu1`  | `VR`     | `1110111` |                         | `0001001`        | `77/09`    | Pop MXU1 BF16 Accumulator         | `{m[vd], m[vd + 1]} = mxu1.acc[vs2[0]];` |
+| `vmatmul.mxu0`           | `VR`     | `1110111` |                         | `0001010`        | `77/10`    | MXU0 Matmul                       | `mxu0.acc[vd[0]] = m[vs1] @ mxu0.w[vs2[0]];` |
+| `vmatmul.mxu1`           | `VR`     | `1110111` |                         | `0001011`        | `77/11`    | MXU1 Matmul                       | `mxu1.acc[vd[0]] = m[vs1] @ mxu1.w[vs2[0]];` |
+| `vmatmul.acc.mxu0`       | `VR`     | `1110111` |                         | `0001100`        | `77/12`    | MXU0 Matmul Accumulate            | `mxu0.acc[vd[0]] = mxu0.acc[vd[0]] + m[vs1] @ mxu0.w[vs2[0]];` |
+| `vmatmul.acc.mxu1`       | `VR`     | `1110111` |                         | `0001101`        | `77/13`    | MXU1 Matmul Accumulate            | `mxu1.acc[vd[0]] = mxu1.acc[vd[0]] + m[vs1] @ mxu1.w[vs2[0]];` |
 | `dma.load.ch<N>`         | `R`      | `1111011` | `000 ~ 111`             | `0000000`        | `7B/00`    | DMA Load                          | `issue_dma_load(channel=N, vmem_addr=x[rd], dram_addr=x[rs1]+base, size=x[rs2]);` |
 | `dma.store.ch<N>`        | `R`      | `1111011` | `000 ~ 111`             | `0000001`        | `7B/01`    | DMA Store                         | `issue_dma_store(channel=N, vmem_addr=x[rs1]+base, dram_addr=x[rd], size=x[rs2]);` |
 | `dma.config.ch<N>`       | `I`      | `1111111` | `000 ~ 111`             | `0000000`        | `7F/00`    | DMA Load                          | `dma.base = x[rs1]` |
