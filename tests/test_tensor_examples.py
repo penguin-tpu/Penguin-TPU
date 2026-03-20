@@ -23,9 +23,9 @@ def test_matmul_example_matches_pytorch_and_emits_trace(tmp_path) -> None:
     assert result.trace_path.exists()
     assert tuple(result.output.shape) == (64, 64)
     assert torch.equal(result.output, result.golden)
-    assert result.perf.instructions == 59
-    assert result.perf.cycles == 6_527
-    assert result.perf.instructions_by_opcode["delay"] == 4
+    assert result.perf.instructions == 61
+    assert result.perf.cycles == 6_592
+    assert result.perf.instructions_by_opcode["delay"] == 5
     assert result.perf.instructions_by_opcode["dma.load.ch0"] == 1
     assert result.perf.instructions_by_opcode["dma.load.ch1"] == 1
     assert result.perf.instructions_by_opcode["dma.store.ch2"] == 1
@@ -40,9 +40,9 @@ def test_linear_example_matches_pytorch_and_emits_trace(tmp_path) -> None:
     assert result.trace_path.exists()
     assert tuple(result.output.shape) == (128, 128)
     assert torch.equal(result.output, result.golden)
-    assert result.perf.instructions == 124
-    assert result.perf.cycles == 9_336
-    assert result.perf.instructions_by_opcode["delay"] == 16
+    assert result.perf.instructions == 127
+    assert result.perf.cycles == 9_402
+    assert result.perf.instructions_by_opcode["delay"] == 17
     assert result.perf.instructions_by_opcode["dma.load.ch0"] == 1
     assert result.perf.instructions_by_opcode["dma.load.ch5"] == 1
     assert result.perf.instructions_by_opcode["dma.store.ch3"] == 1

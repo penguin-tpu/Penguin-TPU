@@ -78,7 +78,9 @@ n_loop:
     dma.wait.ch1
     dma.wait.ch0
     vload m1, 0(x4)
-    vload.weight.mxu0 w0, x5
+    vload m8, 0(x5)
+    delay 63
+    vmatpush.weight.mxu0 w0, m8
     delay 63
     vmatmul.mxu0 m1, w0
     addi x10, x10, 4096
@@ -94,7 +96,9 @@ k_loop:
     dma.wait.ch1
     dma.wait.ch0
     vload m1, 0(x4)
-    vload.weight.mxu0 w0, x5
+    vload m8, 0(x5)
+    delay 63
+    vmatpush.weight.mxu0 w0, m8
     delay 63
     vmatmul.acc.mxu0 m1, w0
     addi x10, x10, 4096

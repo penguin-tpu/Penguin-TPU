@@ -42,9 +42,12 @@
     seli e0, 0
     seli e1, 0
     vload m1, 0(x1)
-    vload.weight.mxu0 w0, x10
-    vload.weight.mxu0 w1, x11
+    vload m8, 0(x10)
+    vload m9, 0(x11)
 
+    delay 63
+    vmatpush.weight.mxu0 w0, m8
+    vmatpush.weight.mxu0 w1, m9
     delay 63
     vmatmul.mxu0 m1, w0
     delay 63

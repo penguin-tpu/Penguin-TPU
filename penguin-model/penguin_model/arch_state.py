@@ -430,24 +430,6 @@ class ArchState:
         self.vmem.write(address, payload)
         self._log_memory_access("vmem", "vstore", address, 0, size=self.config.mreg_bytes)
 
-    def push_weight_slot_from_vmem(self, mxu: int, slot: int, address: int) -> None:
-        if not self._check_tensor_alignment(address):
-            return
-        payload = self.vmem.read(address, self.config.weight_slot_bytes).clone()
-        self.instruction_extra_cycles = (
-            self.config.vmem_transfer_cycles(self.config.weight_slot_bytes)
-            - self.config.vload_weight_latency_cycles
-        )
-        self.perf.bytes_read += self.config.weight_slot_bytes
-        self.store_weight_slot(mxu, slot, payload)
-        self._log_memory_access(
-            "vmem",
-            f"vload.weight.mxu{mxu}",
-            address,
-            slot,
-            size=self.config.weight_slot_bytes,
-        )
-
     def push_weight_slot_from_mreg(self, mxu: int, slot: int, mreg: int) -> None:
         payload = self.load_mreg(mreg)
         self.instruction_extra_cycles = (

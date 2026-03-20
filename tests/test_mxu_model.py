@@ -12,7 +12,6 @@ from penguin_model import (
     MATMUL_LATENCY_CYCLES,
     TENSOR_INSTRUCTION_SPECS,
     VLOAD_LATENCY_CYCLES,
-    VLOAD_WEIGHT_LATENCY_CYCLES,
     VMATPOP_ACC_BF16_LATENCY_CYCLES,
     VMATPOP_ACC_FP8_LATENCY_CYCLES,
     VMATPUSH_ACC_LATENCY_CYCLES,
@@ -29,7 +28,6 @@ from penguin_model import (
     ScaleMemType,
     StopReason,
     TensorMemType,
-    WeightMemType,
     WeightTensorType,
 )
 from penguin_model.tensor import (
@@ -54,8 +52,6 @@ from penguin_model.testbench import TEST_CORE_CONFIG, VMEM_BASE
 REQUIRED_MXU_MNEMONICS = {
     "vmatpush.weight.mxu0",
     "vmatpush.weight.mxu1",
-    "vload.weight.mxu0",
-    "vload.weight.mxu1",
     "vmatpush.acc.fp8.mxu0",
     "vmatpush.acc.fp8.mxu1",
     "vmatpush.acc.bf16.mxu0",
@@ -141,7 +137,6 @@ def test_mxu_instruction_family_registers_with_expected_latency_classes() -> Non
     assert INSTRUCTION_LATENCY["vload"] == VLOAD_LATENCY_CYCLES
     assert INSTRUCTION_LATENCY["vstore"] == VSTORE_LATENCY_CYCLES
     assert INSTRUCTION_LATENCY["vmatpush.weight.mxu0"] == VMATPUSH_WEIGHT_LATENCY_CYCLES
-    assert INSTRUCTION_LATENCY["vload.weight.mxu0"] == VLOAD_WEIGHT_LATENCY_CYCLES
     assert INSTRUCTION_LATENCY["vmatpush.acc.bf16.mxu0"] == VMATPUSH_ACC_LATENCY_CYCLES
     assert INSTRUCTION_LATENCY["vmatpop.bf16.acc.mxu0"] == VMATPOP_ACC_BF16_LATENCY_CYCLES
     assert INSTRUCTION_LATENCY["vmatpop.fp8.acc.mxu0"] == VMATPOP_ACC_FP8_LATENCY_CYCLES
@@ -169,7 +164,7 @@ def test_scale_register_instructions_write_expected_raw_payloads() -> None:
 
 
 @torch.no_grad()
-def test_vload_weight_push_and_vstore_use_whole_tensor_images() -> None:
+def test_vload_stage_vmatpush_weight_and_vstore_use_whole_tensor_images() -> None:
     activation = _fp8_tile([[1.0, 2.0, 3.0], [-4.0, 0.5, 1.5]])
     weights = _weight_tile([[1.0, -1.0], [2.0, 0.25], [0.5, 4.0]])
     result_tile = _bf16_result_tile([[7.0, 8.0], [9.0, 10.0]])
@@ -188,15 +183,18 @@ def test_vload_weight_push_and_vstore_use_whole_tensor_images() -> None:
     perf = core.execute(
         [
             Instruction("vload", TensorMemType(mreg=1, rs1=0, imm=act_addr)),
-            Instruction("vload.weight.mxu0", WeightMemType(slot=0, rs1=2, imm=0)),
+            Instruction("vload", TensorMemType(mreg=2, rs1=2, imm=0)),
+            Instruction("delay", DelayType(cycles=VLOAD_LATENCY_CYCLES - 1)),
+            Instruction("vmatpush.weight.mxu0", WeightTensorType(slot=0, ms=2)),
             Instruction("vstore", TensorMemType(mreg=5, rs1=0, imm=store_addr)),
         ]
     )
 
     assert torch.equal(state.load_mreg(1), fp8_tile_to_bytes(activation, config=state.config))
+    assert torch.equal(state.load_mreg(2), weight_tile_to_bytes(weights, config=state.config))
     assert torch.equal(state.load_weight_slot(0, 0), weight_tile_to_bytes(weights, config=state.config))
     assert torch.equal(state.vmem.read(store_addr, MREG_BYTES), result_lo)
-    assert perf.instructions == 3
+    assert perf.instructions == 5
 
 
 @torch.no_grad()

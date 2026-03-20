@@ -42,7 +42,6 @@ from .instructions import (
     VectorImmType,
     VPUBinaryType,
     VPUUnaryType,
-    WeightMemType,
     WeightTensorType,
     XLUUnaryType,
 )
@@ -157,8 +156,6 @@ def _format_instruction(instruction: Instruction) -> str:
         return f"{mnemonic} e{params.ed}, {params.imm}(x{params.rs1})"
     if isinstance(params, TensorMemType):
         return f"{mnemonic} m{params.mreg}, {params.imm}(x{params.rs1})"
-    if isinstance(params, WeightMemType):
-        return f"{mnemonic} w{params.slot}, {params.imm}(x{params.rs1})"
     if isinstance(params, WeightTensorType):
         return f"{mnemonic} w{params.slot}, m{params.ms}"
     if isinstance(params, MXUAccumulatorType):
@@ -239,7 +236,6 @@ def _lane_occupancy_cycles(instruction: Instruction, execute_lane: int, total_la
     if instruction.mnemonic.startswith(
         (
             "vmatpush.weight.",
-            "vload.weight.",
             "vmatpush.acc.fp8.",
             "vmatpush.acc.bf16.",
             "vmatpop.bf16.acc.",
@@ -273,8 +269,6 @@ def _instruction_latency_cycles(
         return state.config.vstore_latency_cycles
     if instruction.mnemonic.startswith("vmatpush.weight."):
         return state.config.vmatpush_weight_latency_cycles
-    if instruction.mnemonic.startswith("vload.weight."):
-        return state.config.vload_weight_latency_cycles
     if instruction.mnemonic.startswith("vmatpush.acc.bf16."):
         return state.config.vmatpush_acc_latency_cycles
     if instruction.mnemonic.startswith("vmatpush.acc.fp8."):
@@ -646,10 +640,6 @@ class Core:
                 wait_mreg(params.mreg)
             else:
                 wait_mreg_write(params.mreg)
-        elif isinstance(params, WeightMemType):
-            wait_xreg(params.rs1)
-            wait_vmem()
-            wait_weight_write(0 if instruction.mnemonic.endswith("mxu0") else 1, params.slot)
         elif isinstance(params, WeightTensorType):
             wait_mreg(params.ms)
             wait_weight_write(0 if instruction.mnemonic.endswith("mxu0") else 1, params.slot)
@@ -735,9 +725,6 @@ class Core:
             reserve_vmem(completion_cycle)
             if instruction.mnemonic == "vload":
                 reserve_mreg(params.mreg)
-        elif isinstance(params, WeightMemType):
-            reserve_vmem(completion_cycle)
-            reserve_weight(0 if instruction.mnemonic.endswith("mxu0") else 1, params.slot)
         elif isinstance(params, WeightTensorType):
             reserve_weight(0 if instruction.mnemonic.endswith("mxu0") else 1, params.slot)
         elif isinstance(params, MXUAccumulatorType):
@@ -798,8 +785,6 @@ class Core:
             reserve_xreg(params.rs1)
             if instruction.mnemonic == "vstore":
                 reserve_mreg(params.mreg)
-        elif isinstance(params, WeightMemType):
-            reserve_xreg(params.rs1)
         elif isinstance(params, WeightTensorType):
             reserve_mreg(params.ms)
         elif isinstance(params, MXUAccumulatorType):
@@ -851,37 +836,6 @@ class Core:
                     return
                 self.state.trace_end_cycle = self._trace_cycle(cycle)
                 self.state.store_weight_slot(mxu, params.slot, captured["payload"])
-
-            return on_start, on_complete
-
-        if isinstance(params, WeightMemType):
-            captured: dict[str, object] = {}
-            mxu = 0 if instruction.mnemonic.endswith("mxu0") else 1
-
-            def on_start(cycle: int) -> None:
-                del cycle
-                address = self.state.resolve_indirect_address(params.rs1, params.imm)
-                if not self.state._check_tensor_alignment(address):
-                    return
-                captured["address"] = address
-                captured["payload"] = self.state.vmem.read(
-                    address,
-                    self.state.config.weight_slot_bytes,
-                ).clone()
-
-            def on_complete(cycle: int) -> None:
-                if "payload" not in captured:
-                    return
-                self.state.trace_end_cycle = self._trace_cycle(cycle)
-                self.state.perf.bytes_read += self.state.config.weight_slot_bytes
-                self.state.store_weight_slot(mxu, params.slot, captured["payload"])
-                self.state._log_memory_access(
-                    "vmem",
-                    f"vload.weight.mxu{mxu}",
-                    captured["address"],
-                    params.slot,
-                    size=self.state.config.weight_slot_bytes,
-                )
 
             return on_start, on_complete
 

@@ -158,7 +158,7 @@ class TensorCoreConfig:
     """The number of FP8 columns stored in one MXU weight tile."""
 
     vmem_alignment_bytes: int = 32
-    """The required VMEM alignment for `vload`, `vstore`, and `vload.weight.*`."""
+    """The required VMEM alignment for tensor-register VMEM transfers."""
 
     matmul_latency_cycles: int = 64
     """The modeled latency of one MXU matmul launch in core cycles."""
@@ -406,12 +406,6 @@ class PenguinCoreConfig:
     @property
     def vmatpush_weight_latency_cycles(self) -> int:
         """Modeled latency of one `vmatpush.weight.mxu*` tensor-to-weight transfer."""
-
-        return self.bandwidth.vmem_transfer_cycles(self.weight_slot_bytes)
-
-    @property
-    def vload_weight_latency_cycles(self) -> int:
-        """Modeled latency of one `vload.weight.*` VMEM-to-weight transfer."""
 
         return self.bandwidth.vmem_transfer_cycles(self.weight_slot_bytes)
 

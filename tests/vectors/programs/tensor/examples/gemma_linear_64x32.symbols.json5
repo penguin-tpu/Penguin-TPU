@@ -16,7 +16,7 @@
       kind: "program",
       region: "imem",
       address: 0x00020000,
-      size_bytes: 176,
+      size_bytes: 184,
       file: "gemma_linear_64x32.S",
     },
     weights: {

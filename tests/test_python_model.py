@@ -17,6 +17,7 @@ from penguin_model import (
     DEFAULT_PENGUIN_CORE_CONFIG,
     DRAM_BASE,
     DRAM_SIZE,
+    DelayType,
     INSTRUCTION_LATENCY,
     INSTRUCTION_SPECS,
     IMEM_BASE,
@@ -38,7 +39,7 @@ from penguin_model import (
     UType,
     VMEM_BASE,
     VMEM_SIZE,
-    WeightMemType,
+    WeightTensorType,
     addi,
     assemble_text,
     beq,
@@ -1042,7 +1043,7 @@ def test_dump_json_trace_tags_vector_vmem_accesses_with_address_and_size() -> No
     assert vstore_event["args"]["size"] == MREG_BYTES
 
 
-def test_dump_json_trace_tags_mxu_weight_vmem_accesses_with_address_and_size() -> None:
+def test_dump_json_trace_weight_staging_uses_vload_memory_tags_only() -> None:
     state = _fresh_state()
     payload = torch.arange(0, state.config.weight_slot_bytes, dtype=torch.uint8)
     state.vmem.write(VMEM_BASE + 0x400, payload)
@@ -1052,25 +1053,28 @@ def test_dump_json_trace_tags_mxu_weight_vmem_accesses_with_address_and_size() -
     core.dump_json_trace(
         [
             Instruction("addi", IType(rd=1, rs1=0, imm=VMEM_BASE + 0x400)),
-            Instruction("vload.weight.mxu0", WeightMemType(slot=0, rs1=1)),
+            Instruction("vload", TensorMemType(mreg=7, rs1=1, imm=0)),
+            Instruction("delay", DelayType(cycles=state.config.vload_latency_cycles - 1)),
+            Instruction("vmatpush.weight.mxu0", WeightTensorType(slot=0, ms=7)),
         ],
         trace_path,
     )
 
     events = json.loads(trace_path.read_text())
-    weight_load_event = next(
+    vload_event = next(
         event
         for event in events
-        if event.get("cat") == "memory" and event["args"]["access_type"] == "vload.weight.mxu0"
+        if event.get("cat") == "memory" and event["args"]["access_type"] == "vload"
     )
 
-    assert (
-        weight_load_event["name"]
-        == f"vload.weight.mxu0 0x{VMEM_BASE + 0x400:X} {state.config.weight_slot_bytes}B"
+    assert vload_event["name"] == f"vload 0x{VMEM_BASE + 0x400:X} {MREG_BYTES}B"
+    assert vload_event["args"]["region"] == "vmem"
+    assert vload_event["args"]["address"] == VMEM_BASE + 0x400
+    assert vload_event["args"]["size"] == MREG_BYTES
+    assert not any(
+        event.get("cat") == "memory" and str(event["args"].get("access_type", "")).startswith("vload.weight")
+        for event in events
     )
-    assert weight_load_event["args"]["region"] == "vmem"
-    assert weight_load_event["args"]["address"] == VMEM_BASE + 0x400
-    assert weight_load_event["args"]["size"] == state.config.weight_slot_bytes
 
 
 def test_dma_multichannel_example_roundtrips_streams_through_xregs_and_mregs() -> None:

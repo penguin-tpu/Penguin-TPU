@@ -10,7 +10,7 @@ from penguin_model import (
     MXUMatmulType,
     TensorMemType,
     VMEM_BASE,
-    WeightMemType,
+    WeightTensorType,
     assemble_text,
 )
 
@@ -21,7 +21,8 @@ def test_scheduler_inserts_delay_between_tensor_producer_and_consumer() -> None:
         li x1, VMEM_BASE + 0x0000
         li x2, VMEM_BASE + 0x1000
         vload m1, 0(x1)
-        vload.weight.mxu0 w0, x2
+        vload m3, 0(x2)
+        vmatpush.weight.mxu0 w0, m3
         vmatmul.mxu0 m1, w0
         vmatpop.bf16.acc.mxu0 m2
         """,
@@ -34,7 +35,9 @@ def test_scheduler_inserts_delay_between_tensor_producer_and_consumer() -> None:
         Instruction("addi", IType(rd=1, rs1=0, imm=VMEM_BASE + 0x0000)),
         Instruction("addi", IType(rd=2, rs1=0, imm=VMEM_BASE + 0x1000)),
         Instruction("vload", TensorMemType(mreg=1, rs1=1, imm=0)),
-        Instruction("vload.weight.mxu0", WeightMemType(slot=0, rs1=2)),
+        Instruction("vload", TensorMemType(mreg=3, rs1=2, imm=0)),
+        Instruction("delay", DelayType(cycles=63)),
+        Instruction("vmatpush.weight.mxu0", WeightTensorType(slot=0, ms=3)),
         Instruction("delay", DelayType(cycles=63)),
         Instruction("vmatmul.mxu0", MXUMatmulType(ms=1, ws=0)),
         Instruction("delay", DelayType(cycles=63)),

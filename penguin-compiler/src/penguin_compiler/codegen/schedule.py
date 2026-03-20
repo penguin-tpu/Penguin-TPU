@@ -31,7 +31,6 @@ from penguin_model import (
     UType,
     VPUBinaryType,
     VPUUnaryType,
-    WeightMemType,
     WeightTensorType,
     XLUTransposeType,
     assemble_text,
@@ -190,8 +189,6 @@ def _instruction_latency_cycles(
         return config.vstore_latency_cycles
     if mnemonic.startswith("vmatpush.weight."):
         return config.vmatpush_weight_latency_cycles
-    if mnemonic.startswith("vload.weight."):
-        return config.vload_weight_latency_cycles
     if mnemonic.startswith(("vmatpush.acc.bf16.", "vmatpush.bf16.acc.")):
         return config.vmatpush_acc_latency_cycles
     if mnemonic.startswith("vmatpush.acc.fp8."):
@@ -246,8 +243,6 @@ def _read_resources(instruction: Instruction) -> tuple[tuple[str, int], ...]:
         if mnemonic == "vstore":
             resources.append(("mreg", params.mreg))
         return tuple(resources)
-    if isinstance(params, WeightMemType):
-        return _xregs(params.rs1) + (("vmem", 0),)
     if isinstance(params, WeightTensorType):
         return (("mreg", params.ms),)
     if isinstance(params, MXUAccumulatorType):
@@ -289,7 +284,7 @@ def _write_resources(instruction: Instruction) -> tuple[tuple[str, int], ...]:
         if mnemonic == "vload":
             return (("mreg", params.mreg),)
         return (("vmem", 0),)
-    if isinstance(params, WeightMemType | WeightTensorType):
+    if isinstance(params, WeightTensorType):
         return (("weight", _weight_resource_index(mnemonic, params.slot)),)
     if isinstance(params, MXUAccumulatorType):
         mxu = _mxu_index(mnemonic)
@@ -358,8 +353,6 @@ def _format_instruction(
         return f"{mnemonic} e{params.ed}, {params.imm}(x{params.rs1})"
     if isinstance(params, TensorMemType):
         return f"{mnemonic} m{params.mreg}, {params.imm}(x{params.rs1})"
-    if isinstance(params, WeightMemType):
-        return f"{mnemonic} w{params.slot}, x{params.rs1}"
     if isinstance(params, WeightTensorType):
         return f"{mnemonic} w{params.slot}, m{params.ms}"
     if isinstance(params, MXUAccumulatorType):

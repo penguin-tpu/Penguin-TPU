@@ -72,14 +72,17 @@
     dma.wait.ch2
     dma.wait.ch1
     dma.wait.ch0
-    vload.weight.mxu0 w0, x6
-    vload.weight.mxu0 w1, x7
+    vload m6, 0(x6)
+    vload m7, 0(x7)
     vload m10, 0(x14)
     vload m11, 4096(x14)
     vload m12, 0(x15)
     vload m13, 4096(x15)
 
     vload m1, 0(x4)
+    delay 63
+    vmatpush.weight.mxu0 w0, m6
+    vmatpush.weight.mxu0 w1, m7
     delay 63
     vmatmul.mxu0 m1, w0
     delay 63

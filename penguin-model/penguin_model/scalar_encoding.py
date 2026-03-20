@@ -20,7 +20,6 @@ from .instructions import (
     VectorImmType,
     VPUBinaryType,
     VPUUnaryType,
-    WeightMemType,
     WeightTensorType,
     XLUUnaryType,
 )

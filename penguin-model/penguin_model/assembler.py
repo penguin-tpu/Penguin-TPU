@@ -34,7 +34,6 @@ from .instructions import (
     XLUUnaryType,
     VPUBinaryType,
     VPUUnaryType,
-    WeightMemType,
 )
 from .memory import DRAM_BASE, IMEM_BASE, VMEM_BASE
 
@@ -610,38 +609,6 @@ def _assemble_instruction(
             mnemonic,
             TensorMemType(
                 mreg=_parse_mregister(
-                    operands[0], source_name=source_name, line_number=line.line_number
-                ),
-                rs1=rs1,
-                imm=imm,
-            ),
-        )
-
-    if spec.params_type is WeightMemType:
-        _expect_operand_count(
-            mnemonic,
-            operands,
-            expected=2,
-            source_name=source_name,
-            line_number=line.line_number,
-        )
-        try:
-            rs1, imm = _parse_memory_operand(
-                operands[1],
-                labels=labels,
-                pc=pc,
-                source_name=source_name,
-                line_number=line.line_number,
-            )
-        except AssemblySyntaxError:
-            rs1 = _parse_register(
-                operands[1], source_name=source_name, line_number=line.line_number
-            )
-            imm = 0
-        return Instruction(
-            mnemonic,
-            WeightMemType(
-                slot=_parse_weight_selector(
                     operands[0], source_name=source_name, line_number=line.line_number
                 ),
                 rs1=rs1,

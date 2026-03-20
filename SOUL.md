@@ -77,6 +77,13 @@ What exists now:
     dependencies are software-scheduled
   - compiler-emitted Gemma stage bundles now preserve the checked-in scheduled source
     exactly instead of re-scheduling away explicit `delay` instructions
+- the direct `VMEM -> MXU weight-slot` architectural path has been removed from the
+  model baseline:
+  - `vload.weight.*` no longer exists as a modeled instruction
+  - all weight staging is now explicit `VMEM -> MREG -> MXU` via `vload` followed by
+    `vmatpush.weight.*`
+  - tensor/Gemma example programs and their sidecar sizes/perf baselines were updated to
+    reflect the extra staged move and required software-visible delay
 - historical notes later in this file may still mention earlier `32 x 32` / `2048`-byte
   tensor baselines and should not be treated as normative
 - fixed-shape Gemma-inspired examples now exist under `examples/` and run as staged

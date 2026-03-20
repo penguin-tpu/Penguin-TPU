@@ -115,15 +115,6 @@ class TensorMemType:
 
 
 @dataclass(frozen=True, slots=True)
-class WeightMemType:
-    """MXU weight-slot selector plus scalar-register-indirect VMEM address."""
-
-    slot: int
-    rs1: int
-    imm: int = 0
-
-
-@dataclass(frozen=True, slots=True)
 class WeightTensorType:
     """MXU weight-slot selector plus tensor-register source."""
 
@@ -201,7 +192,6 @@ InstructionParams: TypeAlias = (
     | ScaleImmType
     | ScaleMemType
     | TensorMemType
-    | WeightMemType
     | WeightTensorType
     | MXUAccumulatorType
     | MXUMatmulType
@@ -295,7 +285,6 @@ __all__ = [
     "XLUUnaryType",
     "VPUBinaryType",
     "VPUUnaryType",
-    "WeightMemType",
     "instruction",
 ]
 

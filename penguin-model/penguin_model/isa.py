@@ -29,13 +29,11 @@ from .instructions import (
     XLUUnaryType,
     VPUBinaryType,
     VPUUnaryType,
-    WeightMemType,
     instruction,
 )
 from .memory import DMA_CHANNEL_COUNT
 from .tensor import (
     MATMUL_LATENCY_CYCLES,
-    VLOAD_WEIGHT_LATENCY_CYCLES,
     VLOAD_LATENCY_CYCLES,
     VMATPOP_ACC_BF16_LATENCY_CYCLES,
     VMATPOP_ACC_FP8_LATENCY_CYCLES,
@@ -419,34 +417,6 @@ def vmatpush_weight_mxu0(state: ArchState, params: WeightTensorType) -> None:
 )
 def vmatpush_weight_mxu1(state: ArchState, params: WeightTensorType) -> None:
     state.push_weight_slot_from_mreg(1, params.slot, params.ms)
-
-
-@instruction(
-    mnemonic="vload.weight.mxu0",
-    params_type=WeightMemType,
-    latency=VLOAD_WEIGHT_LATENCY_CYCLES,
-    registry=TENSOR_INSTRUCTION_SPECS,
-)
-def vload_weight_mxu0(state: ArchState, params: WeightMemType) -> None:
-    state.push_weight_slot_from_vmem(
-        0,
-        params.slot,
-        state.resolve_indirect_address(params.rs1, params.imm),
-    )
-
-
-@instruction(
-    mnemonic="vload.weight.mxu1",
-    params_type=WeightMemType,
-    latency=VLOAD_WEIGHT_LATENCY_CYCLES,
-    registry=TENSOR_INSTRUCTION_SPECS,
-)
-def vload_weight_mxu1(state: ArchState, params: WeightMemType) -> None:
-    state.push_weight_slot_from_vmem(
-        1,
-        params.slot,
-        state.resolve_indirect_address(params.rs1, params.imm),
-    )
 
 
 @instruction(
@@ -1104,8 +1074,6 @@ __all__ = [
     "dma_config_ch7",
     "vadd_bf16",
     "vexp",
-    "vload_weight_mxu0",
-    "vload_weight_mxu1",
     "vli_all",
     "vli_col",
     "vli_one",
