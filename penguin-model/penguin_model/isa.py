@@ -426,7 +426,7 @@ def vmatpush_weight_mxu1(state: ArchState, params: WeightTensorType) -> None:
     registry=TENSOR_INSTRUCTION_SPECS,
 )
 def vmatpush_acc_fp8_mxu0(state: ArchState, params: MXUAccumulatorType) -> None:
-    state.push_accum_fp8_from_mreg(0, params.mreg)
+    state.push_accum_fp8_from_mreg(0, params.acc, params.mreg)
 
 
 @instruction(
@@ -436,7 +436,7 @@ def vmatpush_acc_fp8_mxu0(state: ArchState, params: MXUAccumulatorType) -> None:
     registry=TENSOR_INSTRUCTION_SPECS,
 )
 def vmatpush_acc_fp8_mxu1(state: ArchState, params: MXUAccumulatorType) -> None:
-    state.push_accum_fp8_from_mreg(1, params.mreg)
+    state.push_accum_fp8_from_mreg(1, params.acc, params.mreg)
 
 
 @instruction(
@@ -446,7 +446,7 @@ def vmatpush_acc_fp8_mxu1(state: ArchState, params: MXUAccumulatorType) -> None:
     registry=TENSOR_INSTRUCTION_SPECS,
 )
 def vmatpush_acc_bf16_mxu0(state: ArchState, params: MXUAccumulatorType) -> None:
-    state.push_accum_from_mregs(0, params.mreg)
+    state.push_accum_from_mregs(0, params.acc, params.mreg)
 
 
 @instruction(
@@ -456,7 +456,7 @@ def vmatpush_acc_bf16_mxu0(state: ArchState, params: MXUAccumulatorType) -> None
     registry=TENSOR_INSTRUCTION_SPECS,
 )
 def vmatpush_acc_bf16_mxu1(state: ArchState, params: MXUAccumulatorType) -> None:
-    state.push_accum_from_mregs(1, params.mreg)
+    state.push_accum_from_mregs(1, params.acc, params.mreg)
 
 
 @instruction(
@@ -466,7 +466,7 @@ def vmatpush_acc_bf16_mxu1(state: ArchState, params: MXUAccumulatorType) -> None
     registry=TENSOR_INSTRUCTION_SPECS,
 )
 def vmatpop_bf16_acc_mxu0(state: ArchState, params: MXUAccumulatorType) -> None:
-    state.pop_accum_to_mregs(0, params.mreg)
+    state.pop_accum_to_mregs(0, params.acc, params.mreg)
 
 
 @instruction(
@@ -476,7 +476,7 @@ def vmatpop_bf16_acc_mxu0(state: ArchState, params: MXUAccumulatorType) -> None:
     registry=TENSOR_INSTRUCTION_SPECS,
 )
 def vmatpop_bf16_acc_mxu1(state: ArchState, params: MXUAccumulatorType) -> None:
-    state.pop_accum_to_mregs(1, params.mreg)
+    state.pop_accum_to_mregs(1, params.acc, params.mreg)
 
 
 @instruction(
@@ -486,7 +486,7 @@ def vmatpop_bf16_acc_mxu1(state: ArchState, params: MXUAccumulatorType) -> None:
     registry=TENSOR_INSTRUCTION_SPECS,
 )
 def vmatpop_fp8_acc_mxu0(state: ArchState, params: MXUAccumulatorType) -> None:
-    state.pop_accum_to_fp8_mreg(0, params.mreg)
+    state.pop_accum_to_fp8_mreg(0, params.acc, params.mreg)
 
 
 @instruction(
@@ -496,7 +496,7 @@ def vmatpop_fp8_acc_mxu0(state: ArchState, params: MXUAccumulatorType) -> None:
     registry=TENSOR_INSTRUCTION_SPECS,
 )
 def vmatpop_fp8_acc_mxu1(state: ArchState, params: MXUAccumulatorType) -> None:
-    state.pop_accum_to_fp8_mreg(1, params.mreg)
+    state.pop_accum_to_fp8_mreg(1, params.acc, params.mreg)
 
 
 def _apply_vpu_simple_latency(state: ArchState) -> None:
@@ -561,6 +561,7 @@ def vmatmul_mxu0(state: ArchState, params: MXUMatmulType) -> None:
             state.load_weight_slot(0, params.ws),
             config=state.config,
         ),
+        acc=params.acc,
     )
 
 
@@ -581,6 +582,7 @@ def vmatmul_mxu1(state: ArchState, params: MXUMatmulType) -> None:
             state.load_weight_slot(1, params.ws),
             config=state.config,
         ),
+        acc=params.acc,
     )
 
 
@@ -599,9 +601,10 @@ def vmatmul_acc_mxu0(state: ArchState, params: MXUMatmulAccType) -> None:
         compute_accum_matmul(
             state.load_mreg(params.ms),
             state.load_weight_slot(0, params.ws),
-            state.load_accum_buffer(0),
+            state.load_accum_buffer(0, acc=params.acc),
             config=state.config,
         ),
+        acc=params.acc,
     )
 
 
@@ -620,9 +623,10 @@ def vmatmul_acc_mxu1(state: ArchState, params: MXUMatmulAccType) -> None:
         compute_accum_matmul(
             state.load_mreg(params.ms),
             state.load_weight_slot(1, params.ws),
-            state.load_accum_buffer(1),
+            state.load_accum_buffer(1, acc=params.acc),
             config=state.config,
         ),
+        acc=params.acc,
     )
 
 

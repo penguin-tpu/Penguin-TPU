@@ -77,11 +77,11 @@ def test_assembler_parses_tensor_memory_and_mxu_operands() -> None:
     vload m9, 0(x2)
     vmatpush.mxu1 w0, m8
     vmatpush.weight.mxu0 w1, m9
-    vmatpush.bf16.acc.mxu1 m4
-    vmatmul.mxu0 m7, w1
-    vmatmul.acc.mxu1 m3, w0
-    vmatpop.bf16.acc.mxu1 m4
-    vmatpop.fp8.acc.mxu0 m6
+    vmatpush.bf16.acc.mxu1 a1, m4
+    vmatmul.mxu0 a0, m7, w1
+    vmatmul.acc.mxu1 a1, m3, w0
+    vmatpop.bf16.acc.mxu1 m4, a1
+    vmatpop.fp8.acc.mxu0 m6, a0
     vstore m4, 96(x6)
 """
     )
@@ -93,11 +93,11 @@ def test_assembler_parses_tensor_memory_and_mxu_operands() -> None:
         Instruction("vload", TensorMemType(mreg=9, rs1=2, imm=0)),
         Instruction("vmatpush.weight.mxu1", WeightTensorType(slot=0, ms=8)),
         Instruction("vmatpush.weight.mxu0", WeightTensorType(slot=1, ms=9)),
-        Instruction("vmatpush.acc.bf16.mxu1", MXUAccumulatorType(mreg=4)),
-        Instruction("vmatmul.mxu0", MXUMatmulType(ms=7, ws=1)),
-        Instruction("vmatmul.acc.mxu1", MXUMatmulAccType(ms=3, ws=0)),
-        Instruction("vmatpop.bf16.acc.mxu1", MXUAccumulatorType(mreg=4)),
-        Instruction("vmatpop.fp8.acc.mxu0", MXUAccumulatorType(mreg=6)),
+        Instruction("vmatpush.acc.bf16.mxu1", MXUAccumulatorType(mreg=4, acc=1)),
+        Instruction("vmatmul.mxu0", MXUMatmulType(ms=7, ws=1, acc=0)),
+        Instruction("vmatmul.acc.mxu1", MXUMatmulAccType(ms=3, ws=0, acc=1)),
+        Instruction("vmatpop.bf16.acc.mxu1", MXUAccumulatorType(mreg=4, acc=1)),
+        Instruction("vmatpop.fp8.acc.mxu0", MXUAccumulatorType(mreg=6, acc=0)),
         Instruction("vstore", TensorMemType(mreg=4, rs1=6, imm=96)),
     ]
 

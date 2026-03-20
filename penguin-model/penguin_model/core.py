@@ -159,11 +159,13 @@ def _format_instruction(instruction: Instruction) -> str:
     if isinstance(params, WeightTensorType):
         return f"{mnemonic} w{params.slot}, m{params.ms}"
     if isinstance(params, MXUAccumulatorType):
-        return f"{mnemonic} m{params.mreg}"
+        if mnemonic.startswith("vmatpop."):
+            return f"{mnemonic} m{params.mreg}, a{params.acc}"
+        return f"{mnemonic} a{params.acc}, m{params.mreg}"
     if isinstance(params, MXUMatmulType):
-        return f"{mnemonic} m{params.ms}, w{params.ws}"
+        return f"{mnemonic} a{params.acc}, m{params.ms}, w{params.ws}"
     if isinstance(params, MXUMatmulAccType):
-        return f"{mnemonic} m{params.ms}, w{params.ws}"
+        return f"{mnemonic} a{params.acc}, m{params.ms}, w{params.ws}"
     if isinstance(params, VPUBinaryType):
         return f"{mnemonic} m{params.md}, m{params.ms1}, m{params.ms2}"
     if isinstance(params, VPUUnaryType):
@@ -387,8 +389,14 @@ class Core:
         self._ereg_read_consumed = [base_cycle] * self.state.config.scale.num_ereg
         self._mreg_ready = [base_cycle] * self.state.config.tensor.num_mreg
         self._mreg_read_consumed = [base_cycle] * self.state.config.tensor.num_mreg
-        self._accum_ready = [base_cycle] * self.state.config.tensor.mxu_count
-        self._accum_read_consumed = [base_cycle] * self.state.config.tensor.mxu_count
+        self._accum_ready = [
+            [base_cycle] * self.state.config.tensor.accum_slots_per_mxu
+            for _ in range(self.state.config.tensor.mxu_count)
+        ]
+        self._accum_read_consumed = [
+            [base_cycle] * self.state.config.tensor.accum_slots_per_mxu
+            for _ in range(self.state.config.tensor.mxu_count)
+        ]
         self._weight_ready = [
             [base_cycle] * self.state.config.tensor.weight_slots_per_mxu
             for _ in range(self.state.config.tensor.mxu_count)
@@ -595,13 +603,13 @@ class Core:
             nonlocal ready_cycle
             ready_cycle = max(ready_cycle, self._weight_read_consumed[mxu][slot])
 
-        def wait_accum(mxu: int) -> None:
+        def wait_accum(mxu: int, acc: int) -> None:
             nonlocal ready_cycle
-            ready_cycle = max(ready_cycle, self._accum_ready[mxu])
+            ready_cycle = max(ready_cycle, self._accum_ready[mxu][acc])
 
-        def wait_accum_write(mxu: int) -> None:
+        def wait_accum_write(mxu: int, acc: int) -> None:
             nonlocal ready_cycle
-            ready_cycle = max(ready_cycle, self._accum_read_consumed[mxu])
+            ready_cycle = max(ready_cycle, self._accum_read_consumed[mxu][acc])
 
         def wait_vmem() -> None:
             nonlocal ready_cycle
@@ -645,14 +653,14 @@ class Core:
             wait_weight_write(0 if instruction.mnemonic.endswith("mxu0") else 1, params.slot)
         elif isinstance(params, MXUAccumulatorType):
             mxu = 0 if instruction.mnemonic.endswith("mxu0") else 1
-            wait_accum(mxu)
+            wait_accum(mxu, params.acc)
             if instruction.mnemonic.startswith(("vmatpush.acc.bf16.", "vmatpush.bf16.acc.")):
                 wait_mreg(params.mreg)
                 wait_mreg(params.mreg + 1)
-                wait_accum_write(mxu)
+                wait_accum_write(mxu, params.acc)
             elif instruction.mnemonic.startswith("vmatpush.acc.fp8."):
                 wait_mreg(params.mreg)
-                wait_accum_write(mxu)
+                wait_accum_write(mxu, params.acc)
             elif instruction.mnemonic.startswith("vmatpop.bf16.acc."):
                 wait_mreg_write(params.mreg)
                 wait_mreg_write(params.mreg + 1)
@@ -662,9 +670,9 @@ class Core:
             mxu = 0 if instruction.mnemonic.endswith("mxu0") else 1
             wait_mreg(params.ms)
             wait_weight(mxu, params.ws)
-            wait_accum_write(mxu)
+            wait_accum_write(mxu, params.acc)
             if isinstance(params, MXUMatmulAccType):
-                wait_accum(mxu)
+                wait_accum(mxu, params.acc)
         elif isinstance(params, VPUBinaryType):
             wait_mreg(params.ms1)
             wait_mreg(params.ms2)
@@ -705,8 +713,8 @@ class Core:
         def reserve_weight(mxu: int, slot: int) -> None:
             self._weight_ready[mxu][slot] = completion_cycle
 
-        def reserve_accum(mxu: int) -> None:
-            self._accum_ready[mxu] = completion_cycle
+        def reserve_accum(mxu: int, acc: int) -> None:
+            self._accum_ready[mxu][acc] = completion_cycle
 
         def reserve_vmem(ready_cycle: int) -> None:
             self._vmem_ready_cycle = max(self._vmem_ready_cycle, ready_cycle)
@@ -728,14 +736,14 @@ class Core:
         elif isinstance(params, WeightTensorType):
             reserve_weight(0 if instruction.mnemonic.endswith("mxu0") else 1, params.slot)
         elif isinstance(params, MXUAccumulatorType):
-            reserve_accum(0 if instruction.mnemonic.endswith("mxu0") else 1)
+            reserve_accum(0 if instruction.mnemonic.endswith("mxu0") else 1, params.acc)
             if instruction.mnemonic.startswith("vmatpop.bf16.acc."):
                 reserve_mreg(params.mreg)
                 reserve_mreg(params.mreg + 1)
             elif instruction.mnemonic.startswith("vmatpop.fp8.acc."):
                 reserve_mreg(params.mreg)
         elif isinstance(params, MXUMatmulType | MXUMatmulAccType):
-            reserve_accum(0 if instruction.mnemonic.endswith("mxu0") else 1)
+            reserve_accum(0 if instruction.mnemonic.endswith("mxu0") else 1, params.acc)
         elif isinstance(params, DMAType):
             reserve_vmem(completion_cycle)
         elif isinstance(params, DMAControlType):
@@ -763,9 +771,9 @@ class Core:
                 self._weight_read_consumed[mxu][slot], execute_start_cycle
             )
 
-        def reserve_accum(mxu: int) -> None:
-            self._accum_read_consumed[mxu] = max(
-                self._accum_read_consumed[mxu], execute_start_cycle
+        def reserve_accum(mxu: int, acc: int) -> None:
+            self._accum_read_consumed[mxu][acc] = max(
+                self._accum_read_consumed[mxu][acc], execute_start_cycle
             )
 
         if isinstance(params, RType):
@@ -789,7 +797,7 @@ class Core:
             reserve_mreg(params.ms)
         elif isinstance(params, MXUAccumulatorType):
             mxu = 0 if instruction.mnemonic.endswith("mxu0") else 1
-            reserve_accum(mxu)
+            reserve_accum(mxu, params.acc)
             if instruction.mnemonic.startswith(("vmatpush.acc.bf16.", "vmatpush.bf16.acc.")):
                 reserve_mreg(params.mreg)
                 reserve_mreg(params.mreg + 1)
@@ -800,7 +808,7 @@ class Core:
             reserve_mreg(params.ms)
             reserve_weight(mxu, params.ws)
             if isinstance(params, MXUMatmulAccType):
-                reserve_accum(mxu)
+                reserve_accum(mxu, params.acc)
         elif isinstance(params, VPUBinaryType):
             reserve_mreg(params.ms1)
             reserve_mreg(params.ms2)
@@ -842,6 +850,7 @@ class Core:
         if isinstance(params, MXUAccumulatorType):
             captured: dict[str, object] = {}
             mxu = 0 if instruction.mnemonic.endswith("mxu0") else 1
+            acc = params.acc
 
             def on_start(cycle: int) -> None:
                 del cycle
@@ -857,9 +866,9 @@ class Core:
                 elif instruction.mnemonic.startswith("vmatpop.bf16.acc."):
                     if not self.state.check_even_mreg_pair_base(params.mreg):
                         return
-                    captured["payload"] = self.state.load_accum_buffer(mxu)
+                    captured["payload"] = self.state.load_accum_buffer(mxu, acc=acc)
                 else:
-                    captured["payload"] = self.state.load_accum_buffer(mxu)
+                    captured["payload"] = self.state.load_accum_buffer(mxu, acc=acc)
 
             def on_complete(cycle: int) -> None:
                 if "payload" not in captured:
@@ -877,6 +886,7 @@ class Core:
                             ),
                             config=self.state.config,
                         ),
+                        acc=acc,
                     )
                 elif instruction.mnemonic.startswith("vmatpush.acc.fp8."):
                     self.state.store_accum_buffer(
@@ -887,6 +897,7 @@ class Core:
                             ),
                             config=self.state.config,
                         ),
+                        acc=acc,
                     )
                 elif instruction.mnemonic.startswith("vmatpop.bf16.acc."):
                     raw_lo, raw_hi = bf16_tile_pair_to_bytes(
@@ -912,6 +923,7 @@ class Core:
         if isinstance(params, MXUMatmulType | MXUMatmulAccType):
             captured: dict[str, object] = {}
             mxu = 0 if instruction.mnemonic.endswith("mxu0") else 1
+            acc = params.acc
             accumulates = instruction.mnemonic.startswith("vmatmul.acc.")
 
             def on_start(cycle: int) -> None:
@@ -919,7 +931,7 @@ class Core:
                 captured["activation"] = self.state.load_mreg(params.ms).clone()
                 captured["weights"] = self.state.load_weight_slot(mxu, params.ws).clone()
                 if accumulates:
-                    captured["accum"] = self.state.load_accum_buffer(mxu).clone()
+                    captured["accum"] = self.state.load_accum_buffer(mxu, acc=acc).clone()
 
             def on_complete(cycle: int) -> None:
                 if "activation" not in captured:
@@ -933,6 +945,7 @@ class Core:
                         captured.get("accum"),
                         config=self.state.config,
                     ),
+                    acc=acc,
                 )
 
             return on_start, on_complete

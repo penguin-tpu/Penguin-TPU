@@ -41,6 +41,7 @@ _REGISTER_RE = re.compile(r"x(?P<index>[0-9]|[1-2][0-9]|3[0-1])$")
 _EREGISTER_RE = re.compile(r"e(?P<index>[0-9]|[1-2][0-9]|3[0-1])$")
 _MREGISTER_RE = re.compile(r"m(?P<index>[0-9]|[1-5][0-9]|6[0-3])$")
 _WREGISTER_RE = re.compile(r"w(?P<index>[0-1])$")
+_AREGISTER_RE = re.compile(r"a(?P<index>[0-1])$")
 _LABEL_RE = re.compile(r"(?P<label>[A-Za-z_][A-Za-z0-9_]*)\s*:")
 _MEMORY_OPERAND_RE = re.compile(r"(?P<imm>.+)\((?P<rs1>x[0-9]+)\)$")
 _MNEMONIC_ALIASES: Mapping[str, str] = {
@@ -637,58 +638,82 @@ def _assemble_instruction(
         )
 
     if spec.params_type is MXUAccumulatorType:
-        _expect_operand_count(
-            mnemonic,
-            operands,
-            expected=1,
-            source_name=source_name,
-            line_number=line.line_number,
-        )
+        if len(operands) not in {1, 2}:
+            raise AssemblySyntaxError(
+                f"{source_name}:{line.line_number}: {mnemonic} expects 1 or 2 operands"
+            )
+        if mnemonic.startswith("vmatpop."):
+            mreg_token = operands[0]
+            acc = (
+                _parse_acc_selector(
+                    operands[1], source_name=source_name, line_number=line.line_number
+                )
+                if len(operands) == 2
+                else 0
+            )
+        else:
+            acc = (
+                _parse_acc_selector(
+                    operands[0], source_name=source_name, line_number=line.line_number
+                )
+                if len(operands) == 2
+                else 0
+            )
+            mreg_token = operands[-1]
         return Instruction(
             mnemonic,
             MXUAccumulatorType(
+                acc=acc,
                 mreg=_parse_mregister(
-                    operands[0], source_name=source_name, line_number=line.line_number
+                    mreg_token, source_name=source_name, line_number=line.line_number
                 ),
             ),
         )
 
     if spec.params_type is MXUMatmulType:
-        _expect_operand_count(
-            mnemonic,
-            operands,
-            expected=2,
-            source_name=source_name,
-            line_number=line.line_number,
+        if len(operands) not in {2, 3}:
+            raise AssemblySyntaxError(
+                f"{source_name}:{line.line_number}: {mnemonic} expects 2 or 3 operands"
+            )
+        acc = (
+            _parse_acc_selector(operands[0], source_name=source_name, line_number=line.line_number)
+            if len(operands) == 3
+            else 0
         )
+        offset = 1 if len(operands) == 3 else 0
         return Instruction(
             mnemonic,
             MXUMatmulType(
+                acc=acc,
                 ms=_parse_mregister(
-                    operands[0], source_name=source_name, line_number=line.line_number
+                    operands[offset], source_name=source_name, line_number=line.line_number
                 ),
                 ws=_parse_weight_selector(
-                    operands[1], source_name=source_name, line_number=line.line_number
+                    operands[offset + 1], source_name=source_name, line_number=line.line_number
                 ),
             ),
         )
 
     if spec.params_type is MXUMatmulAccType:
-        _expect_operand_count(
-            mnemonic,
-            operands,
-            expected=2,
-            source_name=source_name,
-            line_number=line.line_number,
+        if len(operands) not in {2, 3}:
+            raise AssemblySyntaxError(
+                f"{source_name}:{line.line_number}: {mnemonic} expects 2 or 3 operands"
+            )
+        acc = (
+            _parse_acc_selector(operands[0], source_name=source_name, line_number=line.line_number)
+            if len(operands) == 3
+            else 0
         )
+        offset = 1 if len(operands) == 3 else 0
         return Instruction(
             mnemonic,
             MXUMatmulAccType(
+                acc=acc,
                 ms=_parse_mregister(
-                    operands[0], source_name=source_name, line_number=line.line_number
+                    operands[offset], source_name=source_name, line_number=line.line_number
                 ),
                 ws=_parse_weight_selector(
-                    operands[1], source_name=source_name, line_number=line.line_number
+                    operands[offset + 1], source_name=source_name, line_number=line.line_number
                 ),
             ),
         )
@@ -833,6 +858,15 @@ def _parse_weight_selector(token: str, *, source_name: str, line_number: int) ->
     if match is None:
         raise AssemblySyntaxError(
             f"{source_name}:{line_number}: invalid weight selector '{token}'"
+        )
+    return int(match.group("index"))
+
+
+def _parse_acc_selector(token: str, *, source_name: str, line_number: int) -> int:
+    match = _AREGISTER_RE.fullmatch(token.strip())
+    if match is None:
+        raise AssemblySyntaxError(
+            f"{source_name}:{line_number}: invalid accumulator selector '{token}'"
         )
     return int(match.group("index"))
 

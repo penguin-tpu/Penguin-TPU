@@ -87,11 +87,15 @@ def make_weight_slot_file_for_config(config: PenguinCoreConfig) -> torch.Tensor:
 def make_accum_buffer_file_for_config(config: PenguinCoreConfig) -> torch.Tensor:
     """Allocate MXU accumulation buffers for a specific core configuration."""
 
-    shape = (config.tensor.mxu_count, config.accum_buffer_bytes)
+    shape = (
+        config.tensor.mxu_count,
+        config.tensor.accum_slots_per_mxu,
+        config.accum_buffer_bytes,
+    )
     if not config.initialization.randomize_accum_buffers:
         return torch.zeros(shape, dtype=torch.uint8)
     return _random_u8_tensor(
-        config.tensor.mxu_count * config.accum_buffer_bytes,
+        config.tensor.mxu_count * config.tensor.accum_slots_per_mxu * config.accum_buffer_bytes,
         seed=_mix_seed(config.initialization.seed, 0x4143_4355),
     ).reshape(shape)
 

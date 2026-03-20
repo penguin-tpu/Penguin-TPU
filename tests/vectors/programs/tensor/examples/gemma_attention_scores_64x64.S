@@ -49,13 +49,13 @@
     vmatpush.weight.mxu0 w0, m8
     vmatpush.weight.mxu0 w1, m9
     delay 63
-    vmatmul.mxu0 m1, w0
+    vmatmul.mxu0 a0, m1, w0
     delay 63
-    vmatpop.bf16.acc.mxu0 m2
+    vmatpop.bf16.acc.mxu0 m2, a0
     delay 127
     vstore m2, 0(x20)
-    vmatmul.mxu0 m1, w1
+    vmatmul.mxu0 a0, m1, w1
     delay 63
-    vmatpop.bf16.acc.mxu0 m4
+    vmatpop.bf16.acc.mxu0 m4, a0
     delay 127
     vstore m4, 0(x21)

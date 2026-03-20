@@ -868,3 +868,26 @@ Open follow-up for the next FPGA step:
     plus software perf baselines were updated
   - refreshed software regression on March 19, 2026:
     `uv run pytest tests/test_*.py -q` -> `389 passed`
+- refactored MXU-local accumulation state from one architected buffer per MXU to two
+  architected buffers per MXU, `acc0` and `acc1`, to match the updated architecture and
+  microarchitecture specs:
+  - the software-visible architectural state now includes
+    `mxu0.acc0`, `mxu0.acc1`, `mxu1.acc0`, and `mxu1.acc1`
+  - MXU accumulator instructions now carry an explicit accumulator selector in the low
+    operand bit, parallel to the existing weight-slot selection model:
+    - `vmatpush.acc.fp8.*`
+    - `vmatpush.acc.bf16.*`
+    - `vmatpop.fp8.acc.*`
+    - `vmatpop.bf16.acc.*`
+    - `vmatmul.*`
+    - `vmatmul.acc.*`
+  - the parser, scheduler, trace formatter, architectural state, and cycle-accurate
+    scoreboards were all updated to route reads and writes to the selected accumulator
+    slot instead of a single per-MXU buffer
+  - tensor example programs now spell the selector explicitly, for example
+    `vmatmul.mxu0 a0, m1, w0` and `vmatpop.bf16.acc.mxu0 m2, a0`
+  - added a focused MXU regression proving `acc1` updates do not alias `acc0`
+  - refreshed the formal spec tables in `architecture-spec.md`, `microarchitecture-spec.md`,
+    and `greencard.md` so the selector encoding and reserved-zero rules match the model
+  - refreshed full software regression on March 19, 2026:
+    `uv run pytest -q` -> `403 passed`

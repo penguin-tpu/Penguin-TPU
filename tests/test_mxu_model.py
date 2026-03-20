@@ -100,8 +100,8 @@ def _store_weight(state: ArchState, mxu: int, slot: int, tile: torch.Tensor) -> 
     state.store_weight_slot(mxu, slot, weight_tile_to_bytes(tile, config=state.config))
 
 
-def _store_accum_tile(state: ArchState, mxu: int, tile: torch.Tensor) -> None:
-    state.store_accum_buffer(mxu, accum_tile_to_bytes(tile, config=state.config))
+def _store_accum_tile(state: ArchState, mxu: int, tile: torch.Tensor, *, acc: int = 0) -> None:
+    state.store_accum_buffer(mxu, accum_tile_to_bytes(tile, config=state.config), acc=acc)
 
 
 def _store_partial_pair(state: ArchState, index: int, tile: torch.Tensor) -> None:
@@ -279,6 +279,36 @@ def test_vmatmul_acc_accumulates_into_existing_local_accumulator() -> None:
     assert perf.instructions_by_opcode == {
         "vmatmul.acc.mxu0": 1,
         "vmatpop.bf16.acc.mxu0": 1,
+    }
+
+
+@torch.no_grad()
+def test_acc1_state_is_independent_from_acc0() -> None:
+    activation = _fp8_tile([[1.0, -2.0], [0.5, 3.0]])
+    weights = _weight_tile([[2.0, 1.0], [-1.5, 0.25]])
+    partial_acc1 = _bf16_result_tile([[7.0, -1.0], [2.5, 4.0]])
+    distinct_acc0 = _bf16_result_tile([[-9.0, 5.0], [1.25, -3.5]])
+    state = _fresh_state()
+    _store_activation(state, 1, activation)
+    _store_weight(state, 0, 0, weights)
+    _store_accum_tile(state, 0, partial_acc1, acc=1)
+    _store_accum_tile(state, 0, distinct_acc0, acc=0)
+    core = Sim(state=state)
+
+    perf = core.execute(
+        [
+            Instruction("vmatmul.acc.mxu0", MXUMatmulAccType(ms=1, ws=0, acc=1)),
+            Instruction("vmatpop.bf16.acc.mxu0", MXUAccumulatorType(mreg=4, acc=1)),
+            Instruction("vmatpop.bf16.acc.mxu0", MXUAccumulatorType(mreg=6, acc=0)),
+        ]
+    )
+
+    expected_acc1 = _reference_matmul(activation, weights, accum=partial_acc1)
+    assert torch.equal(_read_result_pair(state, 4), expected_acc1)
+    assert torch.equal(_read_result_pair(state, 6), distinct_acc0.to(torch.float32))
+    assert perf.instructions_by_opcode == {
+        "vmatmul.acc.mxu0": 1,
+        "vmatpop.bf16.acc.mxu0": 2,
     }
 
 
